@@ -5,7 +5,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from app.db import MarketIntelligence
-from app.config import OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL
+from app.config import (
+    OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL,
+    MARKETAUX_API_KEY, MARKETAUX_API_URL, MARKETAUX_LIMIT, MARKETAUX_INDUSTRIES,
+)
 import json
 import re
 
@@ -72,9 +75,64 @@ def clean_and_parse_json(text: str) -> Dict[str, Any]:
         
     return json.loads(cleaned)
 
+async def fetch_marketaux_headlines() -> List[Dict[str, Any]]:
+    """
+    Fetches the latest market/finance news from the Marketaux API.
+    Returns normalized headline dicts enriched with description, source,
+    real article image, and detected entities + sentiment scores.
+    Returns an empty list if the API key is missing or the request fails,
+    so callers can fall back to the RSS source.
+    """
+    if not MARKETAUX_API_KEY:
+        logger.info("MARKETAUX_API_KEY not set. Skipping Marketaux; will fall back to RSS.")
+        return []
+
+    params = {
+        "api_token": MARKETAUX_API_KEY,
+        "language": "en",
+        "filter_entities": "true",   # only entity-tagged articles (richer, fresher than keyword search)
+        "sort": "published_desc",    # newest first
+        "limit": MARKETAUX_LIMIT,    # free tier caps at 3
+        "industries": MARKETAUX_INDUSTRIES,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(MARKETAUX_API_URL, params=params, timeout=12.0)
+
+        if response.status_code != 200:
+            logger.error(f"Marketaux returned status {response.status_code}: {response.text[:200]}")
+            return []
+
+        articles = response.json().get("data", [])
+        headlines = []
+        for art in articles:
+            entities = art.get("entities") or []
+            entity_summary = ", ".join(
+                f"{e.get('name')} ({e.get('symbol')}, sentiment {e.get('sentiment_score')})"
+                for e in entities[:5] if e.get("name")
+            )
+            headlines.append({
+                "title": art.get("title", ""),
+                "source": art.get("source", "Marketaux"),
+                "pubDate": art.get("published_at", datetime.utcnow().isoformat()),
+                "description": art.get("description") or art.get("snippet") or "",
+                "url": art.get("url", ""),
+                "image_url": art.get("image_url", ""),
+                "entities": entity_summary,
+            })
+
+        logger.info(f"Fetched {len(headlines)} headlines from Marketaux.")
+        return headlines
+
+    except Exception as e:
+        logger.error(f"Failed to fetch Marketaux news: {e}")
+        return []
+
 async def fetch_rss_headlines() -> List[Dict[str, Any]]:
     """
     Fetches the latest investment-related headlines from Google News RSS.
+    Used as a fallback when Marketaux is unavailable.
     """
     url = "https://news.google.com/rss/search?q=market+outlook+investment+thesis&hl=en-US&gl=US&ceid=US:en"
     try:
@@ -103,8 +161,15 @@ async def generate_theses_with_llm(headlines: List[Dict[str, Any]]) -> List[Dict
     if not headlines:
         return []
     
-    headlines_text = "\n".join([
-        f"- Title: {h['title']} | Source: {h['source']} | Date: {h['pubDate']}"
+    headlines_text = "\n\n".join([
+        (
+            f"- Title: {h['title']}\n"
+            f"  Source: {h.get('source', 'N/A')} | Date: {h.get('pubDate', '')}\n"
+            f"  Summary: {h.get('description', '') or 'N/A'}\n"
+            f"  Key entities & sentiment: {h.get('entities', '') or 'N/A'}\n"
+            f"  Article URL: {h.get('url', '') or 'N/A'}\n"
+            f"  Image URL: {h.get('image_url', '') or 'N/A'}"
+        )
         for h in headlines
     ])
 
@@ -118,7 +183,7 @@ Analyze the following recent financial headlines and, for EACH headline, generat
 5. "date": ISO publication date.
 6. "title": A clean, punchy headline.
 7. "content": A detailed 3-4 sentence investment thesis explaining the core asset allocation implications.
-8. "image_url": A URL pointing to a placeholder photo (use: "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f" for bonds, "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3" for equities, "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab" for real estate/alternatives, "https://images.unsplash.com/photo-1518770660439-4636190af475" for tech).
+8. "image_url": If the headline provides an "Image URL", reuse that exact URL. Otherwise use a relevant placeholder photo (use: "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f" for bonds, "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3" for equities, "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab" for real estate/alternatives, "https://images.unsplash.com/photo-1518770660439-4636190af475" for tech).
 9. "ai_interpretation": A JSON object containing:
    - "summary": A concise 1-sentence bottom-line takeaway.
    - "impacted_assets": A list containing 1 or more of: KR_STOCK, GLOBAL_STOCK, KR_BOND, GLOBAL_BOND, ALTERNATIVE.
@@ -182,8 +247,11 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
             is_stale = True
 
     if not cached_items or is_stale or force:
-        logger.info("Stale or missing cache. Syncing market intelligence from RSS...")
-        headlines = await fetch_rss_headlines()
+        logger.info("Stale or missing cache. Syncing market intelligence...")
+        headlines = await fetch_marketaux_headlines()
+        if not headlines:
+            logger.info("Marketaux unavailable or empty. Falling back to Google News RSS.")
+            headlines = await fetch_rss_headlines()
         if headlines:
             theses = await generate_theses_with_llm(headlines)
             if theses:

@@ -9,6 +9,14 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Marketaux news API settings (market intelligence news source)
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")
+MARKETAUX_API_URL = "https://api.marketaux.com/v1/news/all"
+# Free tier caps the response at 3 articles per request
+MARKETAUX_LIMIT = int(os.getenv("MARKETAUX_LIMIT", "3"))
+# Comma-separated industries to pull news for (Marketaux taxonomy)
+MARKETAUX_INDUSTRIES = os.getenv("MARKETAUX_INDUSTRIES", "Financial Services,Technology")
+
 # Database path
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./nps_platform.db")
 

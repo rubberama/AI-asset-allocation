@@ -4,6 +4,9 @@
 .env.*.local
 !.env.example
 
+# ===== Claude Code local config (may capture command history/secrets) =====
+.claude/settings.local.json
+
 # ===== Python (backend) =====
 __pycache__/
 *.py[cod]
