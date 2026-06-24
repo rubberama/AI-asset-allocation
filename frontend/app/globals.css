@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #0a0a0a;
+  --card-foreground: #ffffff;
+  --popover: #0a0a0a;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #121212;
+  --secondary-foreground: #ffffff;
+  --muted: #121212;
+  --muted-foreground: #8a8a8f;
+  --accent: #2c2c2e;
+  --accent-foreground: #ffffff;
+  --destructive: #ff3b30;
+  --destructive-foreground: #ffffff;
+  --border: #3a3a3f;
+  --input: #0a0a0a;
+  --ring: #ffffff;
+}
+
+body {
+  background-color: #000000;
+  color: #ffffff;
+  min-height: 100vh;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Custom SpaceX styles */
+.font-display {
+  font-family: 'D-DIN-Bold', 'Inter', 'Arial Narrow', 'Arial', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  line-height: 0.95;
+  letter-spacing: 0.1em;
+}
+
+.font-ui {
+  font-family: 'D-DIN', 'Inter', 'Arial', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.button-ghost-dark {
+  background-color: transparent;
+  color: #ffffff;
+  border: 1px solid #ffffff;
+  font-family: 'D-DIN-Bold', 'Inter', sans-serif;
+  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border-radius: 9999px;
+  padding: 14px 24px;
+  transition: all 0.2s ease-in-out;
+}
+
+.button-ghost-dark:hover {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.border-hairline {
+  border: 1px solid #3a3a3f;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #000000;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3a3f;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5f;
+}
+
