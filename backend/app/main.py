@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -55,6 +55,30 @@ class StressTestRequest(BaseModel):
     weights: Dict[str, float] = Field(..., description="Portfolio weights mapping")
     expected_returns: Dict[str, float] = Field(..., description="Expected annualized returns")
     covariance: Dict[str, Dict[str, float]] = Field(..., description="Annualized covariance matrix")
+
+class IngestUrlRequest(BaseModel):
+    url: Optional[str] = Field(None, description="Article URL to fetch, read, and analyze into a thesis")
+    content: Optional[str] = Field(None, description="Pasted article text (used when the URL is not fetchable)")
+
+class AllocateRequest(BaseModel):
+    optimizer: str = Field("markowitz", description="markowitz | risk_parity | hrp | resampled | ensemble")
+    max_deviation: Optional[float] = Field(0.10, description="Max deviation vs NPS benchmark weights")
+    use_theses: bool = Field(True, description="Use approved theses as Black-Litterman views")
+
+
+def _estimate_risk_aversion(market_weights: Dict[str, float], covariance: Dict[str, Dict[str, float]]) -> float:
+    """Market-implied risk aversion lambda = equity_premium / market variance."""
+    assets = list(market_weights.keys())
+    w = np.array([market_weights[a] for a in assets])
+    Sigma = np.array([[covariance[a1][a2] for a2 in assets] for a1 in assets])
+    var_m = float(np.dot(w, np.dot(Sigma, w)))
+    return 0.06 / var_m if var_m > 1e-8 else 2.5
+
+
+def _regime_lambda_multiplier(macro_context: Dict[str, Any]) -> float:
+    """Lean more risk-averse in stressed regimes, slightly less in calm ones."""
+    regime = (macro_context or {}).get("market_regime", "NORMAL")
+    return {"CRISIS": 1.6, "ELEVATED_RISK": 1.25, "NORMAL": 1.0, "LOW_VOL": 0.9}.get(regime, 1.0)
 
 @app.get("/")
 def read_root():
@@ -338,6 +362,181 @@ async def refresh_market_intelligence(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to refresh market intelligence: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/market-intelligence/from-url")
+async def ingest_market_intelligence_from_url(request: IngestUrlRequest, db: Session = Depends(get_db)):
+    """
+    Accepts an article URL (or pasted content), reads and analyzes it, and turns it
+    into a structured market-intelligence thesis added to the feed.
+    Returns {"status": "needs_content"} if the URL cannot be fetched, prompting the
+    client to ask the user to paste the article text.
+    """
+    try:
+        from app.market_intelligence import ingest_article
+        result = await ingest_article(db, url=request.url, content=request.content)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message", "Ingestion failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to ingest article: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/research/collect")
+async def collect_research(db: Session = Depends(get_db)):
+    """Runs the macro collectors (FRED, GDELT, Marketaux), scores and de-dupes the
+    results, and persists them as ranked research Documents."""
+    try:
+        from app.collect import collect_documents
+        summary = await collect_documents(db)
+        return {"status": "ok", "summary": summary}
+    except Exception as e:
+        logger.error(f"Research collection failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/research/queue")
+def research_queue(asset: Optional[str] = None, limit: int = 40, db: Session = Depends(get_db)):
+    """Returns the ranked, de-duplicated, asset-tagged macro research queue."""
+    try:
+        from app.collect import get_research_queue
+        return {"data": get_research_queue(db, asset_filter=asset, limit=limit)}
+    except Exception as e:
+        logger.error(f"Failed to fetch research queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/thesis/build")
+async def build_thesis(db: Session = Depends(get_db)):
+    """Stage 2: digest the research queue into calibrated house-view theses (Nemotron Ultra, 2-pass)."""
+    try:
+        from app.thesis_engine import build_theses
+        theses = await build_theses(db)
+        return {"status": "ok", "data": theses}
+    except Exception as e:
+        logger.error(f"Thesis build failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/theses")
+def list_theses(status: Optional[str] = None, db: Session = Depends(get_db)):
+    """Returns stored theses (optionally filtered by status: draft|approved|rejected)."""
+    try:
+        from app.thesis_engine import get_theses
+        return {"data": get_theses(db, status=status)}
+    except Exception as e:
+        logger.error(f"Failed to list theses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/theses/{thesis_id}/status")
+def set_thesis_status(thesis_id: str, status: str, db: Session = Depends(get_db)):
+    """Approve/reject a thesis (human-in-the-loop gate before it feeds the optimizer)."""
+    from app.db import Thesis
+    t = db.query(Thesis).filter(Thesis.id == thesis_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Thesis not found")
+    if status not in ("draft", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    t.status = status
+    db.commit()
+    return {"status": "ok", "id": thesis_id, "new_status": status}
+
+
+@app.post("/allocate")
+def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)):
+    """Stage 3: turn APPROVED theses into an allocation decision package.
+
+    Pipeline: approved theses → BL views → Idzorek-calibrated Black-Litterman with a
+    regime-scaled risk-aversion → optimizer → Monte-Carlo risk → benchmark attribution.
+    """
+    try:
+        market_weights = fetch_and_sync_nps_data(db)
+        market_data = fetch_market_data()
+        covariance = market_data["covariance"]
+        rf = fetch_risk_free_rate()
+
+        from app.thesis_engine import get_theses, theses_to_views
+        theses = get_theses(db, status="approved") if request.use_theses else []
+        views = theses_to_views(theses)
+
+        macro_context = get_last_macro_context()
+        base_lambda = _estimate_risk_aversion(market_weights, covariance)
+        risk_aversion = base_lambda * _regime_lambda_multiplier(macro_context)
+        tau = 1.0 / (252 * 5)
+
+        prior_returns, post_returns, post_covariance = run_black_litterman(
+            market_weights=market_weights, covariance_dict=covariance, views=views,
+            risk_free_rate=rf, risk_aversion=risk_aversion, tau=tau, omega_method="idzorek",
+        )
+        optimized_weights = optimize_portfolio(
+            strategy=request.optimizer, expected_returns=post_returns, covariance_dict=post_covariance,
+            risk_free_rate=rf, risk_aversion=risk_aversion, benchmark_weights=market_weights,
+            max_deviation=request.max_deviation,
+        )
+        mc_results = run_monte_carlo_simulation(optimized_weights, post_returns, post_covariance)
+
+        attribution = {
+            a: round((optimized_weights.get(a, 0.0) - market_weights.get(a, 0.0)) * 100, 2)
+            for a in optimized_weights
+        }
+        return {
+            "status": "ok",
+            "market_weights": market_weights,
+            "optimized_weights": optimized_weights,
+            "attribution_pp": attribution,
+            "posterior_returns": post_returns,
+            "risk_metrics": {k: mc_results[k] for k in
+                             ("expected_return", "volatility", "var_95", "cvar_95", "max_drawdown_estimate")},
+            "risk_aversion": risk_aversion,
+            "regime": (macro_context or {}).get("market_regime", "NORMAL"),
+            "omega_method": "idzorek",
+            "theses_used": theses,
+            "n_views": len(views),
+        }
+    except Exception as e:
+        logger.error(f"Allocation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/backtest")
+def backtest(db: Session = Depends(get_db)):
+    """Scores stored theses (whose horizon has elapsed) against realized ETF returns:
+    Information Coefficient + hit-rate."""
+    try:
+        from app.thesis_engine import get_theses
+        from app.backtest import run_thesis_backtest
+        return run_thesis_backtest(get_theses(db))
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/market-intelligence/from-pdf")
+async def ingest_market_intelligence_from_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Accepts a PDF upload (research report, policy paper, etc.), extracts its text,
+    and analyzes it into a structured thesis added to the feed."""
+    try:
+        from app.market_intelligence import extract_pdf_text, ingest_article, MIN_ARTICLE_CHARS
+        data = await file.read()
+        text = extract_pdf_text(data)
+        if not text or len(text) < MIN_ARTICLE_CHARS:
+            return {
+                "status": "needs_content",
+                "message": "PDF에서 텍스트를 추출하지 못했습니다 (스캔 이미지 PDF일 수 있습니다). "
+                           "기사/리포트 본문을 복사하여 붙여넣어 주세요.",
+            }
+        result = await ingest_article(db, content=text, source_label=f"PDF: {file.filename}")
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message", "Ingestion failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to ingest PDF: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/simulations")
 def list_simulations(db: Session = Depends(get_db)):

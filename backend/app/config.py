@@ -17,6 +17,23 @@ MARKETAUX_LIMIT = int(os.getenv("MARKETAUX_LIMIT", "3"))
 # Comma-separated industries to pull news for (Marketaux taxonomy)
 MARKETAUX_INDUSTRIES = os.getenv("MARKETAUX_INDUSTRIES", "Financial Services,Technology")
 
+# Model used specifically for ARTICLE DIGESTION (turning news/articles into
+# structured investment theses). Nemotron Ultra is a strong long-context
+# reasoning/summarization model. View-parsing and portfolio commentary keep
+# using OPENROUTER_MODEL above.
+ARTICLE_DIGESTION_MODEL = os.getenv("ARTICLE_DIGESTION_MODEL", "openrouter/owl-alpha")
+
+# FRED (Federal Reserve Economic Data) — free API key from https://fred.stlouisfed.org/docs/api/api_key.html
+# Used to pull hard US macro series (CPI, rates, unemployment, etc.).
+FRED_API_KEY = os.getenv("FRED_API_KEY", "")
+FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
+
+# GDELT DOC 2.0 — global news/geopolitics/policy event feed (no API key required).
+GDELT_API_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+# The five asset-class sleeves used across the platform.
+ASSET_CLASSES = ["KR_STOCK", "GLOBAL_STOCK", "KR_BOND", "GLOBAL_BOND", "ALTERNATIVE"]
+
 # Database path
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./nps_platform.db")
 

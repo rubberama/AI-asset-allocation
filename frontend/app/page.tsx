@@ -84,7 +84,7 @@ interface SimulationMeta {
   optimizer: string;
 }
 
-type TabType = "SIMULATOR" | "INTELLIGENCE" | "MACRO";
+type TabType = "SIMULATOR" | "INTELLIGENCE" | "MACRO" | "RESEARCH";
 
 interface Thesis {
   id: string;
@@ -135,6 +135,23 @@ export default function Dashboard() {
   const [isFetchingMacro, setIsFetchingMacro] = useState(false);
   const [selectedThesisId, setSelectedThesisId] = useState<string | null>(null);
   const [isRefreshingIntel, setIsRefreshingIntel] = useState(false);
+
+  // URL / article ingestion states
+  const [articleUrl, setArticleUrl] = useState("");
+  const [isIngesting, setIsIngesting] = useState(false);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+  const [ingestNeedsContent, setIngestNeedsContent] = useState(false);
+  const [pastedContent, setPastedContent] = useState("");
+  const [ingestNotice, setIngestNotice] = useState<string | null>(null);
+
+  // Research pipeline (Stage 1→2→3) states
+  const [researchQueue, setResearchQueue] = useState<any[]>([]);
+  const [theses, setTheses] = useState<any[]>([]);
+  const [allocation, setAllocation] = useState<any | null>(null);
+  const [isCollecting, setIsCollecting] = useState(false);
+  const [isBuildingTheses, setIsBuildingTheses] = useState(false);
+  const [isAllocating, setIsAllocating] = useState(false);
+  const [researchMsg, setResearchMsg] = useState<string | null>(null);
 
   // Search, Category, and Sorting States
   const [searchQuery, setSearchQuery] = useState("");
@@ -201,6 +218,8 @@ export default function Dashboard() {
     fetchSimulationsList();
     fetchIntelligenceFeed();
     fetchMacroData();
+    fetchResearchQueue();
+    fetchTheses();
   }, []);
 
   const fetchIntelligenceFeed = async () => {
@@ -238,6 +257,156 @@ export default function Dashboard() {
     } finally {
       setIsRefreshingIntel(false);
     }
+  };
+
+  // Submit an article URL (or pasted content) for AI analysis into a thesis.
+  // If the backend can't fetch the URL, it returns status "needs_content" and
+  // we reveal a textarea asking the user to paste the article body.
+  const handleIngestArticle = async () => {
+    const url = articleUrl.trim();
+    const content = pastedContent.trim();
+    if (!url && !content) return;
+
+    setIsIngesting(true);
+    setIngestError(null);
+    setIngestNotice(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/market-intelligence/from-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url || null, content: content || null }),
+      });
+
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail?.detail || "분석 요청에 실패했습니다.");
+      }
+
+      const json = await res.json();
+
+      if (json.status === "needs_content") {
+        // URL not fetchable — prompt the user to paste the article body.
+        setIngestNeedsContent(true);
+        setIngestNotice(json.message || "URL 본문을 불러오지 못했습니다. 기사 내용을 붙여넣어 주세요.");
+        return;
+      }
+
+      if (json.status === "ok") {
+        const data = json.data || [];
+        setIntelligenceFeed(data);
+        if (json.thesis?.id) {
+          setSelectedThesisId(json.thesis.id);
+        }
+        // Reset the input UI on success.
+        setArticleUrl("");
+        setPastedContent("");
+        setIngestNeedsContent(false);
+        setIngestNotice("기사를 분석하여 새로운 투자 의견(Thesis)을 생성했습니다.");
+      }
+    } catch (err: any) {
+      console.error("Failed to ingest article:", err);
+      setIngestError(err?.message || "분석 중 오류가 발생했습니다.");
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
+  // Upload a PDF (research report / policy paper) → extract text → analyze into a thesis.
+  const handleIngestPdf = async (file: File) => {
+    setIsIngesting(true);
+    setIngestError(null);
+    setIngestNotice(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${apiBaseUrl}/market-intelligence/from-pdf`, { method: "POST", body: form });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail?.detail || "PDF 분석에 실패했습니다.");
+      }
+      const json = await res.json();
+      if (json.status === "needs_content") {
+        setIngestNeedsContent(true);
+        setIngestNotice(json.message || "PDF 본문을 추출하지 못했습니다. 내용을 붙여넣어 주세요.");
+        return;
+      }
+      if (json.status === "ok") {
+        setIntelligenceFeed(json.data || []);
+        if (json.thesis?.id) setSelectedThesisId(json.thesis.id);
+        setIngestNotice(`PDF(${file.name})를 분석하여 새로운 투자 의견(Thesis)을 생성했습니다.`);
+      }
+    } catch (err: any) {
+      console.error("Failed to ingest PDF:", err);
+      setIngestError(err?.message || "PDF 분석 중 오류가 발생했습니다.");
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
+  // ---- Research pipeline handlers ----
+  const fetchResearchQueue = async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/research/queue?limit=30`);
+      if (res.ok) setResearchQueue((await res.json()).data || []);
+    } catch (err) { console.error("queue fetch failed:", err); }
+  };
+
+  const fetchTheses = async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/theses`);
+      if (res.ok) setTheses((await res.json()).data || []);
+    } catch (err) { console.error("theses fetch failed:", err); }
+  };
+
+  const handleCollect = async () => {
+    setIsCollecting(true);
+    setResearchMsg("매크로 소스(FRED·GDELT·Marketaux)에서 정보를 수집하고 있습니다…");
+    try {
+      const res = await fetch(`${apiBaseUrl}/research/collect`, { method: "POST" });
+      const json = await res.json();
+      const s = json.summary || {};
+      setResearchMsg(`수집 완료: FRED ${s.fred ?? 0} · GDELT ${s.gdelt ?? 0} · Marketaux ${s.marketaux ?? 0} (총 ${s.total_in_store ?? 0}건)`);
+      await fetchResearchQueue();
+    } catch (err) {
+      setResearchMsg("수집 중 오류가 발생했습니다.");
+    } finally { setIsCollecting(false); }
+  };
+
+  const handleBuildTheses = async () => {
+    setIsBuildingTheses(true);
+    setResearchMsg("Nemotron Ultra가 리서치 큐를 2단계로 분석하여 투자 의견(Thesis)을 생성하고 있습니다. 최대 2분 소요될 수 있습니다…");
+    try {
+      const res = await fetch(`${apiBaseUrl}/thesis/build`, { method: "POST" });
+      const json = await res.json();
+      setTheses(json.data || []);
+      setResearchMsg(`${(json.data || []).length}개의 보정된 하우스 뷰를 생성했습니다. 검토 후 승인하세요.`);
+    } catch (err) {
+      setResearchMsg("Thesis 생성 중 오류가 발생했습니다.");
+    } finally { setIsBuildingTheses(false); }
+  };
+
+  const setThesisStatus = async (id: string, status: string) => {
+    try {
+      await fetch(`${apiBaseUrl}/theses/${id}/status?status=${status}`, { method: "POST" });
+      setTheses(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+    } catch (err) { console.error("status update failed:", err); }
+  };
+
+  const handleAllocate = async () => {
+    setIsAllocating(true);
+    setResearchMsg("승인된 Thesis를 Idzorek 보정 Black-Litterman + 레짐 조정으로 자산배분을 계산하고 있습니다…");
+    try {
+      const res = await fetch(`${apiBaseUrl}/allocate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ optimizer, max_deviation: maxDeviation, use_theses: true }),
+      });
+      const json = await res.json();
+      setAllocation(json);
+      setResearchMsg(`자산배분 완료 (레짐: ${json.regime}, 사용된 뷰: ${json.n_views}개).`);
+    } catch (err) {
+      setResearchMsg("자산배분 계산 중 오류가 발생했습니다.");
+    } finally { setIsAllocating(false); }
   };
 
   const fetchMacroData = async () => {
@@ -534,6 +703,12 @@ export default function Dashboard() {
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "MACRO" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
               MACRO DASHBOARD
+            </button>
+            <button
+              onClick={() => setActiveTab("RESEARCH")}
+              className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "RESEARCH" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
+            >
+              RESEARCH PIPELINE
             </button>
           </div>
           <div className="flex gap-4 items-center text-xs">
@@ -1234,6 +1409,83 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Ingest an article by URL (fetch → read → analyze → thesis) */}
+            <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
+              <label className="text-[10px] font-display tracking-widest text-neutral-400 flex items-center gap-2">
+                <Newspaper className="w-3.5 h-3.5 text-white" />
+                INGEST ARTICLE BY URL
+                <span className="text-neutral-600 normal-case font-sans tracking-normal">
+                  — 링크를 입력하면 AI가 기사를 읽고 분석하여 투자 의견(Thesis)으로 변환합니다.
+                </span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  placeholder="https://example.com/market-article"
+                  value={articleUrl}
+                  onChange={(e) => setArticleUrl(e.target.value)}
+                  disabled={isIngesting}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !isIngesting) handleIngestArticle(); }}
+                  className="flex-grow bg-[#050505] border border-neutral-900 text-xs text-white px-3 py-2 outline-none focus:border-neutral-700 font-mono tracking-wider placeholder-neutral-700"
+                />
+                <button
+                  onClick={handleIngestArticle}
+                  disabled={isIngesting || (!articleUrl.trim() && !pastedContent.trim())}
+                  className="button-ghost-dark flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isIngesting
+                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> ANALYZING…</>
+                    : <><Play className="w-4 h-4" /> ANALYZE</>}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className={`button-ghost-dark flex items-center gap-2 cursor-pointer whitespace-nowrap ${isIngesting ? "opacity-50 pointer-events-none" : ""}`}>
+                  <Newspaper className="w-3.5 h-3.5" /> UPLOAD PDF
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="hidden"
+                    disabled={isIngesting}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleIngestPdf(f); e.currentTarget.value = ""; }}
+                  />
+                </label>
+                <span className="text-[9px] text-neutral-600 font-sans">리서치 리포트·정책 문서 PDF를 업로드하면 AI가 본문을 읽고 분석합니다.</span>
+              </div>
+
+              {ingestNeedsContent && (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    placeholder="URL을 자동으로 불러오지 못했습니다. 기사 본문을 복사하여 여기에 붙여넣은 뒤 ANALYZE를 다시 누르세요."
+                    rows={5}
+                    value={pastedContent}
+                    onChange={(e) => setPastedContent(e.target.value)}
+                    disabled={isIngesting}
+                    className="w-full bg-[#050505] border border-amber-900/60 text-xs text-white px-3 py-2 outline-none focus:border-amber-700 font-sans resize-none placeholder-neutral-700"
+                  />
+                </div>
+              )}
+
+              {isIngesting && (
+                <p className="text-[10px] text-neutral-500 font-sans flex items-center gap-1.5">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  기사를 읽고 AI가 분석하는 중입니다. 최대 1분가량 소요될 수 있습니다…
+                </p>
+              )}
+              {ingestNotice && !isIngesting && (
+                <p className="text-[10px] text-amber-400/90 font-sans flex items-start gap-1.5">
+                  <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  {ingestNotice}
+                </p>
+              )}
+              {ingestError && !isIngesting && (
+                <p className="text-[10px] text-red-400 font-sans flex items-start gap-1.5">
+                  <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  {ingestError}
+                </p>
+              )}
+            </div>
+
             <div className="flex gap-8">
               {/* Left Side List (40% width) */}
               <div className="w-[40%] flex flex-col gap-4 overflow-y-auto h-[calc(100vh-14rem)] pr-2 border-r border-neutral-900">
@@ -1593,6 +1845,149 @@ export default function Dashboard() {
                 <p className="font-display text-xs tracking-widest">FETCHING MARKET DATA...</p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* RESEARCH PIPELINE TAB */}
+        {activeTab === "RESEARCH" && (
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center justify-between border-b border-neutral-900 pb-4">
+              <div>
+                <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-neutral-400" />
+                  MACRO RESEARCH PIPELINE
+                </h2>
+                <p className="text-xs text-neutral-500 font-sans mt-1">
+                  Search &amp; select macro info → build calibrated theses (Nemotron Ultra) → compute allocation (Idzorek BL).
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={handleCollect} disabled={isCollecting}
+                  className="button-ghost-dark flex items-center gap-2 disabled:opacity-50">
+                  {isCollecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+                  1 · COLLECT
+                </button>
+                <button onClick={handleBuildTheses} disabled={isBuildingTheses}
+                  className="button-ghost-dark flex items-center gap-2 disabled:opacity-50">
+                  {isBuildingTheses ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
+                  2 · BUILD THESES
+                </button>
+                <button onClick={handleAllocate} disabled={isAllocating}
+                  className="button-ghost-dark flex items-center gap-2 border-white text-white disabled:opacity-50">
+                  {isAllocating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  3 · ALLOCATE
+                </button>
+              </div>
+            </div>
+
+            {researchMsg && (
+              <p className="text-[11px] text-amber-400/90 font-sans flex items-center gap-1.5">
+                <Info className="w-3 h-3 flex-shrink-0" />{researchMsg}
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Stage 1 — Research Queue */}
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
+                <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
+                  <Newspaper className="w-3.5 h-3.5 text-white" /> RESEARCH QUEUE ({researchQueue.length})
+                </h3>
+                <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto pr-1">
+                  {researchQueue.length === 0 && <p className="text-[10px] text-neutral-600 italic">큐가 비어 있습니다. COLLECT를 실행하세요.</p>}
+                  {researchQueue.map((d) => {
+                    const rel = d.relevance || {};
+                    const top = Object.entries(rel).sort((a: any, b: any) => b[1] - a[1])[0];
+                    return (
+                      <div key={d.id} className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[9px] font-mono text-neutral-500 uppercase">{d.source_type} · {d.source}</span>
+                          <span className="text-[9px] font-mono text-emerald-400">{(d.composite_score ?? 0).toFixed(2)}</span>
+                        </div>
+                        <span className="text-[11px] text-neutral-300 leading-snug">{d.title}</span>
+                        {top && (top as any)[1] > 0 && (
+                          <span className="text-[9px] font-mono text-neutral-500">→ {(top as any)[0]} ({((top as any)[1]).toFixed(2)})</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Stage 2 — Theses */}
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
+                <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
+                  <MessageSquare className="w-3.5 h-3.5 text-white" /> HOUSE THESES ({theses.length})
+                </h3>
+                <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto pr-1">
+                  {theses.length === 0 && <p className="text-[10px] text-neutral-600 italic">Thesis가 없습니다. BUILD THESES를 실행하세요.</p>}
+                  {theses.map((t) => (
+                    <div key={t.id} className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-[11px] text-white font-bold leading-snug">{t.title || `${t.asset || t.asset1}`}</span>
+                        <span className="text-[9px] font-mono text-emerald-400 whitespace-nowrap">conf {(t.confidence ?? 0).toFixed(2)}</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-neutral-500 uppercase">
+                        {t.view_type === "relative" ? `${t.asset1} > ${t.asset2}` : `${t.asset} ${t.direction || ""}`} · {t.horizon || "12M"}
+                      </span>
+                      <span className="text-[10px] text-neutral-400 leading-snug">{t.rationale}</span>
+                      <div className="flex gap-2 mt-1">
+                        <button onClick={() => setThesisStatus(t.id, "approved")}
+                          className={`text-[9px] font-display tracking-wider px-2 py-1 border ${t.status === "approved" ? "border-emerald-600 text-emerald-400" : "border-neutral-800 text-neutral-500 hover:text-white"}`}>
+                          <Check className="w-3 h-3 inline" /> APPROVE
+                        </button>
+                        <button onClick={() => setThesisStatus(t.id, "rejected")}
+                          className={`text-[9px] font-display tracking-wider px-2 py-1 border ${t.status === "rejected" ? "border-red-700 text-red-400" : "border-neutral-800 text-neutral-500 hover:text-white"}`}>
+                          REJECT
+                        </button>
+                        <span className="text-[9px] font-mono text-neutral-600 ml-auto self-center">{(t.provenance || []).length} src</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stage 3 — Allocation decision package */}
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
+                <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
+                  <TrendingUp className="w-3.5 h-3.5 text-white" /> ALLOCATION
+                </h3>
+                {!allocation && <p className="text-[10px] text-neutral-600 italic">승인된 Thesis로 ALLOCATE를 실행하세요.</p>}
+                {allocation && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-2 text-[9px] font-mono text-neutral-500">
+                      <span>REGIME: <span className="text-white">{allocation.regime}</span></span>
+                      <span>· VIEWS: <span className="text-white">{allocation.n_views}</span></span>
+                      <span>· Ω: <span className="text-white">{allocation.omega_method}</span></span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {Object.keys(allocation.optimized_weights || {}).map((a) => {
+                        const w = allocation.optimized_weights[a];
+                        const dpp = (allocation.attribution_pp || {})[a] ?? 0;
+                        return (
+                          <div key={a} className="flex justify-between items-center text-[10px] border-b border-neutral-950 py-1">
+                            <span className="text-neutral-400">{ASSET_LABELS[a] || a}</span>
+                            <span className="font-mono">
+                              <span className="text-white">{(w * 100).toFixed(1)}%</span>
+                              <span className={`ml-2 ${dpp > 0 ? "text-emerald-400" : dpp < 0 ? "text-red-400" : "text-neutral-600"}`}>
+                                {dpp > 0 ? "+" : ""}{dpp}pp
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {allocation.risk_metrics && (
+                      <div className="grid grid-cols-2 gap-1 text-[9px] font-mono text-neutral-500 mt-1">
+                        <span>E[R]: <span className="text-white">{(allocation.risk_metrics.expected_return * 100).toFixed(2)}%</span></span>
+                        <span>Vol: <span className="text-white">{(allocation.risk_metrics.volatility * 100).toFixed(2)}%</span></span>
+                        <span>VaR95: <span className="text-red-400">{(allocation.risk_metrics.var_95 * 100).toFixed(2)}%</span></span>
+                        <span>MDD: <span className="text-red-400">{(allocation.risk_metrics.max_drawdown_estimate * 100).toFixed(2)}%</span></span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

@@ -2,17 +2,25 @@ import logging
 import httpx
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.db import MarketIntelligence
 from app.config import (
     OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL,
     MARKETAUX_API_KEY, MARKETAUX_API_URL, MARKETAUX_LIMIT, MARKETAUX_INDUSTRIES,
+    ARTICLE_DIGESTION_MODEL,
 )
 import json
 import re
 
 logger = logging.getLogger(__name__)
+
+# How long a cached feed stays "fresh" before a re-sync is triggered.
+CACHE_TTL_HOURS = 6
+
+# Minimum length of extracted article text to consider a URL successfully readable.
+# Below this we assume the page is JS-rendered / paywalled and ask the user to paste.
+MIN_ARTICLE_CHARS = 400
 
 # Realistic fallback theses in case API/LLM calls fail
 FALLBACK_THESES = [
@@ -207,13 +215,16 @@ Ensure all asset keys are valid. Output ONLY valid, parseable JSON. Do not write
     }
     
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": ARTICLE_DIGESTION_MODEL,  # Nemotron Ultra for article digestion
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Financial Headlines:\n{headlines_text}"}
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.2
+        "temperature": 0.2,
+        # Cap output to keep OpenRouter credit reservation affordable (Nemotron's
+        # default max output is very large and can trigger 402 Payment Required).
+        "max_tokens": 6000
     }
 
     try:
@@ -224,10 +235,198 @@ Ensure all asset keys are valid. Output ONLY valid, parseable JSON. Do not write
             res_json = response.json()
             raw_content = res_json["choices"][0]["message"]["content"]
             parsed_data = clean_and_parse_json(raw_content)
-            return parsed_data.get("theses", [])
+            theses = parsed_data.get("theses", [])
+
+            # Override any LLM-fabricated provenance with the REAL source article
+            # metadata (matched by order). This guarantees the feed always shows
+            # genuine, current dates/sources/images rather than hallucinated ones.
+            for idx, t in enumerate(theses):
+                if idx < len(headlines):
+                    src = headlines[idx]
+                    if src.get("pubDate"):
+                        t["date"] = src["pubDate"]
+                    if src.get("source"):
+                        t["source"] = src["source"]
+                    if src.get("image_url"):
+                        t["image_url"] = src["image_url"]
+                    if src.get("url") and isinstance(t.get("full_report"), dict):
+                        t["full_report"]["source_url"] = src["url"]
+                t.setdefault("id", f"t{idx + 1}")
+            return theses
     except Exception as e:
         logger.error(f"Failed to generate theses with LLM: {e}")
     return []
+
+def _html_to_text(html: str) -> str:
+    """Strips scripts/styles/tags from raw HTML and returns collapsed plain text."""
+    html = re.sub(r"(?is)<(script|style|noscript|head|nav|footer|aside)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", html)
+    replacements = {
+        "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">",
+        "&#39;": "'", "&rsquo;": "'", "&quot;": '"', "&ldquo;": '"', "&rdquo;": '"',
+    }
+    for a, b in replacements.items():
+        text = text.replace(a, b)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_pdf_text(data: bytes, max_pages: int = 30) -> str:
+    """Extracts plain text from a PDF byte stream (text-based PDFs; scans yield little)."""
+    try:
+        import io
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        parts = []
+        for page in reader.pages[:max_pages]:
+            try:
+                parts.append(page.extract_text() or "")
+            except Exception:
+                continue
+        return re.sub(r"\s+", " ", " ".join(parts)).strip()
+    except Exception as e:
+        logger.warning(f"PDF text extraction failed: {e}")
+        return ""
+
+
+async def fetch_url_text(url: str) -> Optional[str]:
+    """
+    Fetches a URL and extracts readable plain text. Handles both HTML pages and PDF
+    documents. Returns None if the page can't be retrieved or yields no extractable
+    text (caller then asks the user to paste).
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers, timeout=15.0)
+        if resp.status_code != 200:
+            logger.warning(f"URL fetch returned {resp.status_code} for {url}")
+            return None
+        content_type = resp.headers.get("content-type", "").lower()
+        # PDF documents (by content-type or extension) → extract via pypdf.
+        if "pdf" in content_type or url.lower().split("?")[0].endswith(".pdf"):
+            return extract_pdf_text(resp.content)
+        if "html" not in content_type and "text" not in content_type and "xml" not in content_type:
+            logger.warning(f"URL {url} is not a text/html/pdf document ({content_type}).")
+            return None
+        return _html_to_text(resp.text)
+    except Exception as e:
+        logger.warning(f"Failed to fetch URL {url}: {e}")
+        return None
+
+
+def _domain_of(url: str) -> str:
+    """Extracts a clean domain (e.g. 'reuters.com') from a URL for use as the source."""
+    m = re.search(r"https?://([^/]+)", url or "")
+    return m.group(1).replace("www.", "") if m else ""
+
+
+async def ingest_article(
+    db: Session,
+    url: Optional[str] = None,
+    content: Optional[str] = None,
+    source_label: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Turns a user-supplied article into a structured thesis.
+
+    - If `content` (pasted text) is given, it is analyzed directly.
+    - Else the `url` is fetched and its text extracted.
+    - If the URL can't be fetched or yields too little text, returns
+      {"status": "needs_content"} so the UI can ask the user to paste it.
+
+    On success: persists the new thesis and returns the updated feed.
+    """
+    if not OPENROUTER_API_KEY:
+        return {"status": "error", "message": "AI 분석을 위한 OpenRouter API 키가 설정되지 않았습니다."}
+
+    source_url = (url or "").strip()
+    text = (content or "").strip()
+    from_paste = bool(text)
+
+    if not text:
+        if not source_url:
+            return {"status": "error", "message": "URL 또는 본문 내용을 입력해 주세요."}
+        fetched = await fetch_url_text(source_url)
+        if not fetched or len(fetched) < MIN_ARTICLE_CHARS:
+            return {
+                "status": "needs_content",
+                "message": "해당 URL의 본문을 자동으로 불러오지 못했습니다 (로그인/자바스크립트 기반 페이지일 수 있습니다). "
+                           "기사 본문을 복사하여 아래에 붙여넣어 주세요.",
+            }
+        text = fetched
+
+    # Wrap the article as a single "headline" and reuse the thesis generator.
+    domain = _domain_of(source_url)
+    headline = {
+        "title": text[:90],
+        "source": domain or "사용자 제출",
+        "pubDate": datetime.utcnow().isoformat(),
+        "description": text[:6000],
+        "url": source_url,
+        "image_url": "",
+        "entities": "",
+    }
+
+    theses = await generate_theses_with_llm([headline])
+    if not theses:
+        return {"status": "error", "message": "AI 분석 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."}
+
+    t = theses[0]
+    t["id"] = f"url-{int(datetime.utcnow().timestamp())}"
+    t.setdefault("author", "User-Submitted Analysis")
+    t.setdefault("author_title", "AI Research Desk")
+    t["date"] = datetime.utcnow().isoformat()
+    t["source"] = source_label or domain or ("사용자 붙여넣기" if from_paste else "사용자 제출")
+    if source_url and isinstance(t.get("full_report"), dict):
+        t["full_report"]["source_url"] = source_url
+
+    try:
+        db_item = MarketIntelligence(
+            id=t["id"],
+            author=t.get("author", "User-Submitted Analysis"),
+            author_title=t.get("author_title", "AI Research Desk"),
+            source=t.get("source", ""),
+            date=t.get("date"),
+            title=t.get("title", ""),
+            content=t.get("content", ""),
+            image_url=t.get("image_url", ""),
+            ai_interpretation=t.get("ai_interpretation", {}),
+            full_report=t.get("full_report"),
+        )
+        db.add(db_item)
+        db.commit()
+        logger.info(f"Ingested user article into thesis {t['id']} (source: {t['source']}).")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to persist ingested thesis: {e}")
+
+    feed = _serialize_feed(db.query(MarketIntelligence).all())
+    return {"status": "ok", "thesis": t, "data": feed}
+
+
+def _serialize_feed(items: List[Any]) -> List[Dict[str, Any]]:
+    """Serializes MarketIntelligence rows to the API/feed shape, newest first."""
+    serialized = [
+        {
+            "id": item.id,
+            "author": item.author,
+            "author_title": item.author_title,
+            "source": item.source,
+            "date": item.date,
+            "title": item.title,
+            "content": item.content,
+            "image_url": item.image_url,
+            "ai_interpretation": item.ai_interpretation,
+            "full_report": item.full_report,
+        }
+        for item in items
+    ]
+    serialized.sort(key=lambda x: x.get("date") or "", reverse=True)
+    return serialized
+
 
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:
     """
@@ -240,7 +439,7 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
     if cached_items:
         try:
             latest_created = max([item.created_at for item in cached_items if item.created_at])
-            if datetime.utcnow() - latest_created < timedelta(hours=24):
+            if datetime.utcnow() - latest_created < timedelta(hours=CACHE_TTL_HOURS):
                 is_stale = False
         except Exception as e:
             logger.warning(f"Error checking cache freshness: {e}")
@@ -275,29 +474,15 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
                         db.add(db_item)
                     db.commit()
                     logger.info(f"Successfully cached {len(theses)} live financial theses.")
-                    return theses
+                    return _serialize_feed(db.query(MarketIntelligence).all())
                 except Exception as e:
                     logger.error(f"Failed to commit new theses to DB: {e}")
                     db.rollback()
 
     # Return cached items
     if cached_items:
-        return [
-            {
-                "id": item.id,
-                "author": item.author,
-                "author_title": item.author_title,
-                "source": item.source,
-                "date": item.date,
-                "title": item.title,
-                "content": item.content,
-                "image_url": item.image_url,
-                "ai_interpretation": item.ai_interpretation,
-                "full_report": item.full_report
-            }
-            for item in cached_items
-        ]
-    
+        return _serialize_feed(cached_items)
+
     # Fallback if everything fails
     logger.warning("All sync attempts failed. Serving fallback theses.")
     return FALLBACK_THESES

@@ -5,13 +5,63 @@ from typing import Dict, List, Optional, Tuple, Any
 
 logger = logging.getLogger(__name__)
 
+
+def omega_idzorek(
+    P: np.ndarray,
+    Q: np.ndarray,
+    Sigma: np.ndarray,
+    tau: float,
+    Pi: np.ndarray,
+    lam: float,
+    confidences: np.ndarray,
+) -> np.ndarray:
+    """Idzorek (2007) view-uncertainty: pick each view's Ω_kk so the posterior tilt away
+    from the market portfolio equals the analyst's stated confidence (0..1) times the
+    full-confidence tilt. Returns the Ω diagonal. Falls back to the proportional
+    He–Litterman uncertainty per view on any numerical failure.
+    """
+    from scipy.optimize import minimize_scalar
+    tauSigma = tau * Sigma
+    inv_tauSigma = np.linalg.inv(tauSigma)
+    omegas = []
+    for k in range(len(Q)):
+        Pk = P[k:k + 1]          # 1 x n
+        Qk = float(Q[k])
+        c = float(np.clip(confidences[k], 0.01, 0.99))
+        try:
+            # Departure of weights from market at 100% confidence (Ω→0 for this view).
+            denom = float(np.asarray(Pk @ tauSigma @ Pk.T).item())
+            pk_pi = float(np.asarray(Pk @ Pi).item())
+            dmu_100 = (tauSigma @ Pk.T).flatten() / denom * (Qk - pk_pi)
+            w_dep_100 = (1.0 / lam) * np.linalg.solve(Sigma, dmu_100)
+            target_dep = c * w_dep_100
+
+            def w_dep(omega_k: float) -> np.ndarray:
+                ok = max(omega_k, 1e-10)
+                post_prec = inv_tauSigma + (Pk.T @ Pk) / ok
+                mu_post = np.linalg.solve(post_prec, inv_tauSigma @ Pi + (Pk.T.flatten() * Qk) / ok)
+                return (1.0 / lam) * np.linalg.solve(Sigma, mu_post - Pi)
+
+            res = minimize_scalar(
+                lambda o: float(np.sum((w_dep(o) - target_dep) ** 2)),
+                bounds=(1e-8, 10.0), method="bounded",
+            )
+            omegas.append(max(1e-8, float(res.x)))
+        except Exception:
+            # Proportional fallback for this view.
+            var_view = float(Pk @ Sigma @ Pk.T)
+            omegas.append(max(1e-8, tau * var_view * ((1.0 - c) / c)))
+    return np.array(omegas)
+
+
 def run_black_litterman(
     market_weights: Dict[str, float],
     covariance_dict: Dict[str, Dict[str, float]],
     views: List[Dict[str, Any]],
     risk_free_rate: float,
     risk_aversion: Optional[float] = None,
-    tau: Optional[float] = None
+    tau: Optional[float] = None,
+    omega_method: str = "proportional"
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, Dict[str, float]]]:
     """
     Computes Black-Litterman posterior expected returns and covariance matrix.
@@ -85,9 +135,11 @@ def run_black_litterman(
     P = np.zeros((k, n))
     Q = np.zeros(k)
     Omega_diag = []
-    
+    confidences = []
+
     for idx, view in enumerate(views):
         confidence = max(0.001, min(0.999, view["confidence"])) # Clamp to avoid division by zero/negative
+        confidences.append(confidence)
         
         if view["view_type"] == "absolute":
             asset = view["asset"]
@@ -118,7 +170,15 @@ def run_black_litterman(
         # Add a tiny epsilon to prevent complete singularity if confidence is close to 1.0
         omega_j = max(1e-8, omega_j)
         Omega_diag.append(omega_j)
-        
+
+    # Optionally replace the proportional Ω with Idzorek (2007) confidence-tilt matching.
+    if omega_method == "idzorek":
+        try:
+            Omega_diag = omega_idzorek(P, Q, Sigma, tau, Pi, risk_aversion, np.array(confidences))
+            logger.info("Using Idzorek confidence-calibrated Omega.")
+        except Exception as e:
+            logger.warning(f"Idzorek Omega failed ({e}); falling back to proportional Omega.")
+
     Omega = np.diag(Omega_diag)
     
     # 4. Compute Posterior Excess Returns

@@ -40,11 +40,55 @@ def optimize_portfolio(
         weights = run_risk_parity(Sigma)
     elif strategy == "hrp":
         weights = run_hrp(Sigma, assets)
+    elif strategy == "resampled":
+        weights = run_resampled_weights(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
+    elif strategy == "ensemble":
+        # Average the three core optimizers to reduce single-model/estimation risk.
+        w_mvo = run_markowitz_mvo(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
+        w_rp = run_risk_parity(Sigma)
+        w_hrp = run_hrp(Sigma, assets)
+        weights = (w_mvo + w_rp + w_hrp) / 3.0
+        weights = weights / np.sum(weights)
     else:
         logger.warning(f"Unknown optimization strategy: {strategy}. Defaulting to Equal Weights.")
         weights = np.ones(n) / n
-        
+
     return {assets[i]: float(weights[i]) for i in range(n)}
+
+
+def run_resampled_weights(
+    mu: np.ndarray,
+    Sigma: np.ndarray,
+    rf: float,
+    assets: List[str],
+    benchmark_weights: Dict[str, float] = None,
+    max_deviation: float = None,
+    n_resamples: int = 50,
+    n_obs: int = 252,
+) -> np.ndarray:
+    """Michaud resampled efficiency: bootstrap return/cov estimates from the input
+    distribution, re-run max-Sharpe each time, and average the weights. This curbs the
+    mean-variance optimizer's tendency to over-fit noisy point estimates."""
+    n = len(mu)
+    rng = np.random.default_rng(42)
+    acc = np.zeros(n)
+    count = 0
+    for _ in range(n_resamples):
+        try:
+            sample = rng.multivariate_normal(mu, Sigma, size=n_obs)
+            mu_s = sample.mean(axis=0)
+            Sigma_s = np.cov(sample, rowvar=False)
+            w = run_markowitz_mvo(mu_s, Sigma_s, rf, assets, benchmark_weights, max_deviation)
+            if np.all(np.isfinite(w)):
+                acc += w
+                count += 1
+        except Exception:
+            continue
+    if count == 0:
+        logger.warning("Resampling produced no valid draws; using equal weights.")
+        return np.ones(n) / n
+    w = acc / count
+    return w / np.sum(w)
 
 def run_markowitz_mvo(
     mu: np.ndarray,

@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 import re
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -10,6 +11,29 @@ from app.macro_data import fetch_macro_context, format_macro_context_for_llm
 logger = logging.getLogger(__name__)
 
 _last_macro_context = {}
+
+# Path to the institutional report style guide the LLM must read before
+# composing the final portfolio report.
+_REPORT_GUIDE_PATH = os.path.join(os.path.dirname(__file__), "report_style_guide.md")
+_report_guide_cache = None
+
+
+def load_report_style_guide() -> str:
+    """
+    Loads (and caches) the House Style guide that defines the persona, structure,
+    and mandatory Risk & Mitigation rules for the AI-generated final report.
+    Returns an empty string if the guide cannot be read.
+    """
+    global _report_guide_cache
+    if _report_guide_cache is None:
+        try:
+            with open(_REPORT_GUIDE_PATH, encoding="utf-8") as f:
+                _report_guide_cache = f.read()
+            logger.info("Loaded report style guide from report_style_guide.md")
+        except Exception as e:
+            logger.warning(f"Could not load report style guide: {e}. Proceeding without it.")
+            _report_guide_cache = ""
+    return _report_guide_cache
 
 # Define Pydantic models for validation
 class AbsoluteView(BaseModel):
@@ -312,11 +336,21 @@ async def generate_portfolio_commentary(
         change = optimized_weights[asset] - market_weights.get(asset, 0)
         weight_changes[asset] = round(change * 100, 2)
     
-    prompt = f"""You are an expert Korean pension fund portfolio analyst. Generate a concise, professional investment commentary in Korean (한국어) analyzing the portfolio optimization results.
+    style_guide = load_report_style_guide()
+
+    prompt = f"""{style_guide}
+
+=============================================================================
+END OF HOUSE STYLE GUIDE. You have now read it in full. Compose the FINAL
+REPORT below, conforming to every rule above — especially the MANDATORY
+Risk & Mitigation section (≥ 3 portfolio-specific risk→mitigation blocks).
+=============================================================================
+
+=== DATA CONTEXT FOR THIS REPORT (use ONLY these figures) ===
 
 Optimized Weights: {json.dumps(optimized_weights, indent=2)}
 Benchmark (NPS) Weights: {json.dumps(market_weights, indent=2)}
-Weight Changes vs Benchmark: {json.dumps(weight_changes, indent=2)}
+Weight Changes vs Benchmark (percentage points): {json.dumps(weight_changes, indent=2)}
 Posterior Expected Returns: {json.dumps(posterior_returns, indent=2)}
 
 Risk Metrics:
@@ -324,18 +358,13 @@ Risk Metrics:
 - Volatility: {risk_metrics.get('volatility', 'N/A')}
 - 95% VaR: {risk_metrics.get('var_95', 'N/A')}
 - 95% CVaR: {risk_metrics.get('cvar_95', 'N/A')}
-- Max Drawdown: {risk_metrics.get('max_drawdown_estimate', 'N/A')}
+- Max Drawdown (Monte Carlo): {risk_metrics.get('max_drawdown_estimate', 'N/A')}
 
 Market Regime: {macro_context.get('market_regime', 'UNKNOWN')}
 VIX: {macro_context.get('vix', 'N/A')}
 
-Write a professional 3-4 paragraph commentary in Korean that:
-1. Explains WHY the optimizer tilted weights in the direction it did
-2. Identifies the single biggest risk factor for this portfolio
-3. Gives a concrete action recommendation (rebalance frequency, hedge suggestion)
-4. References specific market data points
-
-Output ONLY the Korean commentary text, no JSON, no markdown headers."""
+Now write the report. Output ONLY the report body in Korean, plain text per the
+guide's formatting rules — no JSON, no Markdown syntax, no preamble or sign-off."""
     
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
