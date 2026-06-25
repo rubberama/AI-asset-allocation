@@ -203,14 +203,14 @@ def _parse_pub_date(raw: str) -> Optional[datetime]:
     except Exception:
         return None
 
-async def fetch_rss_headlines_for_category(category: str, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+async def fetch_rss_headlines_for_category(category: str, query: str, limit: int = 50, age_days: int = 7) -> List[Dict[str, Any]]:
     """
     Fetches recent investment-related headlines from Google News RSS, filtered by
-    category and publication date (only articles from the past 7 days are kept).
+    category and publication date (only articles from the past age_days days are kept).
     """
     encoded_query = urllib.parse.quote_plus(query)
     url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-    cutoff = datetime.utcnow() - timedelta(days=MAX_ARTICLE_AGE_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=age_days)
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(url, timeout=12.0)
@@ -219,7 +219,9 @@ async def fetch_rss_headlines_for_category(category: str, query: str, limit: int
             items = root.findall(".//item")
             headlines = []
             skipped_old = 0
-            for item in items[:limit]:
+            for item in items:
+                if len(headlines) >= limit:
+                    break
                 title_elem = item.find("title")
                 title = title_elem.text if title_elem is not None else ""
 
@@ -254,12 +256,13 @@ async def fetch_rss_headlines_for_category(category: str, query: str, limit: int
                 })
 
             if skipped_old:
-                logger.info(f"[{category}] Skipped {skipped_old} articles older than {MAX_ARTICLE_AGE_DAYS} days.")
+                logger.info(f"[{category}] Skipped {skipped_old} articles older than {age_days} days.")
             logger.info(f"[{category}] Kept {len(headlines)} fresh articles.")
             return headlines
     except Exception as e:
         logger.error(f"Failed to fetch RSS for category {category}: {e}")
     return []
+
 
 async def generate_theses_with_llm(headlines: List[Dict[str, Any]], category_hint: Optional[str] = None) -> List[Dict[str, Any]]:
     """
@@ -558,6 +561,87 @@ def _serialize_feed(items: List[Any]) -> List[Dict[str, Any]]:
     return serialized
 
 
+async def select_top_articles_with_llm(headlines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Sends the list of headlines to the LLM and asks it to select the top 10-15 articles
+    that are most relevant and impactful for tactical asset allocation.
+    Returns the selected subset of headlines.
+    """
+    if not headlines:
+        return []
+    
+    # If the number of headlines is already between 10 and 15 (or fewer), no need to filter
+    if len(headlines) <= 15:
+        return headlines
+
+    # Format the headlines for the prompt
+    headlines_formatted = []
+    for idx, h in enumerate(headlines):
+        headlines_formatted.append(
+            f"Index: {idx}\n"
+            f"Title: {h['title']}\n"
+            f"Source: {h.get('source', 'N/A')} | Date: {h.get('pubDate', '')}\n"
+            f"Category: {h.get('category_hint', 'MACRO')}\n"
+            f"Summary: {h.get('description', '') or 'N/A'}\n"
+        )
+    
+    headlines_text = "\n---\n".join(headlines_formatted)
+
+    system_prompt = """You are a senior asset manager at a sovereign wealth fund.
+Given the following list of recent financial headlines, select the top 10 to 15 articles that are most relevant, important, and impactful for tactical asset allocation decisions (macroeconomic changes, equity earnings/valuations, bond yields, currency/commodity moves, central bank policies).
+
+You must select AT LEAST 10 and AT MOST 15 articles.
+Output your selection as a JSON object containing a single key "selected_indices" mapping to a list of integers representing the chosen indices (e.g. {"selected_indices": [0, 2, 5, ...]}).
+Output ONLY valid, parseable JSON. Do not write markdown decorations other than the JSON block.
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
+        "X-Title": "NPS Black-Litterman Platform"
+    }
+    
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Here is the list of headlines:\n\n{headlines_text}"}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1,
+        "max_tokens": 1000
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=20.0)
+        
+        if response.status_code == 200:
+            res_json = response.json()
+            raw_content = res_json["choices"][0]["message"]["content"]
+            parsed_data = clean_and_parse_json(raw_content)
+            selected_indices = parsed_data.get("selected_indices", [])
+            
+            # Filter and validate indices
+            valid_indices = [int(i) for i in selected_indices if isinstance(i, (int, str)) and str(i).isdigit() and 0 <= int(i) < len(headlines)]
+            
+            # Enforce 10-15 limit constraint
+            if len(valid_indices) < 10 or len(valid_indices) > 15:
+                # If LLM failed to return 10-15 valid indices, fallback to taking the first 12 articles
+                logger.warning(f"LLM selected {len(valid_indices)} indices (expected 10-15). Falling back to top 12.")
+                valid_indices = list(range(min(12, len(headlines))))
+                
+            selected_headlines = [headlines[i] for i in valid_indices]
+            logger.info(f"LLM successfully selected {len(selected_headlines)} articles out of {len(headlines)}.")
+            return selected_headlines
+    except Exception as e:
+        logger.error(f"Failed to select articles with LLM: {e}. Falling back to first 12.")
+    
+    # Ultimate fallback: return the first 12 items
+    return headlines[:12]
+
+
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:
     """
     Retrieves market theses from DB cache. If empty or stale, fetches from RSS, analyzes with LLM, and caches.
@@ -588,27 +672,80 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
             "MACRO": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "inflation" OR "interest rates" OR "Fed" OR "GDP" OR "monetary policy"'
         }
         
-        # Fetch RSS in parallel
+        # Fetch RSS with 7-day recency first
+        age_days = 7
         fetch_tasks = [
-            fetch_rss_headlines_for_category(cat, q, limit=10)
+            fetch_rss_headlines_for_category(cat, q, limit=50, age_days=age_days)
             for cat, q in queries.items()
         ]
         category_headlines = await asyncio.gather(*fetch_tasks)
         
-        # Generate theses with LLM in parallel (to prevent timeouts and token limit issues)
-        llm_tasks = []
-        categories_with_headlines = []
-        for idx, (cat, headlines) in enumerate(zip(queries.keys(), category_headlines)):
-            if headlines:
-                llm_tasks.append(generate_theses_with_llm(headlines, category_hint=cat))
-                categories_with_headlines.append((cat, headlines))
+        # Flatten and deduplicate by URL or normalized Title
+        seen_urls = set()
+        seen_titles = set()
+        unique_headlines = []
+        for headlines in category_headlines:
+            for h in headlines:
+                url = h.get("url")
+                title_norm = h.get("title", "").strip().lower()
+                if url and url not in seen_urls and title_norm not in seen_titles:
+                    seen_urls.add(url)
+                    seen_titles.add(title_norm)
+                    unique_headlines.append(h)
+
+        # If pool size is under 30, retry with 14-day recency
+        if len(unique_headlines) < 30:
+            logger.info(f"Only {len(unique_headlines)} fresh articles found with {age_days}-day limit. Relaxing to 14 days...")
+            age_days = 14
+            fetch_tasks = [
+                fetch_rss_headlines_for_category(cat, q, limit=50, age_days=age_days)
+                for cat, q in queries.items()
+            ]
+            category_headlines = await asyncio.gather(*fetch_tasks)
+            
+            seen_urls.clear()
+            seen_titles.clear()
+            unique_headlines.clear()
+            for headlines in category_headlines:
+                for h in headlines:
+                    url = h.get("url")
+                    title_norm = h.get("title", "").strip().lower()
+                    if url and url not in seen_urls and title_norm not in seen_titles:
+                        seen_urls.add(url)
+                        seen_titles.add(title_norm)
+                        unique_headlines.append(h)
+
+        logger.info(f"Collected pool of {len(unique_headlines)} articles (target >= 30). Choosing 10-15 to analyze...")
+        
+        # Select 10-15 articles from the pool
+        selected_headlines = await select_top_articles_with_llm(unique_headlines)
+        
+        # Scrape full text content for the selected articles in parallel
+        logger.info(f"Concurrently scraping full webpage text for the selected {len(selected_headlines)} articles...")
+        scrape_tasks = [fetch_url_text(h["url"]) for h in selected_headlines]
+        scraped_texts = await asyncio.gather(*scrape_tasks)
+        
+        # Enrich headlines with scraped text or fallback to original description
+        for h, text in zip(selected_headlines, scraped_texts):
+            if text and len(text.strip()) >= MIN_ARTICLE_CHARS:
+                h["description"] = text.strip()[:8000]
+            else:
+                logger.info(f"Scrape failed/short for {h.get('url')}. Falling back to RSS summary.")
+
+        # Generate theses for selected articles in parallel (using single-article tasks)
+        logger.info(f"Concurrently generating theses for {len(selected_headlines)} articles...")
+        thesis_tasks = [
+            generate_theses_with_llm([h], category_hint=h.get("category_hint"))
+            for h in selected_headlines
+        ]
         
         all_theses = []
-        if llm_tasks:
+        if thesis_tasks:
             try:
-                llm_results = await asyncio.gather(*llm_tasks)
-                for cat_theses in llm_results:
-                    all_theses.extend(cat_theses)
+                thesis_results = await asyncio.gather(*thesis_tasks)
+                for cat_theses in thesis_results:
+                    if cat_theses:
+                        all_theses.extend(cat_theses)
             except Exception as e:
                 logger.error(f"Failed parallel LLM thesis generation: {e}")
         
