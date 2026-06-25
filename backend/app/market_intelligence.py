@@ -1,7 +1,8 @@
 import logging
 import httpx
+import os
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.db import MarketIntelligence
@@ -12,8 +13,33 @@ from app.config import (
 )
 import json
 import re
+import asyncio
+import urllib.parse
+from email.utils import parsedate_to_datetime
 
 logger = logging.getLogger(__name__)
+
+# --- Digest persona (article → thesis) ---
+_DIGEST_GUIDE_PATH = os.path.join(os.path.dirname(__file__), "digest_persona.md")
+_digest_guide_cache: Optional[str] = None
+
+
+def load_digest_persona() -> str:
+    """
+    Loads (and caches) the Article Digestion persona that defines how user-submitted
+    articles are analyzed and structured into Market Intelligence theses.
+    Returns an empty string if the guide cannot be read.
+    """
+    global _digest_guide_cache
+    if _digest_guide_cache is None:
+        try:
+            with open(_DIGEST_GUIDE_PATH, encoding="utf-8") as f:
+                _digest_guide_cache = f.read()
+            logger.info("Loaded digest persona from digest_persona.md")
+        except Exception as e:
+            logger.warning(f"Could not load digest persona: {e}. Proceeding without it.")
+            _digest_guide_cache = ""
+    return _digest_guide_cache
 
 # How long a cached feed stays "fresh" before a re-sync is triggered.
 CACHE_TTL_HOURS = 6
@@ -162,7 +188,80 @@ async def fetch_rss_headlines() -> List[Dict[str, Any]]:
         logger.error(f"Failed to fetch RSS: {e}")
     return []
 
-async def generate_theses_with_llm(headlines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+# Maximum age of articles we will accept (7 days)
+MAX_ARTICLE_AGE_DAYS = 7
+
+def _parse_pub_date(raw: str) -> Optional[datetime]:
+    """Parses an RFC-2822 RSS pubDate string into a naive UTC datetime.
+    Returns None if the string cannot be parsed."""
+    if not raw:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw)
+        # Normalise to naive UTC so we can compare with datetime.utcnow()
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        return None
+
+async def fetch_rss_headlines_for_category(category: str, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    Fetches recent investment-related headlines from Google News RSS, filtered by
+    category and publication date (only articles from the past 7 days are kept).
+    """
+    encoded_query = urllib.parse.quote_plus(query)
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
+    cutoff = datetime.utcnow() - timedelta(days=MAX_ARTICLE_AGE_DAYS)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=12.0)
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            items = root.findall(".//item")
+            headlines = []
+            skipped_old = 0
+            for item in items[:limit]:
+                title_elem = item.find("title")
+                title = title_elem.text if title_elem is not None else ""
+
+                link_elem = item.find("link")
+                link = link_elem.text if link_elem is not None else ""
+
+                pub_date_elem = item.find("pubDate")
+                pub_date_raw = pub_date_elem.text if pub_date_elem is not None else ""
+                pub_dt = _parse_pub_date(pub_date_raw)
+
+                # --- RECENCY FILTER ---
+                if pub_dt is not None and pub_dt < cutoff:
+                    skipped_old += 1
+                    continue  # Article is too old — skip it
+
+                # Use parsed ISO date for storage; fall back to now if unparseable
+                pub_date_iso = pub_dt.isoformat() if pub_dt else datetime.utcnow().isoformat()
+
+                source_elem = item.find("source")
+                source = source_elem.text if source_elem is not None else "Financial News"
+
+                headlines.append({
+                    "title": title,
+                    "pubDate": pub_date_iso,
+                    "source": source,
+                    "link": link,
+                    "url": link,
+                    "description": title,
+                    "image_url": "",
+                    "entities": "",
+                    "category_hint": category
+                })
+
+            if skipped_old:
+                logger.info(f"[{category}] Skipped {skipped_old} articles older than {MAX_ARTICLE_AGE_DAYS} days.")
+            logger.info(f"[{category}] Kept {len(headlines)} fresh articles.")
+            return headlines
+    except Exception as e:
+        logger.error(f"Failed to fetch RSS for category {category}: {e}")
+    return []
+
+async def generate_theses_with_llm(headlines: List[Dict[str, Any]], category_hint: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Sends headlines to OpenRouter and asks it to output structured analyst reports.
     """
@@ -181,8 +280,35 @@ async def generate_theses_with_llm(headlines: List[Dict[str, Any]]) -> List[Dict
         for h in headlines
     ])
 
-    system_prompt = """
-You are a senior asset manager and macroeconomic research director at a leading sovereign wealth fund.
+    extra_instructions = ""
+    if category_hint == "EQUITY":
+        extra_instructions = """
+IMPORTANT FOR ASSET CLASSIFICATION:
+For this set of Equity articles, the "ai_interpretation" -> "impacted_assets" list MUST contain either "GLOBAL_STOCK" or "KR_STOCK" (or both). It must not contain other asset classes unless they are secondary.
+"""
+    elif category_hint == "BOND":
+        extra_instructions = """
+IMPORTANT FOR ASSET CLASSIFICATION:
+For this set of Fixed Income/Bond articles, the "ai_interpretation" -> "impacted_assets" list MUST contain either "GLOBAL_BOND" or "KR_BOND" (or both). It must not contain other asset classes unless they are secondary.
+"""
+    elif category_hint == "ALTERNATIVE":
+        extra_instructions = """
+IMPORTANT FOR ASSET CLASSIFICATION:
+For this set of Alternative assets articles, the "ai_interpretation" -> "impacted_assets" list MUST contain "ALTERNATIVE". It must not contain other asset classes unless they are secondary.
+"""
+    elif category_hint == "MACRO":
+        extra_instructions = """
+IMPORTANT FOR ASSET CLASSIFICATION:
+For this set of Macroeconomics/Economy articles, the "ai_interpretation" -> "impacted_assets" list MUST NOT contain any of "GLOBAL_STOCK", "KR_STOCK", "GLOBAL_BOND", "KR_BOND", or "ALTERNATIVE". Leave "impacted_assets" empty, or use other keys if needed, so they are classified as Macro.
+"""
+
+    system_prompt = f"""{load_digest_persona()}
+
+============================================================================
+END OF DIGEST PERSONA. You have now read it in full. Compose EACH THESIS
+below, conforming to every rule above.
+============================================================================
+
 Analyze the following recent financial headlines and, for EACH headline, generate a structured market intelligence object containing:
 1. "id": A unique string (e.g. t1, t2, t3).
 2. "author": A realistic name of a financial professional or firm (e.g. Goldman Sachs Research, Morgan Stanley Wealth, John Kowalski).
@@ -205,6 +331,8 @@ Analyze the following recent financial headlines and, for EACH headline, generat
 
 You must output a JSON object containing a single key "theses" pointing to a list of these structured items.
 Ensure all asset keys are valid. Output ONLY valid, parseable JSON. Do not write markdown decorations other than JSON block.
+
+{extra_instructions}
 """
 
     headers = {
@@ -395,6 +523,7 @@ async def ingest_article(
             image_url=t.get("image_url", ""),
             ai_interpretation=t.get("ai_interpretation", {}),
             full_report=t.get("full_report"),
+            category="USER_ASSET"
         )
         db.add(db_item)
         db.commit()
@@ -421,6 +550,7 @@ def _serialize_feed(items: List[Any]) -> List[Dict[str, Any]]:
             "image_url": item.image_url,
             "ai_interpretation": item.ai_interpretation,
             "full_report": item.full_report,
+            "category": item.category or "NEWS",
         }
         for item in items
     ]
@@ -432,56 +562,95 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
     """
     Retrieves market theses from DB cache. If empty or stale, fetches from RSS, analyzes with LLM, and caches.
     """
-    # Check cache first
-    cached_items = db.query(MarketIntelligence).all()
+    # Check cache first for NEWS items
+    news_items = db.query(MarketIntelligence).filter(
+        (MarketIntelligence.category == "NEWS") | (MarketIntelligence.category.is_(None))
+    ).all()
     
     is_stale = True
-    if cached_items:
+    if news_items:
         try:
-            latest_created = max([item.created_at for item in cached_items if item.created_at])
+            latest_created = max([item.created_at for item in news_items if item.created_at])
             if datetime.utcnow() - latest_created < timedelta(hours=CACHE_TTL_HOURS):
                 is_stale = False
         except Exception as e:
             logger.warning(f"Error checking cache freshness: {e}")
             is_stale = True
 
-    if not cached_items or is_stale or force:
-        logger.info("Stale or missing cache. Syncing market intelligence...")
-        headlines = await fetch_marketaux_headlines()
-        if not headlines:
-            logger.info("Marketaux unavailable or empty. Falling back to Google News RSS.")
-            headlines = await fetch_rss_headlines()
-        if headlines:
-            theses = await generate_theses_with_llm(headlines)
-            if theses:
-                try:
-                    # Clear old cache
-                    db.query(MarketIntelligence).delete()
-                    # Insert new cache
-                    for t in theses:
-                        db_item = MarketIntelligence(
-                            id=t["id"],
-                            author=t["author"],
-                            author_title=t["author_title"],
-                            source=t["source"],
-                            date=t["date"],
-                            title=t["title"],
-                            content=t["content"],
-                            image_url=t["image_url"],
-                            ai_interpretation=t["ai_interpretation"],
-                            full_report=t["full_report"]
-                        )
-                        db.add(db_item)
-                    db.commit()
-                    logger.info(f"Successfully cached {len(theses)} live financial theses.")
-                    return _serialize_feed(db.query(MarketIntelligence).all())
-                except Exception as e:
-                    logger.error(f"Failed to commit new theses to DB: {e}")
-                    db.rollback()
+    if not news_items or is_stale or force:
+        logger.info("Stale or missing news cache. Syncing category-specific market intelligence...")
+        
+        # 1. Fetch RSS headlines for the 4 categories
+        queries = {
+            "EQUITY": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "equity valuations" OR "earnings yield" OR "stock market index" -earnings -ticker',
+            "BOND": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "yield curve" OR "treasury yields" OR "sovereign bonds" OR "credit spreads"',
+            "ALTERNATIVE": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "gold spot" OR "crude oil" OR "real estate REIT" OR "bitcoin macro" -earnings',
+            "MACRO": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "inflation" OR "interest rates" OR "Fed" OR "GDP" OR "monetary policy"'
+        }
+        
+        # Fetch RSS in parallel
+        fetch_tasks = [
+            fetch_rss_headlines_for_category(cat, q, limit=10)
+            for cat, q in queries.items()
+        ]
+        category_headlines = await asyncio.gather(*fetch_tasks)
+        
+        # Generate theses with LLM in parallel (to prevent timeouts and token limit issues)
+        llm_tasks = []
+        categories_with_headlines = []
+        for idx, (cat, headlines) in enumerate(zip(queries.keys(), category_headlines)):
+            if headlines:
+                llm_tasks.append(generate_theses_with_llm(headlines, category_hint=cat))
+                categories_with_headlines.append((cat, headlines))
+        
+        all_theses = []
+        if llm_tasks:
+            try:
+                llm_results = await asyncio.gather(*llm_tasks)
+                for cat_theses in llm_results:
+                    all_theses.extend(cat_theses)
+            except Exception as e:
+                logger.error(f"Failed parallel LLM thesis generation: {e}")
+        
+        if all_theses:
+            try:
+                # Clear ONLY the old news cache. Leave RESEARCH and USER_ASSET items alone!
+                db.query(MarketIntelligence).filter(
+                    (MarketIntelligence.category == "NEWS") | (MarketIntelligence.category.is_(None))
+                ).delete()
+                
+                # Assign stable, unique news IDs to prevent collisions
+                timestamp_sec = int(datetime.utcnow().timestamp())
+                for idx, t in enumerate(all_theses):
+                    t["id"] = f"news-{timestamp_sec}-{idx}"
+                
+                # Insert new cache
+                for t in all_theses:
+                    db_item = MarketIntelligence(
+                        id=t["id"],
+                        author=t.get("author", "NPS Research Desk"),
+                        author_title=t.get("author_title", "Senior Macro Strategist"),
+                        source=t.get("source", "Financial News"),
+                        date=t.get("date", datetime.utcnow().isoformat()),
+                        title=t.get("title", ""),
+                        content=t.get("content", ""),
+                        image_url=t.get("image_url", ""),
+                        ai_interpretation=t.get("ai_interpretation", {}),
+                        full_report=t.get("full_report"),
+                        category="NEWS"
+                    )
+                    db.add(db_item)
+                db.commit()
+                logger.info(f"Successfully cached {len(all_theses)} live financial theses from RSS feeds.")
+                return _serialize_feed(db.query(MarketIntelligence).all())
+            except Exception as e:
+                logger.error(f"Failed to commit new theses to DB: {e}")
+                db.rollback()
 
-    # Return cached items
-    if cached_items:
-        return _serialize_feed(cached_items)
+    # Return cached items (all categories, including NEWS, RESEARCH, USER_ASSET)
+    all_cached = db.query(MarketIntelligence).all()
+    if all_cached:
+        return _serialize_feed(all_cached)
 
     # Fallback if everything fails
     logger.warning("All sync attempts failed. Serving fallback theses.")
@@ -493,3 +662,173 @@ async def fetch_market_intelligence(db: Session) -> List[Dict[str, Any]]:
     """
     return await sync_market_intelligence(db)
 
+
+async def promote_thesis_to_intel(db: Session, thesis_id: str) -> Dict[str, Any]:
+    """
+    Promotes a house thesis from the Research Pipeline to Market Intelligence.
+    - Generates a full structured Bloomberg report using the LLM.
+    - Saves it as category="RESEARCH".
+    - Marks the original thesis as approved.
+    """
+    from app.db import Thesis as DBThesis
+    thesis_row = db.query(DBThesis).filter(DBThesis.id == thesis_id).first()
+    if not thesis_row:
+        return {"status": "error", "message": "Thesis not found"}
+
+    # Set up prompt to generate full report sections from thesis rationale & evidence
+    system_prompt = """
+You are a senior asset manager and macroeconomic research director at a leading sovereign wealth fund.
+Given the following investment thesis and supporting evidence, expand it into a structured "Bloomberg Terminal" analyst report.
+Output a JSON object containing:
+1. "executive_summary": A 2-3 sentence high-level overview.
+2. "rationale": Detailed macroeconomic reasoning (why this matters for global assets, rates, etc.).
+3. "target_assets": A string detailing target asset implications (e.g. "Bullish: GLOBAL_STOCK. Bearish: KR_STOCK.").
+4. "recommendation": Specific asset allocation recommendation for a pension fund.
+5. "risk_factors": Key risk factors or scenarios where this thesis fails.
+
+Output ONLY valid, parseable JSON. Do not write markdown decorations other than JSON block.
+"""
+    user_content = f"""
+Title: {thesis_row.title}
+View Type: {thesis_row.view_type}
+Asset/s: {thesis_row.asset or f"{thesis_row.asset1} vs {thesis_row.asset2}"}
+Rationale: {thesis_row.rationale}
+Evidence: {thesis_row.evidence}
+Confidence: {thesis_row.confidence_calibrated}
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
+        "X-Title": "NPS Black-Litterman Platform"
+    }
+    
+    payload = {
+        "model": ARTICLE_DIGESTION_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2
+    }
+
+    full_report = None
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=25.0)
+        if response.status_code == 200:
+            res_json = response.json()
+            raw_content = res_json["choices"][0]["message"]["content"]
+            full_report = clean_and_parse_json(raw_content)
+    except Exception as e:
+        logger.error(f"Failed to generate full report for thesis promotion: {e}")
+
+    # Fallback report if LLM fails
+    if not full_report:
+        full_report = {
+            "executive_summary": thesis_row.rationale,
+            "rationale": f"Supported by evidence: {thesis_row.evidence}",
+            "target_assets": f"Target: {thesis_row.asset or f'{thesis_row.asset1} vs {thesis_row.asset2}'} ({thesis_row.view_type})",
+            "recommendation": f"Allocate in direction of thesis with confidence {thesis_row.confidence_calibrated}",
+            "risk_factors": "General market volatility or estimation error."
+        }
+
+    # Format into MarketIntelligence row shape
+    intel_id = f"promoted-{thesis_row.id}"
+    
+    # Map assets for classification in frontend
+    impacted = []
+    if thesis_row.view_type == "relative" and thesis_row.asset1 and thesis_row.asset2:
+        impacted = [thesis_row.asset1, thesis_row.asset2]
+    elif thesis_row.asset:
+        impacted = [thesis_row.asset]
+
+    t_data = {
+        "id": intel_id,
+        "author": "NPS House Strategy Team",
+        "author_title": "Macro Research Director",
+        "source": "NPS House View",
+        "date": datetime.utcnow().isoformat(),
+        "title": thesis_row.title or "Consolidated House View",
+        "content": thesis_row.rationale or "",
+        "image_url": "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab",
+        "ai_interpretation": {
+            "summary": thesis_row.rationale or "",
+            "impacted_assets": impacted,
+            "confidence": thesis_row.confidence_calibrated
+        },
+        "full_report": full_report,
+        "category": "RESEARCH"
+    }
+
+    try:
+        # Check if already promoted, if so overwrite
+        existing = db.query(MarketIntelligence).filter(MarketIntelligence.id == intel_id).first()
+        if existing:
+            db.delete(existing)
+            
+        db_item = MarketIntelligence(
+            id=t_data["id"],
+            author=t_data["author"],
+            author_title=t_data["author_title"],
+            source=t_data["source"],
+            date=t_data["date"],
+            title=t_data["title"],
+            content=t_data["content"],
+            image_url=t_data["image_url"],
+            ai_interpretation=t_data["ai_interpretation"],
+            full_report=t_data["full_report"],
+            category=t_data["category"]
+        )
+        db.add(db_item)
+        
+        # Approve original thesis
+        thesis_row.status = "approved"
+        db.commit()
+        logger.info(f"Successfully promoted thesis {thesis_id} to market intelligence category RESEARCH.")
+        
+        feed = _serialize_feed(db.query(MarketIntelligence).all())
+        return {"status": "ok", "thesis": t_data, "data": feed}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to persist promoted thesis: {e}")
+        return {"status": "error", "message": f"데이터베이스 저장에 실패했습니다: {e}"}
+
+
+async def promote_multiple_theses_to_intel(db: Session, thesis_ids: List[str]) -> Dict[str, Any]:
+    """
+    Batch-promotes multiple house theses to Market Intelligence in parallel.
+    Fires one LLM call per thesis concurrently using asyncio.gather().
+    Returns a combined feed with all promoted theses as category='RESEARCH'.
+    """
+    if not thesis_ids:
+        return {"status": "error", "message": "No thesis IDs provided."}
+
+    # Run individual promotions in parallel
+    tasks = [promote_thesis_to_intel(db, tid) for tid in thesis_ids]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    promoted = []
+    errors = []
+    for tid, result in zip(thesis_ids, results):
+        if isinstance(result, Exception):
+            errors.append({"thesis_id": tid, "error": str(result)})
+            logger.error(f"Batch promotion failed for thesis {tid}: {result}")
+        elif isinstance(result, dict) and result.get("status") == "ok":
+            promoted.append(result.get("thesis"))
+        else:
+            errors.append({"thesis_id": tid, "error": result.get("message", "Unknown error") if isinstance(result, dict) else "Unknown"})
+
+    if not promoted and errors:
+        return {"status": "error", "errors": errors}
+
+    feed = _serialize_feed(db.query(MarketIntelligence).all())
+    return {
+        "status": "ok",
+        "promoted_count": len(promoted),
+        "promoted": promoted,
+        "errors": errors,
+        "data": feed
+    }

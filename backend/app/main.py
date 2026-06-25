@@ -60,6 +60,12 @@ class IngestUrlRequest(BaseModel):
     url: Optional[str] = Field(None, description="Article URL to fetch, read, and analyze into a thesis")
     content: Optional[str] = Field(None, description="Pasted article text (used when the URL is not fetchable)")
 
+class PromoteThesisRequest(BaseModel):
+    thesis_id: str = Field(..., description="ID of the thesis to promote to market intelligence category RESEARCH")
+
+class PromoteMultipleThesesRequest(BaseModel):
+    thesis_ids: List[str] = Field(..., description="List of thesis IDs to batch-promote to Market Intelligence")
+
 class AllocateRequest(BaseModel):
     optimizer: str = Field("markowitz", description="markowitz | risk_parity | hrp | resampled | ensemble")
     max_deviation: Optional[float] = Field(0.10, description="Max deviation vs NPS benchmark weights")
@@ -381,6 +387,42 @@ async def ingest_market_intelligence_from_url(request: IngestUrlRequest, db: Ses
         raise
     except Exception as e:
         logger.error(f"Failed to ingest article: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/market-intelligence/promote")
+async def promote_thesis(request: PromoteThesisRequest, db: Session = Depends(get_db)):
+    """
+    Promotes a house thesis from the Research Pipeline to the Market Intelligence tab (category: RESEARCH),
+    marking it as approved and generating a detailed analyst report.
+    """
+    try:
+        from app.market_intelligence import promote_thesis_to_intel
+        result = await promote_thesis_to_intel(db, request.thesis_id)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message", "Promotion failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to promote thesis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/market-intelligence/promote-batch")
+async def promote_theses_batch(request: PromoteMultipleThesesRequest, db: Session = Depends(get_db)):
+    """
+    Batch-promotes multiple house theses from the Research Pipeline to Market Intelligence in parallel.
+    Fires one LLM completion per thesis concurrently, returning a combined feed.
+    """
+    try:
+        from app.market_intelligence import promote_multiple_theses_to_intel
+        result = await promote_multiple_theses_to_intel(db, request.thesis_ids)
+        if result.get("status") == "error" and not result.get("promoted"):
+            raise HTTPException(status_code=400, detail=result.get("message", "Batch promotion failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to batch-promote theses: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/research/collect")

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import DATABASE_URL
 
@@ -38,6 +38,7 @@ class MarketIntelligence(Base):
     image_url = Column(String, nullable=False)
     ai_interpretation = Column(JSON, nullable=False)
     full_report = Column(JSON, nullable=True) # Full structured report: executive_summary, rationale, target_assets, recommendation, risk_factors
+    category = Column(String, default="NEWS", nullable=True) # NEWS | RESEARCH | USER_ASSET
 
 
 class Document(Base):
@@ -97,4 +98,15 @@ def get_db():
         db.close()
 
 def init_db():
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    try:
+        if "market_intelligence" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("market_intelligence")]
+            if "category" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("DROP TABLE market_intelligence"))
+                print("Dropped cached market_intelligence table to run category column migration.")
+    except Exception as e:
+        print(f"Migration check warning: {e}")
     Base.metadata.create_all(bind=engine)

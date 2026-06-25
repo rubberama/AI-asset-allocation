@@ -35,7 +35,7 @@ TICKER_DETAILS = {
 
 def fetch_macro_context() -> dict:
     """
-    Fetches 20+ key macro market indicators with 10 days of history for sparklines.
+    Fetches 20+ key macro market indicators with 3 months of history for sparklines.
     """
     indicators = {}
     
@@ -43,10 +43,10 @@ def fetch_macro_context() -> dict:
     for key, t_info in TICKER_DETAILS.items():
         try:
             ticker_obj = yf.Ticker(t_info["ticker"])
-            history_df = ticker_obj.history(period="15d")
+            history_df = ticker_obj.history(period="3mo")
             if not history_df.empty:
-                closes = history_df["Close"].dropna().tail(10).tolist()
-                dates = history_df.index.strftime("%Y-%m-%d").tolist()[-10:]
+                closes = history_df["Close"].dropna().tolist()
+                dates = history_df.index.strftime("%Y-%m-%d").tolist()
                 
                 if len(closes) > 0:
                     current_val = round(closes[-1], 2)

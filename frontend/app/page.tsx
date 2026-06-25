@@ -8,7 +8,8 @@ import {
 import { 
   TrendingUp, ShieldAlert, Cpu, BarChart3, LineChart as LineIcon, 
   RefreshCw, Play, AlertCircle, Info, History, Globe, Newspaper,
-  MessageSquare, CheckCircle2, ChevronRight, Check
+  MessageSquare, CheckCircle2, ChevronRight, Check, ArrowUpCircle, Upload,
+  Download, FileText
 } from "lucide-react";
 
 // Asset translation
@@ -84,7 +85,7 @@ interface SimulationMeta {
   optimizer: string;
 }
 
-type TabType = "SIMULATOR" | "INTELLIGENCE" | "MACRO" | "RESEARCH";
+type TabType = "SIMULATOR" | "INTELLIGENCE" | "MACRO" | "RESEARCH" | "HELP";
 
 interface Thesis {
   id: string;
@@ -95,6 +96,7 @@ interface Thesis {
   title: string;
   content: string;
   image_url: string;
+  category?: "RESEARCH" | "NEWS" | "USER_ASSET";
   ai_interpretation: {
     summary: string;
     impacted_assets: string[];
@@ -106,6 +108,7 @@ interface Thesis {
     target_assets: any;
     recommendation: string;
     risk_factors: string;
+    source_url?: string;
   };
 }
 
@@ -155,8 +158,18 @@ export default function Dashboard() {
 
   // Search, Category, and Sorting States
   const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<"ALL" | "EQUITY" | "BOND" | "ALTERNATIVE">("ALL");
+  const [sourceFilter, setSourceFilter] = useState<"RESEARCH" | "NEWS" | "USER_ASSET">("RESEARCH");
+  const [categoryFilter, setCategoryFilter] = useState<"ALL" | "EQUITY" | "BOND" | "ALTERNATIVE" | "MACRO">("ALL");
   const [sortMode, setSortMode] = useState<"CHRONOLOGICAL" | "RANKED">("CHRONOLOGICAL");
+  const [isPromoting, setIsPromoting] = useState(false);
+  const [isDragOverDock, setIsDragOverDock] = useState(false);
+  const [showRunConfirmModal, setShowRunConfirmModal] = useState(false);
+  const [selectedMacroKey, setSelectedMacroKey] = useState<string>("SPY");
+  const [isDragOverBox3, setIsDragOverBox3] = useState(false);
+  const [activeHelpStep, setActiveHelpStep] = useState<number>(1);
+  // Promotion queue for Box 3 (batch promote)
+  const [promotionQueue, setPromotionQueue] = useState<string[]>([]);
+  const [batchPromoteProgress, setBatchPromoteProgress] = useState<string | null>(null);
 
   // Computed global rank map based on confidence
   const globalRankMap = React.useMemo(() => {
@@ -172,9 +185,13 @@ export default function Dashboard() {
 
   // Computed filtered and sorted feed
   const filteredAndSortedFeed = React.useMemo(() => {
-    let result = [...intelligenceFeed];
+    // First, filter by source type (RESEARCH, NEWS, USER_ASSET)
+    let result = intelligenceFeed.filter(thesis => {
+      const cat = thesis.category || "NEWS";
+      return cat === sourceFilter;
+    });
 
-    // 1. Category Filter
+    // 1. Category Filter (Subcategory)
     if (categoryFilter !== "ALL") {
       result = result.filter(thesis => {
         const assets = thesis.ai_interpretation?.impacted_assets || [];
@@ -186,6 +203,10 @@ export default function Dashboard() {
         }
         if (categoryFilter === "ALTERNATIVE") {
           return assets.includes("ALTERNATIVE");
+        }
+        if (categoryFilter === "MACRO") {
+          // Macro is anything that doesn't belong to Equity, Bond, or Alternatives
+          return !assets.some(a => ["KR_STOCK", "GLOBAL_STOCK", "KR_BOND", "GLOBAL_BOND", "ALTERNATIVE"].includes(a));
         }
         return true;
       });
@@ -210,7 +231,8 @@ export default function Dashboard() {
     }
 
     return result;
-  }, [intelligenceFeed, searchQuery, categoryFilter, sortMode]);
+  }, [intelligenceFeed, sourceFilter, categoryFilter, searchQuery, sortMode]);
+
 
   // Fetch initial simulation & history list
   useEffect(() => {
@@ -447,10 +469,10 @@ export default function Dashboard() {
     setUserComments(prev => ({...prev, [id]: comment}));
   };
 
-  const applyToSimulator = () => {
+  const applyToSimulator = (customOptimizer?: string, customDeviation?: number) => {
     if (selectedTheses.length === 0) return;
     
-    let combinedViewText = viewText ? viewText + "\n\n" : "";
+    let combinedViewText = "";
     combinedViewText += "--- [Selected Market Intelligence] ---\n";
     
     selectedTheses.forEach(id => {
@@ -467,6 +489,67 @@ export default function Dashboard() {
     
     setViewText(combinedViewText);
     setActiveTab("SIMULATOR");
+    handleRunSimulation(combinedViewText, customOptimizer, customDeviation);
+  };
+
+  const handlePromoteThesis = async (thesisId: string) => {
+    setIsPromoting(true);
+    setResearchMsg("연구의견(Thesis)을 Market Intelligence로 격상하며 보고서 상세 분석을 수행하고 있습니다...");
+    try {
+      const res = await fetch(`${apiBaseUrl}/market-intelligence/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thesis_id: thesisId })
+      });
+      if (res.ok) {
+        setResearchMsg("성공적으로 연구의견을 Market Intelligence 탭으로 이전했습니다.");
+        await fetchIntelligenceFeed();
+        await fetchResearchQueue();
+        await fetchTheses();
+        setSourceFilter("RESEARCH"); // Switch filter to RESEARCH to see it immediately!
+      } else {
+        const detail = await res.json().catch(() => ({}));
+        setResearchMsg(`이전 실패: ${detail?.detail || "알 수 없는 오류"}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setResearchMsg(`이전 오류: ${err?.message}`);
+    } finally {
+      setIsPromoting(false);
+    }
+  };
+
+  const handleBatchPromote = async () => {
+    if (promotionQueue.length === 0) return;
+    setIsPromoting(true);
+    setBatchPromoteProgress(`Analyzing ${promotionQueue.length} thesis${promotionQueue.length > 1 ? 'es' : ''} in parallel...`);
+    try {
+      const res = await fetch(`${apiBaseUrl}/market-intelligence/promote-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thesis_ids: promotionQueue })
+      });
+      if (res.ok) {
+        const result = await res.json();
+        const count = result.promoted_count ?? promotionQueue.length;
+        setBatchPromoteProgress(null);
+        setResearchMsg(`✓ ${count} thesis${count > 1 ? 'es' : ''} promoted to Market Intelligence.`);
+        setPromotionQueue([]);
+        await fetchIntelligenceFeed();
+        await fetchTheses();
+        setActiveTab("INTELLIGENCE" as any);
+        setSourceFilter("RESEARCH");
+      } else {
+        const detail = await res.json().catch(() => ({}));
+        setBatchPromoteProgress(null);
+        setResearchMsg(`Promotion failed: ${detail?.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      setBatchPromoteProgress(null);
+      setResearchMsg(`Error: ${err?.message}`);
+    } finally {
+      setIsPromoting(false);
+    }
   };
 
   const renderReportField = (val: any) => {
@@ -489,21 +572,25 @@ export default function Dashboard() {
     return String(val);
   };
 
-  const handleRunSimulation = async () => {
+  const handleRunSimulation = async (customViewText?: string, customOptimizer?: string, customDeviation?: number) => {
     setIsLoading(true);
     setError(null);
     setLoadingStep(0);
     setLoadingMessage("서버와의 연결을 초기화하고 있습니다...");
     setData(null);
     
+    const textToUse = customViewText !== undefined ? customViewText : viewText;
+    const optToUse = customOptimizer !== undefined ? customOptimizer : optimizer;
+    const devToUse = customDeviation !== undefined ? customDeviation : maxDeviation;
+    
     try {
       const response = await fetch(`${apiBaseUrl}/simulate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          view_text: viewText, 
-          optimizer,
-          max_deviation: maxDeviation
+          view_text: textToUse, 
+          optimizer: optToUse,
+          max_deviation: devToUse
         }),
       });
       
@@ -559,6 +646,10 @@ export default function Dashboard() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleExportPDF = () => {
+    window.print();
   };
 
   const handleLoadSimulation = async (simId: number) => {
@@ -675,14 +766,13 @@ export default function Dashboard() {
   const metrics = getDerivedMetrics();
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col font-ui selection:bg-white selection:text-black">
+    <>
+      <div id="main-terminal-layout" className="min-h-screen bg-black text-white flex flex-col font-ui selection:bg-white selection:text-black print:hidden">
       {/* Top Navbar */}
       <nav className="border-b border-neutral-950 sticky top-0 bg-black/90 backdrop-blur z-50">
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="font-display text-lg tracking-[0.2em]">SPACEX</span>
-            <span className="text-neutral-700 text-xs font-light">|</span>
-            <span className="font-display text-xs tracking-wider text-neutral-400 hidden md:inline">NPS MISSION CONTROL</span>
+            <span className="font-display text-lg tracking-[0.2em] text-white">ASSET ALLOCATION MODELING</span>
           </div>
 
           <div className="flex items-center gap-6">
@@ -709,6 +799,12 @@ export default function Dashboard() {
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "RESEARCH" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
               RESEARCH PIPELINE
+            </button>
+            <button
+              onClick={() => setActiveTab("HELP")}
+              className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "HELP" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
+            >
+              HELP
             </button>
           </div>
           <div className="flex gap-4 items-center text-xs">
@@ -749,85 +845,6 @@ export default function Dashboard() {
         {/* Left Side Control Panel */}
         <aside className="lg:col-span-1 flex flex-col gap-8">
           
-          {/* Main Controls Card */}
-          <div className="bg-[#0a0a0a] border border-neutral-900 p-6 flex flex-col gap-6">
-            <h2 className="font-display text-sm tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-white" />
-              SYSTEM PARAMETERS
-            </h2>
-
-            {/* Input View Text */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-display tracking-widest text-neutral-500 flex justify-between">
-                <span>INVESTMENT THESIS (VIEW)</span>
-                <span className="text-white hover:underline cursor-pointer flex items-center gap-1" 
-                      onClick={() => setViewText("미국 주식이 매우 유망하여 연 15% 수익이 기대되며 국내 주식은 횡보할 것이다.")}>
-                  <RefreshCw className="w-2.5 h-2.5" /> LOAD EXAMPLE
-                </span>
-              </label>
-              <textarea
-                value={viewText}
-                onChange={(e) => setViewText(e.target.value)}
-                placeholder="시장 전망을 자연어로 작성해 주세요."
-                rows={5}
-                className="w-full bg-[#050505] border border-neutral-900 p-3 text-xs outline-none text-white focus:border-white transition-colors duration-200 resize-none font-sans"
-              />
-            </div>
-
-            {/* Max Deviation Limits Slider */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-display tracking-widest text-neutral-500 flex justify-between">
-                <span>MAX BENCHMARK DEVIATION (δ)</span>
-                <span className="text-white font-mono">{(maxDeviation * 100).toFixed(0)}%</span>
-              </label>
-              <input 
-                type="range" 
-                min="0.01" 
-                max="0.30" 
-                step="0.01" 
-                value={maxDeviation} 
-                onChange={(e) => setMaxDeviation(parseFloat(e.target.value))}
-                className="w-full accent-white bg-neutral-900 h-1 cursor-pointer"
-              />
-              <p className="text-[9px] text-neutral-600 leading-normal font-sans">
-                최적화 포트폴리오 가중치가 국민연금 기준 비중에서 최대 이탈할 수 있는 상하한 범위 제한선입니다.
-              </p>
-            </div>
-
-            {/* Optimizer Selection */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-display tracking-widest text-neutral-500">OPTIMIZATION ENGINE</label>
-              <select
-                value={optimizer}
-                onChange={(e) => setOptimizer(e.target.value)}
-                className="w-full bg-[#050505] border border-neutral-900 p-2.5 text-xs outline-none text-white focus:border-white cursor-pointer"
-              >
-                <option value="markowitz">MARKOWITZ MVO (SHARPE MAX)</option>
-                <option value="risk_parity">RISK PARITY (RISK BUDGET EQUAL)</option>
-                <option value="hrp">HIERARCHICAL RISK PARITY (HRP)</option>
-              </select>
-            </div>
-
-            {/* Execute Button */}
-            <button
-              onClick={handleRunSimulation}
-              disabled={isLoading}
-              className="button-ghost-dark w-full mt-2 cursor-pointer flex items-center justify-center gap-2"
-            >
-              {isLoading ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  CALCULATING...
-                </>
-              ) : (
-                <>
-                  <Play className="w-3 h-3 fill-white" />
-                  RUN SIMULATION
-                </>
-              )}
-            </button>
-          </div>
-
           {/* Past Simulations History Sidebar */}
           <div className="bg-[#0a0a0a] border border-neutral-900 p-6 flex flex-col gap-4">
             <h3 className="font-display text-sm tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
@@ -980,6 +997,26 @@ export default function Dashboard() {
           {/* Dashboard Visualizer */}
           {data && (
             <>
+              {/* Simulation Header with PDF Export Button */}
+              <div className="flex items-center justify-between border-b border-neutral-900 pb-4 mb-4">
+                <div>
+                  <h3 className="font-display text-sm tracking-widest text-white flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-neutral-400" />
+                    SIMULATION RUN RESULTS (RUN #{data.simulation_id})
+                  </h3>
+                  <p className="text-[10px] text-neutral-500 font-sans mt-0.5">
+                    Expected metrics, risk statistics, and optimized asset allocations.
+                  </p>
+                </div>
+                <button
+                  onClick={handleExportPDF}
+                  className="bg-white hover:bg-neutral-200 text-black font-display font-bold text-[10px] tracking-widest px-4 py-2 border border-white transition-all uppercase flex items-center gap-1.5 rounded-sm cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  EXPORT REPORT (PDF)
+                </button>
+              </div>
+
               {/* Metrics Grid */}
               <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 
@@ -1025,6 +1062,70 @@ export default function Dashboard() {
                   </span>
                 </div>
 
+              </div>
+
+              {/* Metrics Explanation Box */}
+              <div className="border border-neutral-900 bg-[#050505] p-5 text-[11px] font-sans text-neutral-400 flex flex-col gap-4">
+                <div className="border-b border-neutral-900 pb-2">
+                  <h4 className="font-display text-[10px] tracking-wider text-neutral-400 uppercase font-bold">
+                    PORTFOLIO PERFORMANCE &amp; RISK METRICS EXPLAINED
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      EXP RETURN (Expected Return)
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      The forecasted annualized return of the portfolio based on market conditions and your customized outlook. Under current simulation parameters, your portfolio is projected to grow by <strong className="text-white font-mono">{formatPercent(data.risk_metrics.expected_return)}</strong> over the next year.
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-col gap-1">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      PORTFOLIO VOL (Volatility)
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      The annualized measure of price fluctuations (risk). A volatility of <strong className="text-white font-mono">{formatPercent(data.risk_metrics.volatility)}</strong> represents the standard deviation of returns; a lower number suggests a smoother, more stable investment journey.
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-col gap-1">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      SHARPE RATIO
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      A core metric measuring risk-adjusted returns (return earned per unit of risk). A Sharpe ratio of <strong className="text-white font-mono">{metrics.sharpe.toFixed(2)}</strong> indicates a moderate return relative to volatility; a higher ratio represents a more efficient asset allocation.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      95% VAR (Value at Risk - 1 Year)
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      The threshold loss not expected to be exceeded with 95% confidence over a 1-year horizon. There is a 95% probability that your portfolio's annual losses will be milder than <strong className="text-white font-mono">{formatPercent(data.risk_metrics.var_95)}</strong> under normal market behavior.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      95% CVAR (Conditional VaR / Expected Shortfall)
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      The average loss expected in the worst-case 5% of market outcomes. If a severe market crash occurs (tail risk), your portfolio is projected to lose an average of <strong className="text-white font-mono">{formatPercent(data.risk_metrics.cvar_95)}</strong> over that 1-year period.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
+                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
+                      MAX DRAWDOWN
+                    </span>
+                    <p className="leading-relaxed text-neutral-500">
+                      The projected peak-to-trough decline of the portfolio during periods of extreme macroeconomic stress. Under severe historical or simulated crises, the portfolio's value could fall by <strong className="text-white font-mono">{formatPercent(data.risk_metrics.max_drawdown_estimate)}</strong> before recovering.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* AI Analysis Commentary & Macro Indicators */}
@@ -1399,7 +1500,7 @@ export default function Dashboard() {
                   REFRESH FEED
                 </button>
                 <button 
-                  onClick={applyToSimulator}
+                  onClick={() => setShowRunConfirmModal(true)}
                   disabled={selectedTheses.length === 0}
                   className="button-ghost-dark flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border-white text-white"
                 >
@@ -1409,86 +1510,108 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Ingest an article by URL (fetch → read → analyze → thesis) */}
-            <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
-              <label className="text-[10px] font-display tracking-widest text-neutral-400 flex items-center gap-2">
-                <Newspaper className="w-3.5 h-3.5 text-white" />
-                INGEST ARTICLE BY URL
-                <span className="text-neutral-600 normal-case font-sans tracking-normal">
-                  — 링크를 입력하면 AI가 기사를 읽고 분석하여 투자 의견(Thesis)으로 변환합니다.
-                </span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  placeholder="https://example.com/market-article"
-                  value={articleUrl}
-                  onChange={(e) => setArticleUrl(e.target.value)}
-                  disabled={isIngesting}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !isIngesting) handleIngestArticle(); }}
-                  className="flex-grow bg-[#050505] border border-neutral-900 text-xs text-white px-3 py-2 outline-none focus:border-neutral-700 font-mono tracking-wider placeholder-neutral-700"
-                />
+            {/* 3-Tier Source Tabs */}
+            <div className="flex gap-2 border-b border-neutral-900 pb-1">
+              {(["RESEARCH", "NEWS", "USER_ASSET"] as const).map((src) => (
                 <button
-                  onClick={handleIngestArticle}
-                  disabled={isIngesting || (!articleUrl.trim() && !pastedContent.trim())}
-                  className="button-ghost-dark flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                  key={src}
+                  onClick={() => {
+                    setSourceFilter(src);
+                    setSelectedThesisId(null);
+                  }}
+                  className={`px-4 py-2 font-display text-[10px] tracking-widest border transition-all ${
+                    sourceFilter === src
+                      ? "bg-white text-black border-white font-bold"
+                      : "bg-transparent text-neutral-500 border-neutral-950 hover:border-neutral-800"
+                  }`}
                 >
-                  {isIngesting
-                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> ANALYZING…</>
-                    : <><Play className="w-4 h-4" /> ANALYZE</>}
+                  {src === "RESEARCH" ? "1. Research" : src === "NEWS" ? "2. News Article" : "3. User Asset (Link/PDF)"}
                 </button>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label className={`button-ghost-dark flex items-center gap-2 cursor-pointer whitespace-nowrap ${isIngesting ? "opacity-50 pointer-events-none" : ""}`}>
-                  <Newspaper className="w-3.5 h-3.5" /> UPLOAD PDF
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="hidden"
-                    disabled={isIngesting}
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleIngestPdf(f); e.currentTarget.value = ""; }}
-                  />
-                </label>
-                <span className="text-[9px] text-neutral-600 font-sans">리서치 리포트·정책 문서 PDF를 업로드하면 AI가 본문을 읽고 분석합니다.</span>
-              </div>
-
-              {ingestNeedsContent && (
-                <div className="flex flex-col gap-2">
-                  <textarea
-                    placeholder="URL을 자동으로 불러오지 못했습니다. 기사 본문을 복사하여 여기에 붙여넣은 뒤 ANALYZE를 다시 누르세요."
-                    rows={5}
-                    value={pastedContent}
-                    onChange={(e) => setPastedContent(e.target.value)}
-                    disabled={isIngesting}
-                    className="w-full bg-[#050505] border border-amber-900/60 text-xs text-white px-3 py-2 outline-none focus:border-amber-700 font-sans resize-none placeholder-neutral-700"
-                  />
-                </div>
-              )}
-
-              {isIngesting && (
-                <p className="text-[10px] text-neutral-500 font-sans flex items-center gap-1.5">
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                  기사를 읽고 AI가 분석하는 중입니다. 최대 1분가량 소요될 수 있습니다…
-                </p>
-              )}
-              {ingestNotice && !isIngesting && (
-                <p className="text-[10px] text-amber-400/90 font-sans flex items-start gap-1.5">
-                  <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  {ingestNotice}
-                </p>
-              )}
-              {ingestError && !isIngesting && (
-                <p className="text-[10px] text-red-400 font-sans flex items-start gap-1.5">
-                  <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  {ingestError}
-                </p>
-              )}
+              ))}
             </div>
+
+            {/* Ingest user URL/PDF assets panel - Only shown under USER_ASSET source tab */}
+            {sourceFilter === "USER_ASSET" && (
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
+                <label className="text-[10px] font-display tracking-widest text-neutral-400 flex items-center gap-2 font-bold">
+                  <Newspaper className="w-3.5 h-3.5 text-white" />
+                  ADD USER RESEARCH ASSETS (LINK OR PDF UPLOAD)
+                  <span className="text-neutral-600 normal-case font-sans tracking-normal">
+                    — 링크 입력 또는 PDF 업로드 시 AI가 본문을 판독해 보고서 피드에 추가합니다.
+                  </span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    placeholder="https://example.com/market-article"
+                    value={articleUrl}
+                    onChange={(e) => setArticleUrl(e.target.value)}
+                    disabled={isIngesting}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !isIngesting) handleIngestArticle(); }}
+                    className="flex-grow bg-[#050505] border border-neutral-900 text-xs text-white px-3 py-2 outline-none focus:border-neutral-700 font-mono tracking-wider placeholder-neutral-700"
+                  />
+                  <button
+                    onClick={handleIngestArticle}
+                    disabled={isIngesting || (!articleUrl.trim() && !pastedContent.trim())}
+                    className="button-ghost-dark flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isIngesting
+                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> ANALYZING…</>
+                      : <><Play className="w-4 h-4" /> ANALYZE LINK</>}
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className={`button-ghost-dark flex items-center gap-2 cursor-pointer whitespace-nowrap ${isIngesting ? "opacity-50 pointer-events-none" : ""}`}>
+                    <Newspaper className="w-3.5 h-3.5" /> UPLOAD PDF REPORT
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      disabled={isIngesting}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleIngestPdf(f); e.currentTarget.value = ""; }}
+                    />
+                  </label>
+                  <span className="text-[9px] text-neutral-600 font-sans">리서치 리포트·정책 문서 PDF를 업로드하면 AI가 본문을 읽고 분석합니다.</span>
+                </div>
+
+                {ingestNeedsContent && (
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      placeholder="URL을 자동으로 불러오지 못했습니다. 기사 본문을 복사하여 여기에 붙여넣은 뒤 ANALYZE를 다시 누르세요."
+                      rows={5}
+                      value={pastedContent}
+                      onChange={(e) => setPastedContent(e.target.value)}
+                      disabled={isIngesting}
+                      className="w-full bg-[#050505] border border-amber-900/60 text-xs text-white px-3 py-2 outline-none focus:border-amber-700 font-sans resize-none placeholder-neutral-700"
+                    />
+                  </div>
+                )}
+
+                {isIngesting && (
+                  <p className="text-[10px] text-neutral-500 font-sans flex items-center gap-1.5 animate-pulse">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    문서를 해독하고 AI 분석 보고서를 생성하는 중입니다. 최대 1분가량 소요될 수 있습니다…
+                  </p>
+                )}
+                {ingestNotice && !isIngesting && (
+                  <p className="text-[10px] text-amber-400/90 font-sans flex items-start gap-1.5">
+                    <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    {ingestNotice}
+                  </p>
+                )}
+                {ingestError && !isIngesting && (
+                  <p className="text-[10px] text-red-400 font-sans flex items-start gap-1.5">
+                    <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    {ingestError}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-8">
               {/* Left Side List (40% width) */}
-              <div className="w-[40%] flex flex-col gap-4 overflow-y-auto h-[calc(100vh-14rem)] pr-2 border-r border-neutral-900">
+              <div className="w-[40%] flex flex-col gap-4 overflow-y-auto h-[calc(100vh-16rem)] pr-2 border-r border-neutral-900">
                 {/* Search & Filter Controls */}
                 <div className="flex flex-col gap-3 pb-3 border-b border-neutral-900 sticky top-0 bg-[#000000] z-10">
                   {/* Search Input */}
@@ -1510,19 +1633,19 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  {/* Category Selection Tabs */}
+                  {/* Category Selection Tabs (Subcategories) */}
                   <div className="flex gap-1 border-b border-neutral-950 pb-2">
-                    {(["ALL", "EQUITY", "BOND", "ALTERNATIVE"] as const).map((cat) => (
+                    {(["ALL", "EQUITY", "BOND", "ALTERNATIVE", "MACRO"] as const).map((cat) => (
                       <button
                         key={cat}
                         onClick={() => setCategoryFilter(cat)}
                         className={`flex-1 py-1 text-[8px] font-display tracking-widest border transition-all ${
                           categoryFilter === cat
-                            ? "bg-white text-black border-white"
+                            ? "bg-white text-black border-white font-bold"
                             : "bg-[#050505] text-neutral-400 border-neutral-950 hover:border-neutral-800"
                         }`}
                       >
-                        {cat === "ALL" ? "ALL" : cat === "EQUITY" ? "EQUITIES" : cat === "BOND" ? "FIXED INCOME" : "ALTERNATIVES"}
+                        {cat === "ALL" ? "ALL" : cat === "EQUITY" ? "EQUITIES" : cat === "BOND" ? "FIXED INCOME" : cat === "ALTERNATIVE" ? "ALT" : "ECON & ETC"}
                       </button>
                     ))}
                   </div>
@@ -1552,45 +1675,81 @@ export default function Dashboard() {
                   filteredAndSortedFeed.map(thesis => {
                     const isSelected = selectedThesisId === thesis.id;
                     const rank = globalRankMap[thesis.id];
+                    const inBasket = selectedTheses.includes(thesis.id);
                     return (
-                      <div 
+                      <div
                         key={thesis.id}
+                        draggable={true}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("thesis_id", thesis.id);
+                          e.dataTransfer.setData("text/plain", thesis.id);
+                        }}
                         onClick={() => setSelectedThesisId(thesis.id)}
-                        className={`bg-[#050505] border p-4 cursor-pointer transition-all ${isSelected ? 'border-white' : 'border-neutral-900 hover:border-neutral-800'}`}
+                        className={`border p-3 cursor-grab active:cursor-grabbing transition-all select-none relative group ${
+                          isSelected ? 'border-white bg-neutral-950' : 'border-neutral-900 hover:border-neutral-700 bg-[#050505]'
+                        } ${
+                          thesis.category === 'RESEARCH' ? 'border-l-2 border-l-amber-600' :
+                          thesis.category === 'NEWS' ? 'border-l-2 border-l-blue-600' :
+                          'border-l-2 border-l-purple-600'
+                        } ${inBasket ? 'ring-1 ring-emerald-700' : ''}`}
                       >
+                        {/* Top row: source pill + date */}
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            <span className="font-display text-[9px] text-neutral-500 tracking-wider uppercase">{thesis.source}</span>
-                            {sortMode === "RANKED" && rank && (
-                              <span className="font-mono text-[8px] bg-white text-black px-1 font-bold">
-                                #{rank} RANK
-                              </span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full tracking-wide uppercase ${
+                              thesis.category === 'RESEARCH'
+                                ? 'bg-amber-950/40 text-amber-300 border border-amber-800/50'
+                                : thesis.category === 'NEWS'
+                                ? 'bg-blue-950/40 text-blue-300 border border-blue-800/50'
+                                : 'bg-purple-950/40 text-purple-300 border border-purple-800/50'
+                            }`}>
+                              {thesis.source || (thesis.category === 'RESEARCH' ? 'NPS Research' : 'News')}
+                            </span>
+                            {inBasket && (
+                              <span className="text-[9px] font-display text-emerald-400 border border-emerald-900/60 bg-emerald-950/20 px-1.5 rounded-full tracking-wider">ACTIVE</span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] text-neutral-500 font-mono">{new Date(thesis.date).toLocaleDateString()}</span>
-                            <div 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleThesisSelection(thesis.id);
-                              }}
-                              className={`w-3.5 h-3.5 border ${selectedTheses.includes(thesis.id) ? 'bg-white border-white' : 'border-neutral-500'} flex items-center justify-center`}
-                            >
-                              {selectedTheses.includes(thesis.id) && <Check className="w-2.5 h-2.5 text-black" />}
-                            </div>
-                          </div>
+                          <span className="text-[10px] text-neutral-400 font-mono tabular-nums">
+                            {(() => {
+                              try {
+                                const d = new Date(thesis.date);
+                                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                              } catch { return thesis.date; }
+                            })()}
+                          </span>
                         </div>
-                        <h3 className="text-xs font-bold text-white font-sans line-clamp-1 mb-1">{thesis.title}</h3>
-                        <p className="text-[10px] text-neutral-400 font-sans line-clamp-2">"{thesis.content}"</p>
-                        <div className="flex justify-between items-center mt-2.5">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {(thesis.ai_interpretation.impacted_assets || []).map(asset => (
-                              <span key={asset} className="text-[8px] font-display bg-neutral-950 text-neutral-400 px-1.5 py-0.5 border border-neutral-900">
-                                {asset.replace("_", " ")}
+
+                        {/* Headline + summary */}
+                        <div className="flex flex-col gap-1 mb-3">
+                          <h3 className="text-[14px] font-bold text-white leading-snug tracking-tight font-sans">
+                            {thesis.title}
+                          </h3>
+                          <p className="text-[11px] text-neutral-400 font-sans line-clamp-2 leading-relaxed">
+                            {thesis.ai_interpretation?.summary || thesis.content}
+                          </p>
+                        </div>
+
+                        {/* Bottom row: asset tags + confidence bar */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex gap-1 flex-wrap">
+                            {(thesis.ai_interpretation?.impacted_assets || []).slice(0, 3).map((asset: string) => (
+                              <span key={asset} className="text-[9px] font-display bg-neutral-900 text-neutral-300 px-1.5 py-0.5 rounded border border-neutral-800">
+                                {asset.replace(/_/g, ' ')}
                               </span>
                             ))}
                           </div>
-                          <span className="text-[9px] text-neutral-500 font-mono">CONF: {((thesis.ai_interpretation.confidence ?? 0) * 100).toFixed(0)}%</span>
+                          {/* Mini confidence progress bar */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="w-16 h-1 bg-neutral-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-neutral-400 to-white rounded-full transition-all"
+                                style={{ width: `${((thesis.ai_interpretation?.confidence ?? 0) * 100).toFixed(0)}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-mono text-neutral-300 tabular-nums">
+                              {((thesis.ai_interpretation?.confidence ?? 0) * 100).toFixed(0)}%
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1603,24 +1762,55 @@ export default function Dashboard() {
               </div>
 
               {/* Right Side Detail Viewer (60% width) */}
-              <div className="w-[60%] flex flex-col gap-6 overflow-y-auto h-[calc(100vh-14rem)] pr-2">
+              <div className="w-[60%] flex flex-col gap-6 overflow-y-auto h-[calc(100vh-16rem)] pr-2 pb-36">
                 {selectedThesisId ? (() => {
                   const thesis = intelligenceFeed.find(t => t.id === selectedThesisId);
                   if (!thesis) return null;
+                  const inBasket = selectedTheses.includes(thesis.id);
                   return (
                     <div className="bg-[#050505] border border-neutral-900 p-6 flex flex-col gap-6">
-                      {/* Image cover & metadata header */}
+                      {/* Header banner with image */}
                       <div className="h-56 w-full relative overflow-hidden border-b border-neutral-900">
-                        <img src={thesis.image_url} alt="Cover" className="w-full h-full object-cover opacity-80" />
+                        <img src={thesis.image_url || "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab"} alt="Cover" className="w-full h-full object-cover opacity-80" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
                         <div className="absolute bottom-4 left-4 right-4">
                           <span className="font-display text-[10px] bg-white text-black px-2 py-0.5 font-bold tracking-widest uppercase">{thesis.source}</span>
-                          <h2 className="text-lg font-bold text-white mt-2 leading-snug">{thesis.title}</h2>
+                          <h2 className="text-xl md:text-2xl font-bold text-white mt-2 leading-snug">{thesis.title}</h2>
                           <div className="flex items-center gap-2 text-[10px] text-neutral-400 mt-1 font-mono">
                             <span>BY: {thesis.author} ({thesis.author_title})</span>
                             <span>•</span>
                             <span>{new Date(thesis.date).toLocaleString()}</span>
                           </div>
+                        </div>
+                      </div>
+
+                      {/* SOURCE ATTRIBUTION — top of report */}
+                      <div className="border border-neutral-800/60 bg-neutral-950/40 px-4 py-3 flex flex-col gap-2 rounded-sm">
+                        <span className="font-display text-[9px] tracking-widest text-neutral-500 uppercase font-bold">Source Attribution</span>
+                        <div className="flex flex-wrap gap-3 items-center">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              thesis.category === 'RESEARCH' ? 'bg-amber-950/40 text-amber-300 border border-amber-800/40' :
+                              thesis.category === 'USER_ASSET' ? 'bg-purple-950/40 text-purple-300 border border-purple-800/40' :
+                              'bg-blue-950/40 text-blue-300 border border-blue-800/40'
+                            }`}>
+                              {thesis.category === 'RESEARCH' ? 'NPS House View' : thesis.category === 'USER_ASSET' ? 'User Asset' : 'Market News'}
+                            </span>
+                            <span className="text-[11px] font-semibold text-neutral-200">{thesis.source}</span>
+                          </div>
+                          <span className="text-neutral-700">·</span>
+                          <span className="text-[11px] text-neutral-400 font-mono">
+                            {(() => { try { return new Date(thesis.date).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }); } catch { return thesis.date; } })()}
+                          </span>
+                          {thesis.full_report?.source_url && (
+                            <>
+                              <span className="text-neutral-700">·</span>
+                              <a href={thesis.full_report.source_url} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-blue-400 hover:text-blue-300 underline underline-offset-2 font-mono transition-colors">
+                                View Original Article ↗
+                              </a>
+                            </>
+                          )}
                         </div>
                       </div>
 
@@ -1633,16 +1823,22 @@ export default function Dashboard() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="font-display text-[9px] text-neutral-500">CONFIDENCE:</span>
-                            <span className="font-mono text-xs font-bold text-white">{(thesis.ai_interpretation.confidence * 100).toFixed(0)}%</span>
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-20 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-gradient-to-r from-neutral-400 to-white rounded-full"
+                                  style={{ width: `${(thesis.ai_interpretation.confidence * 100).toFixed(0)}%` }} />
+                              </div>
+                              <span className="font-mono text-sm font-bold text-white">{(thesis.ai_interpretation.confidence * 100).toFixed(0)}%</span>
+                            </div>
                           </div>
                         </div>
-                        <p className="text-xs text-neutral-300 font-sans leading-relaxed italic">
+                        <p className="text-sm text-neutral-300 font-sans leading-relaxed italic">
                           "{thesis.ai_interpretation.summary}"
                         </p>
-                        <div className="flex gap-2 mt-1">
+                        <div className="flex gap-2 mt-1 flex-wrap">
                           {thesis.ai_interpretation.impacted_assets.map(asset => (
-                            <span key={asset} className="text-[9px] font-display bg-neutral-900 text-neutral-300 px-2 py-0.5">
-                              {asset.replace("_", " ")}
+                            <span key={asset} className="text-[10px] font-display bg-neutral-900 text-neutral-300 px-2 py-0.5 border border-neutral-800 rounded">
+                              {asset.replace(/_/g, ' ')}
                             </span>
                           ))}
                         </div>
@@ -1651,7 +1847,7 @@ export default function Dashboard() {
                       {/* Main Thesis text */}
                       <div className="flex flex-col gap-2">
                         <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">Executive Abstract</h4>
-                        <p className="text-sm text-neutral-200 font-sans leading-relaxed italic">
+                        <p className="text-base text-neutral-100 font-sans leading-relaxed">
                           "{thesis.content}"
                         </p>
                       </div>
@@ -1661,23 +1857,44 @@ export default function Dashboard() {
                         <div className="flex flex-col gap-5 border-t border-neutral-900 pt-5">
                           <div className="flex flex-col gap-1.5">
                             <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">I. Executive Summary</h4>
-                            <div className="text-xs text-neutral-400 font-sans leading-relaxed">{renderReportField(thesis.full_report.executive_summary)}</div>
+                            <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.executive_summary)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">II. Macroeconomic Rationale</h4>
-                            <div className="text-xs text-neutral-400 font-sans leading-relaxed">{renderReportField(thesis.full_report.rationale)}</div>
+                            <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.rationale)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">III. Target Assets Implications</h4>
-                            <div className="text-xs text-neutral-400 font-sans leading-relaxed">{renderReportField(thesis.full_report.target_assets)}</div>
+                            <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.target_assets)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">IV. Portfolio Allocation Recommendation</h4>
-                            <div className="text-xs text-emerald-400 font-sans leading-relaxed font-semibold">{renderReportField(thesis.full_report.recommendation)}</div>
+                            <div className="text-xs md:text-sm text-emerald-400 font-sans leading-relaxed font-semibold">{renderReportField(thesis.full_report.recommendation)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
                             <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">V. Risk Factors & Caveats</h4>
-                            <div className="text-xs text-red-400/90 font-sans leading-relaxed">{renderReportField(thesis.full_report.risk_factors)}</div>
+                            <div className="text-xs md:text-sm text-red-400/90 font-sans leading-relaxed">{renderReportField(thesis.full_report.risk_factors)}</div>
+                          </div>
+
+                          {/* SOURCES USED — bottom of report */}
+                          <div className="border-t border-neutral-900/60 pt-4 flex flex-col gap-2 mt-1">
+                            <span className="font-display text-[9px] tracking-widest text-neutral-600 uppercase font-bold">Sources Used in This Analysis</span>
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="text-[10px] text-neutral-500 font-mono">Primary Source:</span>
+                                <span className="text-[11px] text-neutral-200 font-semibold">{thesis.source}</span>
+                                <span className="text-neutral-700">·</span>
+                                <span className="text-[10px] text-neutral-500 font-mono">
+                                  {(() => { try { return new Date(thesis.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); } catch { return thesis.date; } })()}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="text-[10px] text-neutral-500 font-mono">Author:</span>
+                                <span className="text-[11px] text-neutral-200">{thesis.author}</span>
+                                <span className="text-neutral-700">·</span>
+                                <span className="text-[10px] text-neutral-400 italic">{thesis.author_title}</span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1693,12 +1910,12 @@ export default function Dashboard() {
                             <button
                               onClick={() => toggleThesisSelection(thesis.id)}
                               className={`px-3 py-1 font-display text-[9px] tracking-widest border transition-all ${
-                                selectedTheses.includes(thesis.id)
-                                  ? 'bg-white text-black border-white'
-                                  : 'bg-transparent text-white border-neutral-800 hover:border-neutral-600'
+                                inBasket
+                                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                                  : 'bg-white text-black border-white hover:bg-neutral-200'
                               }`}
                             >
-                              {selectedTheses.includes(thesis.id) ? 'SELECTED' : 'SELECT'}
+                              {inBasket ? 'ACTIVE IN DOCK (CLICK TO REMOVE)' : 'ADD TO ACTIVE DOCK'}
                             </button>
                           </div>
                         </div>
@@ -1779,6 +1996,82 @@ export default function Dashboard() {
                     </div>
                   </div>
 
+                  {/* Main Historical Chart */}
+                  {selectedMacroKey && macroData[selectedMacroKey] && (() => {
+                    const selectedItem = macroData[selectedMacroKey];
+                    const isSelectedUp = selectedItem.change_5d >= 0;
+                    return (
+                      <div className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
+                        <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
+                          <div>
+                            <span className="text-[9px] font-mono text-neutral-500 block">SELECTED INDICATOR: {selectedMacroKey}</span>
+                            <h3 className="text-sm font-bold text-white font-sans">{selectedItem.name}</h3>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-sm font-display font-bold text-white block">{selectedItem.current}</span>
+                            <span className={`text-xs font-mono font-bold ${isSelectedUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {isSelectedUp ? '+' : ''}{selectedItem.change_5d}% (3M)
+                            </span>
+                          </div>
+                        </div>
+
+                        {selectedItem.history && selectedItem.history.length > 0 ? (
+                          <div className="h-64 w-full mt-2">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={selectedItem.history} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                                <defs>
+                                  <linearGradient id={`grad-main-${selectedMacroKey}`} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={isSelectedUp ? "#10b981" : "#ef4444"} stopOpacity={0.15}/>
+                                    <stop offset="95%" stopColor={isSelectedUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#111" vertical={false} />
+                                <XAxis 
+                                  dataKey="date" 
+                                  stroke="#444" 
+                                  fontSize={8} 
+                                  tickLine={false} 
+                                  dy={8}
+                                  tickFormatter={(str) => {
+                                    if (!str) return "";
+                                    const parts = str.split("-");
+                                    return parts.length >= 3 ? `${parts[1]}/${parts[2]}` : str;
+                                  }}
+                                />
+                                <YAxis 
+                                  domain={["auto", "auto"]} 
+                                  stroke="#444" 
+                                  fontSize={8} 
+                                  tickLine={false} 
+                                  width={40}
+                                  dx={-8}
+                                />
+                                <Tooltip 
+                                  contentStyle={{ backgroundColor: "#070707", borderColor: "#222", borderRadius: 4 }} 
+                                  labelStyle={{ color: "#888", fontSize: 9, fontFamily: "monospace" }} 
+                                  itemStyle={{ color: "#fff", fontSize: 10, padding: 0 }} 
+                                />
+                                <Area 
+                                  type="monotone" 
+                                  dataKey="value" 
+                                  stroke={isSelectedUp ? "#10b981" : "#ef4444"} 
+                                  strokeWidth={1.5} 
+                                  fillOpacity={1} 
+                                  fill={`url(#grad-main-${selectedMacroKey})`} 
+                                  dot={false}
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        ) : (
+                          <div className="py-16 text-center text-neutral-600 font-display text-[10px] tracking-widest border border-neutral-900 bg-[#050505] rounded-sm">
+                            NO HISTORICAL DATA AVAILABLE
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Categories Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {Object.entries(categories).map(([catName, keys]) => (
@@ -1791,9 +2084,16 @@ export default function Dashboard() {
                             const item = macroData[key];
                             if (!item) return null;
                             const isUp = item.change_5d >= 0;
+                            const isSelected = selectedMacroKey === key;
                             return (
-                              <div key={key} className="bg-[#070707] border border-neutral-900 p-4 flex flex-col justify-between hover:border-neutral-800 transition-colors min-w-0">
-                                <div className="flex items-start justify-between">
+                              <div 
+                                key={key} 
+                                onClick={() => setSelectedMacroKey(key)}
+                                className={`bg-[#070707] border p-4 flex flex-col justify-between hover:border-neutral-850 hover:bg-[#090909] transition-all min-w-0 cursor-pointer ${
+                                  isSelected ? 'border-white ring-1 ring-white/10' : 'border-neutral-900'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between pointer-events-none">
                                   <div>
                                     <span className="text-[9px] font-mono text-neutral-500 block">{key}</span>
                                     <span className="text-xs font-bold text-white leading-tight block">{item.name}</span>
@@ -1801,14 +2101,14 @@ export default function Dashboard() {
                                   <div className="text-right">
                                     <span className="text-sm font-display font-bold text-white block">{item.current}</span>
                                     <span className={`text-[10px] font-mono font-bold ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {isUp ? '+' : ''}{item.change_5d}%
+                                      {isUp ? '+' : ''}{item.change_5d}% (3M)
                                     </span>
                                   </div>
                                 </div>
                                 
                                 {/* Sparkline */}
                                 {item.history && item.history.length > 0 && (
-                                  <div className="h-10 w-full mt-3 min-w-0 opacity-80 hover:opacity-100 transition-opacity">
+                                  <div className="h-10 w-full mt-3 min-w-0 opacity-80 hover:opacity-100 transition-opacity pointer-events-none">
                                     <ResponsiveContainer width="100%" height="100%">
                                       <AreaChart data={item.history} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
                                         <defs>
@@ -1817,6 +2117,7 @@ export default function Dashboard() {
                                             <stop offset="95%" stopColor={isUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
                                           </linearGradient>
                                         </defs>
+                                        <YAxis domain={["dataMin", "dataMax"]} hide={true} />
                                         <Area 
                                           type="monotone" 
                                           dataKey="value" 
@@ -1921,7 +2222,15 @@ export default function Dashboard() {
                 <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto pr-1">
                   {theses.length === 0 && <p className="text-[10px] text-neutral-600 italic">Thesis가 없습니다. BUILD THESES를 실행하세요.</p>}
                   {theses.map((t) => (
-                    <div key={t.id} className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1.5">
+                    <div 
+                      key={t.id} 
+                      draggable={true}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", t.id);
+                      }}
+                      className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1.5 cursor-grab active:cursor-grabbing hover:border-neutral-700 transition-all select-none"
+                    >
                       <div className="flex justify-between items-center gap-2">
                         <span className="text-[11px] text-white font-bold leading-snug">{t.title || `${t.asset || t.asset1}`}</span>
                         <span className="text-[9px] font-mono text-emerald-400 whitespace-nowrap">conf {(t.confidence ?? 0).toFixed(2)}</span>
@@ -1945,45 +2254,117 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
-
-              {/* Stage 3 — Allocation decision package */}
-              <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
-                <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
-                  <TrendingUp className="w-3.5 h-3.5 text-white" /> ALLOCATION
-                </h3>
-                {!allocation && <p className="text-[10px] text-neutral-600 italic">승인된 Thesis로 ALLOCATE를 실행하세요.</p>}
-                {allocation && (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex gap-2 text-[9px] font-mono text-neutral-500">
-                      <span>REGIME: <span className="text-white">{allocation.regime}</span></span>
-                      <span>· VIEWS: <span className="text-white">{allocation.n_views}</span></span>
-                      <span>· Ω: <span className="text-white">{allocation.omega_method}</span></span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      {Object.keys(allocation.optimized_weights || {}).map((a) => {
-                        const w = allocation.optimized_weights[a];
-                        const dpp = (allocation.attribution_pp || {})[a] ?? 0;
-                        return (
-                          <div key={a} className="flex justify-between items-center text-[10px] border-b border-neutral-950 py-1">
-                            <span className="text-neutral-400">{ASSET_LABELS[a] || a}</span>
-                            <span className="font-mono">
-                              <span className="text-white">{(w * 100).toFixed(1)}%</span>
-                              <span className={`ml-2 ${dpp > 0 ? "text-emerald-400" : dpp < 0 ? "text-red-400" : "text-neutral-600"}`}>
-                                {dpp > 0 ? "+" : ""}{dpp}pp
-                              </span>
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {allocation.risk_metrics && (
-                      <div className="grid grid-cols-2 gap-1 text-[9px] font-mono text-neutral-500 mt-1">
-                        <span>E[R]: <span className="text-white">{(allocation.risk_metrics.expected_return * 100).toFixed(2)}%</span></span>
-                        <span>Vol: <span className="text-white">{(allocation.risk_metrics.volatility * 100).toFixed(2)}%</span></span>
-                        <span>VaR95: <span className="text-red-400">{(allocation.risk_metrics.var_95 * 100).toFixed(2)}%</span></span>
-                        <span>MDD: <span className="text-red-400">{(allocation.risk_metrics.max_drawdown_estimate * 100).toFixed(2)}%</span></span>
-                      </div>
+ 
+              {/* Stage 3 — Analysis & Promotion Queue */}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                }}
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  setIsDragOverBox3(true);
+                }}
+                onDragLeave={() => setIsDragOverBox3(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOverBox3(false);
+                  const thesisId = e.dataTransfer.getData("thesis_id") || e.dataTransfer.getData("text/plain");
+                  if (thesisId && !promotionQueue.includes(thesisId)) {
+                    setPromotionQueue(prev => [...prev, thesisId]);
+                  }
+                }}
+                className={`border p-4 flex flex-col gap-3 transition-all min-h-[300px] ${
+                  isPromoting
+                    ? "border-amber-500 bg-amber-950/10"
+                    : isDragOverBox3
+                      ? "border-white bg-neutral-900 scale-[1.01]"
+                      : "border-dashed border-neutral-800 bg-[#0a0a0a] hover:border-neutral-700"
+                }`}
+              >
+                {/* Header row */}
+                <div className="flex items-center justify-between border-b border-neutral-900 pb-2">
+                  <h3 className="font-display text-xs tracking-widest text-neutral-400 flex items-center gap-2">
+                    <TrendingUp className="w-3.5 h-3.5 text-white" /> ANALYSIS &amp; PROMOTION
+                    {promotionQueue.length > 0 && (
+                      <span className="text-[9px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded-full ml-1">
+                        {promotionQueue.length} queued
+                      </span>
                     )}
+                  </h3>
+                  {/* ▶ Promote All button */}
+                  {promotionQueue.length > 0 && !isPromoting && (
+                    <button
+                      onClick={handleBatchPromote}
+                      title="Promote all queued theses to Market Intelligence"
+                      className="w-7 h-7 flex items-center justify-center bg-white hover:bg-neutral-200 transition-colors rounded-sm"
+                    >
+                      <svg viewBox="0 0 16 16" fill="black" className="w-3.5 h-3.5">
+                        <polygon points="3,2 13,8 3,14" />
+                      </svg>
+                    </button>
+                  )}
+                  {isPromoting && (
+                    <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
+                  )}
+                </div>
+
+                {/* Loading state */}
+                {isPromoting && batchPromoteProgress && (
+                  <div className="flex flex-col items-center justify-center py-6 text-center gap-3">
+                    <RefreshCw className="w-7 h-7 text-amber-400 animate-spin" />
+                    <p className="font-display text-[10px] tracking-widest text-amber-300 uppercase">{batchPromoteProgress}</p>
+                    <p className="text-[9px] text-neutral-500 max-w-[200px] leading-relaxed">
+                      Running {promotionQueue.length} parallel LLM analysis{promotionQueue.length > 1 ? 'es' : ''}…
+                    </p>
+                  </div>
+                )}
+
+                {/* Queued thesis cards */}
+                {!isPromoting && promotionQueue.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {promotionQueue.map(tid => {
+                      const t = theses.find((x: any) => x.id === tid);
+                      if (!t) return null;
+                      return (
+                        <div key={tid} className="bg-neutral-950 border border-neutral-800 p-3 flex items-start gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-bold text-white leading-snug truncate">{t.title || `${t.asset || t.asset1}`}</p>
+                            <p className="text-[10px] text-neutral-500 font-mono mt-0.5 truncate">
+                              {t.view_type === "relative" ? `${t.asset1} vs ${t.asset2}` : t.asset} · conf {(t.confidence_calibrated ?? t.confidence ?? 0).toFixed(2)}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setPromotionQueue(prev => prev.filter(id => id !== tid))}
+                            className="text-neutral-600 hover:text-white transition-colors text-[14px] leading-none shrink-0 mt-0.5"
+                          >✕</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Empty state drop zone */}
+                {!isPromoting && promotionQueue.length === 0 && (
+                  <div className="flex flex-col items-center justify-center flex-grow py-8 text-center border-2 border-dashed border-neutral-900/50 rounded-sm pointer-events-none">
+                    <ArrowUpCircle className="w-10 h-10 mb-3 text-neutral-500 animate-pulse" />
+                    <p className="font-display text-[10px] tracking-widest text-neutral-400 font-bold uppercase mb-1">
+                      DRAG THESES HERE
+                    </p>
+                    <p className="text-[9px] text-neutral-600 font-sans max-w-[200px] leading-relaxed">
+                      Drop multiple theses to queue them. Hit ▶ to promote all in parallel to Market Intelligence.
+                    </p>
+                  </div>
+                )}
+
+                {/* Status message */}
+                {researchMsg && !isPromoting && (
+                  <div className={`p-3 text-[10px] font-sans border ${
+                    researchMsg.includes("✓") || researchMsg.includes("성공") || researchMsg.includes("promoted")
+                      ? "border-emerald-950 bg-emerald-950/20 text-emerald-400"
+                      : "border-red-950 bg-red-950/20 text-red-400"
+                  }`}>
+                    {researchMsg}
                   </div>
                 )}
               </div>
@@ -1991,7 +2372,686 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* HELP TAB */}
+        {activeTab === "HELP" && (() => {
+          const HELP_STEPS = [
+            {
+              id: 1,
+              title: "COLLECT",
+              subtitle: "Gather Intelligence",
+              icon: Newspaper,
+              description: "Initialize the workflow by fetching the latest macroeconomic indicators, financial news, and global RSS feeds. The system processes real-time feeds from Yahoo Finance and RSS sources.",
+              howItWorks: [
+                "Click the 'COLLECT' button in the Research Pipeline tab.",
+                "The system queries backend crawlers to parse global market feeds.",
+                "Relevance and composite sentiment scores are calculated automatically for each article."
+              ],
+              tip: "You can refresh this data periodically to stay aligned with intraday macroeconomic shifts."
+            },
+            {
+              id: 2,
+              title: "BUILD",
+              subtitle: "Draft House Theses",
+              icon: MessageSquare,
+              description: "Transform raw news and data into structured investment ideas. The AI core reads the collected queue and generates high-level macroeconomic view definitions.",
+              howItWorks: [
+                "Click the 'BUILD THESES' button in Column 2 of the Research Pipeline.",
+                "The Nemotron AI agent evaluates the news context and forms discrete asset outlooks.",
+                "Each thesis is assigned a subject-specific confidence score (0% to 100%) and market horizon."
+              ],
+              tip: "You can directly APPROVE or REJECT these AI-drafted theses to filter out noise."
+            },
+            {
+              id: 3,
+              title: "PROMOTE",
+              subtitle: "Expand to Reports",
+              icon: TrendingUp,
+              description: "Deepen your approved ideas into institutional-grade analyst reports. Drag-and-drop a house thesis card into Column 3 to generate a full Bloomberg-style dossier.",
+              howItWorks: [
+                "Select a draft card in the 'HOUSE THESES' column.",
+                "Drag it and drop it into the dashed 'ANALYSIS & PROMOTION' zone.",
+                "The AI agent automatically expands the thesis with an Executive Summary, Macro Rationale, and specific Risk Factors."
+              ],
+              tip: "Once promoted, the thesis is transferred to the 'Market Intelligence' tab as an active source."
+            },
+            {
+              id: 4,
+              title: "DOCK",
+              subtitle: "Select Active Views",
+              icon: Upload,
+              description: "Interact with the Market Intelligence catalog. Organize your research, news, and user uploaded assets, then select the viewpoints to apply to your portfolio simulation.",
+              howItWorks: [
+                "Browse the Market Intelligence folders (Research, News, User Assets).",
+                "Drag any relevant card and drop it into the bottom floating 'Active Simulation Basket'.",
+                "Optionally, click on a source card to read the full analyst dossier and type custom adjustments."
+              ],
+              tip: "The floating dock acts as a liquid glass container that updates dynamically as you drag cards over it."
+            },
+            {
+              id: 5,
+              title: "SIMULATE",
+              subtitle: "Run Black-Litterman",
+              icon: Play,
+              description: "Combine subjective views with market equilibrium to optimize allocation. Configure parameters and run a Bayesian combination modeling pipeline.",
+              howItWorks: [
+                "Click the circular Play button in the bottom dock.",
+                "In the confirmation popup, review the active sources and adjust the Max Benchmark Deviation (δ).",
+                "Choose an optimization engine (e.g. Risk Parity, Markowitz MVO, or HRP) and click 'EXECUTE SIMULATION'."
+              ],
+              tip: "The backend will run a 10,000-trial Monte Carlo stress test and historical shock tests."
+            },
+            {
+              id: 6,
+              title: "EXPORT",
+              subtitle: "Generate Dossier",
+              icon: Info,
+              description: "Generate a vector-sharp one-page PDF report summarizing the simulation outcomes, optimized portfolio weights, and stress test resilience.",
+              howItWorks: [
+                "After the simulation finishes, navigate to the Portfolio Simulator dashboard.",
+                "Click the 'EXPORT REPORT (PDF)' button next to the simulation header.",
+                "Save or print the vector-styled dossier for the investment committee."
+              ],
+              tip: "The printed version is automatically optimized for standard letter/A4 page templates, removing UI elements."
+            }
+          ];
+          const step = HELP_STEPS.find(s => s.id === activeHelpStep)!;
+          const StepIcon = step.icon;
+          return (
+            <div className="flex flex-col gap-6">
+              <div className="flex items-center justify-between border-b border-neutral-900 pb-4">
+                <div>
+                  <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
+                    <Info className="w-5 h-5 text-neutral-400" />
+                    TERMINAL SYSTEM DOCUMENTATION &amp; GUIDE
+                  </h2>
+                  <p className="text-xs text-neutral-500 font-sans mt-1">
+                    Learn about the Asset Allocation Modeling platform and how to operate its workflows.
+                  </p>
+                </div>
+              </div>
+
+              {/* Step Timeline Flow Progress */}
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 border-b border-neutral-900 pb-6">
+                {HELP_STEPS.map((s) => {
+                  const SIcon = s.icon;
+                  const isActive = activeHelpStep === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setActiveHelpStep(s.id)}
+                      className={`flex flex-col gap-2 p-4 border transition-all text-left relative cursor-pointer ${
+                        isActive 
+                          ? "bg-[#0c0c0c] border-white ring-1 ring-white/10" 
+                          : "bg-[#050505] border-neutral-900 hover:border-neutral-850 hover:bg-[#070707]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-[9px] text-neutral-500 font-bold">STEP 0{s.id}</span>
+                        <SIcon className={`w-4 h-4 ${isActive ? "text-white" : "text-neutral-600"}`} />
+                      </div>
+                      <div>
+                        <h4 className="font-display text-[10px] tracking-wider font-bold text-white uppercase">{s.title}</h4>
+                        <p className="text-[9px] text-neutral-500 font-sans mt-0.5">{s.subtitle}</p>
+                      </div>
+                      {s.id < 6 && (
+                        <div className="hidden md:flex absolute top-1/2 -translate-y-1/2 -right-1.5 z-10 bg-black rounded-full border border-neutral-900 p-0.5">
+                          <ChevronRight className="w-2.5 h-2.5 text-neutral-600" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Step Details Panel */}
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 border border-neutral-900 bg-[#050505] p-6">
+                <div className="lg:col-span-3 flex flex-col gap-5">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-neutral-900 border border-neutral-850 p-3 rounded-sm">
+                      <StepIcon className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <span className="font-mono text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Operational Phase 0{step.id}</span>
+                      <h3 className="font-display text-base tracking-widest text-white font-bold">{step.title}: {step.subtitle.toUpperCase()}</h3>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-neutral-300 font-sans leading-relaxed">
+                    {step.description}
+                  </p>
+
+                  <div className="flex flex-col gap-2">
+                    <h4 className="font-display text-[9px] tracking-wider text-neutral-500 uppercase font-bold">Standard Operational Procedure</h4>
+                    <ol className="list-decimal list-inside pl-1 flex flex-col gap-2 text-xs text-neutral-400 font-sans">
+                      {step.howItWorks.map((item, idx) => (
+                        <li key={idx} className="leading-relaxed">
+                          <span className="text-neutral-300">{item}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="border-t border-neutral-950 pt-4 flex gap-3 items-start">
+                    <Info className="w-4 h-4 text-neutral-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-neutral-500 font-sans leading-relaxed">
+                      <strong className="text-neutral-400 font-display">OPERATIONAL PRO-TIP:</strong> {step.tip}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-2 border border-neutral-900 bg-black p-5 flex flex-col justify-between min-h-[250px] relative overflow-hidden">
+                   {activeHelpStep === 1 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK FEED_CRAWLER</span>
+                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                       </div>
+                       <div className="flex flex-col gap-2 flex-grow justify-center">
+                         <div className="bg-[#050505] border border-neutral-900 p-2 text-[9px] font-mono text-neutral-400 flex justify-between">
+                           <span>US 10Y Yield RSS Feed</span>
+                           <span className="text-emerald-400">SUCCESS</span>
+                         </div>
+                         <div className="bg-[#050505] border border-neutral-900 p-2 text-[9px] font-mono text-neutral-400 flex justify-between">
+                           <span>Bloomberg Macro RSS Feed</span>
+                           <span className="text-emerald-400">SUCCESS</span>
+                         </div>
+                         <div className="bg-[#050505] border border-neutral-900 p-2 text-[9px] font-mono text-neutral-400 flex justify-between">
+                           <span>Yahoo Finance Stock API</span>
+                           <span className="text-emerald-400">SUCCESS</span>
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         FEED SYNCHRONIZATION DIAGRAM
+                       </div>
+                     </div>
+                   )}
+                   {activeHelpStep === 2 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK NEMOTRON_LLM</span>
+                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                       </div>
+                       <div className="flex flex-col gap-2 flex-grow justify-center">
+                         <div className="border border-amber-900/30 bg-amber-950/5 p-2 rounded-sm text-[9px] font-sans text-neutral-300">
+                           <div className="font-bold text-white mb-0.5">AI DRAFT THESIS: GLOBAL_STOCK BULLISH</div>
+                           "Expected return +12% based on AI analysis of inflation easing."
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         PROBABILITY ENCODING SCHEMATIC
+                       </div>
+                     </div>
+                   )}
+                   {activeHelpStep === 3 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK DRAG_DROP</span>
+                         <span className="text-neutral-500 font-mono text-[8px]">DRAG: COL 2 → COL 3</span>
+                       </div>
+                       <div className="flex-grow flex items-center justify-center gap-2">
+                         <div className="border border-neutral-900 bg-[#050505] p-3 text-[9px] text-neutral-400 opacity-60">
+                           Thesis Card
+                         </div>
+                         <span className="text-neutral-700">→</span>
+                         <div className="border border-dashed border-neutral-700 bg-neutral-900/20 p-3 text-[9px] text-white flex flex-col items-center">
+                           <span>Drop Zone</span>
+                           <span className="text-[7px] text-neutral-500">(Promotion)</span>
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         PROMOTION PIPELINE SCHEMATIC
+                       </div>
+                     </div>
+                   )}
+                   {activeHelpStep === 4 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK SIMULATION_DOCK</span>
+                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                       </div>
+                       <div className="flex-grow flex flex-col justify-end gap-1.5">
+                         <div className="backdrop-blur-md bg-neutral-900/50 border border-neutral-800 rounded-full px-3 py-1 flex items-center justify-between text-[8px]">
+                           <span className="text-neutral-400 font-display">Simulation Basket (2 Active)</span>
+                           <span className="w-4 h-4 bg-white text-black rounded-full flex items-center justify-center font-mono font-bold">▶</span>
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         LIQUID GLASS FLOATING DOCK MOCKUP
+                       </div>
+                     </div>
+                   )}
+                   {activeHelpStep === 5 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK BL_ENGINE</span>
+                         <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                       </div>
+                       <div className="flex-grow flex flex-col justify-center gap-1">
+                         <div className="text-[9px] font-mono text-neutral-500">Bayesian Posterior Formula:</div>
+                         <div className="bg-neutral-950 p-2 border border-neutral-900 text-center font-serif text-[10px] text-white my-1">
+                           E(R) = [ (τΣ)⁻¹ + PᵀΩ⁻¹P ]⁻¹ [ (τΣ)⁻¹Π + PᵀΩ⁻¹Q ]
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         BLACK-LITTERMAN BAYESIAN EQUATION
+                       </div>
+                     </div>
+                   )}
+                   {activeHelpStep === 6 && (
+                     <div className="flex flex-col gap-3 h-full justify-between">
+                       <div className="flex justify-between items-center border-b border-neutral-950 pb-2">
+                         <span className="font-mono text-[8px] text-neutral-500">MOCK PDF_REPORTER</span>
+                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                       </div>
+                       <div className="flex-grow flex items-center justify-center">
+                         <div className="border border-neutral-800 bg-neutral-900/10 p-3 rounded-sm shadow-sm flex flex-col gap-1 text-[8px] font-mono">
+                           <div className="font-bold border-b border-neutral-850 pb-1 text-white">NPS ALLOCATION REPORT</div>
+                           <div>Exp Ret: 8.42%</div>
+                           <div>Vol: 9.15%</div>
+                           <div>Sharpe: 0.92</div>
+                         </div>
+                       </div>
+                       <div className="text-center font-display text-[9px] tracking-widest text-neutral-600">
+                         ONE-PAGE REPORT PREVIEW
+                       </div>
+                     </div>
+                   )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
       </div>
-    </div>
+
+      {/* Hovering Active Simulation Dock */}
+      {(selectedTheses.length > 0 || activeTab === "INTELLIGENCE") && (
+        <div 
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOverDock(true);
+          }}
+          onDragLeave={() => setIsDragOverDock(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragOverDock(false);
+            const id = e.dataTransfer.getData("thesis_id") || e.dataTransfer.getData("text/plain");
+            if (id) {
+              setSelectedTheses(prev => prev.includes(id) ? prev : [...prev, id]);
+            }
+          }}
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-4xl px-6 transition-all duration-500 cubic-bezier(0.175, 0.885, 0.32, 1.275) ${
+            selectedTheses.length > 0 ? "translate-y-0 opacity-100" : "translate-y-4 opacity-90"
+          }`}
+        >
+          <div className={`backdrop-blur-lg bg-neutral-950/80 border rounded-full px-6 py-3 shadow-[0_24px_50px_rgba(0,0,0,0.7)] flex flex-col md:flex-row items-center justify-between gap-4 transition-all duration-500 cubic-bezier(0.175, 0.885, 0.32, 1.275) ${
+            isDragOverDock ? "border-white ring-4 ring-white/10 scale-105" : "border-neutral-800"
+          }`}>
+            <div className="flex flex-col gap-1 flex-grow w-full md:w-auto pointer-events-none">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-display text-[9px] tracking-widest text-neutral-400 font-bold uppercase">
+                  ACTIVE SIMULATION BASKET
+                </span>
+                <span className="text-[9px] font-mono bg-neutral-900 text-neutral-400 px-1.5 py-0.2 border border-neutral-850 rounded-full">
+                  {selectedTheses.length} SOURCES ACTIVE
+                </span>
+              </div>
+              
+              {selectedTheses.length === 0 ? (
+                <div className="text-neutral-500 font-sans text-[10px] pl-4">
+                  DRAG &amp; DROP MARKET INTEL CARDS HERE TO ADD THEM TO THE ACTIVE SIMULATION
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto pr-1 pointer-events-auto">
+                  {selectedTheses.map(id => {
+                    const thesis = intelligenceFeed.find(t => t.id === id);
+                    if (!thesis) return null;
+                    const cat = thesis.category || "NEWS";
+                    return (
+                      <div key={id} className="flex items-center gap-2 bg-neutral-900 border border-neutral-855 hover:border-neutral-700 px-3.5 py-1 rounded-full text-[11px] text-neutral-300 transition-all font-sans shadow-sm">
+                        <span className={`text-[8px] font-display font-bold uppercase tracking-wider ${
+                          cat === "RESEARCH" ? "text-amber-400" : cat === "NEWS" ? "text-blue-400" : "text-purple-400"
+                        }`}>
+                          {cat === "RESEARCH" ? "RESEARCH" : cat === "NEWS" ? "NEWS" : "ASSET"}
+                        </span>
+                        <span className="truncate max-w-[140px] font-medium">{thesis.title}</span>
+                        <button 
+                          onClick={() => setSelectedTheses(prev => prev.filter(t => t !== id))}
+                          className="text-neutral-500 hover:text-white ml-1 font-mono hover:bg-neutral-950 rounded-full w-4 h-4 flex items-center justify-center text-[9px] transition-all"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3 w-full md:w-auto flex-shrink-0 items-center justify-end">
+              <button 
+                onClick={() => setSelectedTheses([])}
+                disabled={selectedTheses.length === 0}
+                className="button-ghost-dark text-[9px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed uppercase font-mono tracking-wider"
+              >
+                CLEAR
+              </button>
+              <button 
+                onClick={() => setShowRunConfirmModal(true)}
+                disabled={selectedTheses.length === 0}
+                className="bg-white hover:bg-neutral-200 text-black p-3.5 rounded-full shadow-lg shadow-white/5 transition-all duration-300 disabled:opacity-30 disabled:cursor-not-allowed hover:scale-105 active:scale-95 flex items-center justify-center border border-white w-10 h-10 flex-shrink-0"
+                title="Apply active basket to Simulator"
+              >
+                <Play className="w-4 h-4 fill-black text-black ml-0.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal Popup */}
+      {showRunConfirmModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0a0a0a] border border-neutral-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
+              <h3 className="font-display text-xs tracking-wider text-neutral-300 font-bold uppercase flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-white" />
+                CONFIRM SIMULATION RUN
+              </h3>
+              <button 
+                onClick={() => setShowRunConfirmModal(false)}
+                className="text-neutral-500 hover:text-white font-mono text-xs hover:bg-neutral-900 rounded px-1.5 py-0.5"
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+
+            {/* Included Sources List */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[9px] font-display tracking-widest text-neutral-500 uppercase font-bold">
+                INCLUDED SOURCES ({selectedTheses.length})
+              </span>
+              <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto bg-black border border-neutral-900 p-3 rounded-lg">
+                {selectedTheses.map(id => {
+                  const thesis = intelligenceFeed.find(t => t.id === id);
+                  if (!thesis) return null;
+                  const cat = thesis.category || "NEWS";
+                  return (
+                    <div key={id} className="text-[10px] flex items-center gap-2 text-neutral-300 border-b border-neutral-950 pb-1 last:border-0 last:pb-0">
+                      <span className={`text-[8px] font-display font-bold px-1.5 py-0.2 rounded-full border ${
+                        cat === "RESEARCH" ? "bg-amber-950/20 text-amber-400 border-amber-900/40" : 
+                        cat === "NEWS" ? "bg-blue-950/20 text-blue-400 border-blue-900/40" : 
+                        "bg-purple-950/20 text-purple-400 border-purple-900/40"
+                      }`}>
+                        {cat === "RESEARCH" ? "Research" : cat === "NEWS" ? "News" : "User Asset"}
+                      </span>
+                      <span className="truncate flex-grow font-sans font-medium">{thesis.title}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Max Deviation Limits Slider (δ) */}
+            <div className="flex flex-col gap-2 border-t border-neutral-950 pt-3">
+              <div className="flex justify-between items-center text-[10px] font-display tracking-widest text-neutral-400 font-bold">
+                <span>MAX BENCHMARK DEVIATION (δ)</span>
+                <span className="text-white font-mono bg-neutral-900 px-2 py-0.5 border border-neutral-800 rounded">{(maxDeviation * 100).toFixed(0)}%</span>
+              </div>
+              <input 
+                type="range" 
+                min="0.01" 
+                max="0.30" 
+                step="0.01" 
+                value={maxDeviation} 
+                onChange={(e) => setMaxDeviation(parseFloat(e.target.value))}
+                className="w-full accent-white bg-neutral-900 h-1 cursor-pointer mt-1"
+              />
+              <p className="text-[9px] text-neutral-600 leading-normal font-sans">
+                Defines the maximum allowed underweight/overweight bounds relative to the NPS strategic benchmark weights.
+              </p>
+            </div>
+
+            {/* Optimizer Selection */}
+            <div className="flex flex-col gap-2 border-t border-neutral-950 pt-3">
+              <label className="text-[10px] font-display tracking-widest text-neutral-400 font-bold uppercase">OPTIMIZATION ENGINE</label>
+              <select
+                value={optimizer}
+                onChange={(e) => setOptimizer(e.target.value)}
+                className="w-full bg-black border border-neutral-900 p-2.5 rounded text-xs outline-none text-white focus:border-white cursor-pointer font-sans"
+              >
+                <option value="risk_parity">RISK PARITY (Recommended - Balanced Risk Allocation)</option>
+                <option value="markowitz">MARKOWITZ MVO (Yield Max - Maximizes Sharpe Ratio)</option>
+                <option value="hrp">HIERARCHICAL RISK PARITY (HRP - Out-of-Sample Stability)</option>
+              </select>
+              <p className="text-[9px] text-neutral-600 leading-normal font-sans text-neutral-400">
+                {optimizer === "risk_parity" && "✓ Recommended: Allocates weights to equalize risk contributions, preventing concentration spikes."}
+                {optimizer === "markowitz" && "💡 Maximizes Expected Sharpe Ratio; sensitive to input view accuracy."}
+                {optimizer === "hrp" && "💡 Uses machine learning clustering to allocate weights based on hierarchical asset correlation trees."}
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 justify-end border-t border-neutral-900 pt-4 mt-1">
+              <button 
+                onClick={() => setShowRunConfirmModal(false)}
+                className="button-ghost-dark text-[9px] px-4 py-2 font-mono"
+              >
+                CANCEL
+              </button>
+              <button 
+                onClick={() => {
+                  setShowRunConfirmModal(false);
+                  applyToSimulator(optimizer, maxDeviation);
+                }}
+                className="bg-white hover:bg-neutral-200 text-black font-display font-bold text-[9px] tracking-widest px-5 py-2 border border-white transition-all uppercase flex items-center gap-1.5 rounded-sm"
+              >
+                <Play className="w-3.5 h-3.5 fill-black" />
+                EXECUTE SIMULATION
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+
+      {data && (
+        <div id="portfolio-pdf-report-root" className="hidden print:block bg-white text-black p-8 font-sans w-full max-w-[800px] mx-auto min-h-screen">
+          {/* Header */}
+          <div className="border-b-2 border-black pb-4 mb-6">
+            <div className="flex justify-between items-start">
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-black">NATIONAL PENSION SERVICE (NPS)</h1>
+                <h2 className="text-base font-semibold text-neutral-800">GLOBAL PORTFOLIO ALLOCATION REPORT</h2>
+                <p className="text-[10px] text-neutral-500 mt-1">Black-Litterman Optimization Engine Output</p>
+              </div>
+              <div className="text-right text-[10px] font-mono text-neutral-600">
+                <div>RUN ID: #{data.simulation_id}</div>
+                <div>DATE: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
+                <div>ENGINE: {optimizer === "risk_parity" ? "Risk Parity (Recommended)" : optimizer === "markowitz" ? "Markowitz Sharpe Max" : "Hierarchical Risk Parity (HRP)"}</div>
+                <div>DEV LIMIT (δ): {(maxDeviation * 100).toFixed(0)}%</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 1: Executive Metrics Summary */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
+              I. Portfolio Risk & Return Analysis
+            </h3>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-black">
+                  <th className="py-1 font-semibold">Metric</th>
+                  <th className="py-1 text-right font-semibold">Strategic Benchmark</th>
+                  <th className="py-1 text-right font-semibold">Optimized Portfolio</th>
+                  <th className="py-1 text-right font-semibold">Active Variance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">Expected Annual Return</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? formatPercent(data.benchmark_portfolio.return / 100) : "N/A"}</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.expected_return)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">
+                    {data.benchmark_portfolio ? `${((data.risk_metrics.expected_return - data.benchmark_portfolio.return / 100) * 100).toFixed(2)}%` : "N/A"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">Annual Volatility</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? formatPercent(data.benchmark_portfolio.volatility / 100) : "N/A"}</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.volatility)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">
+                    {data.benchmark_portfolio ? `${((data.risk_metrics.volatility - data.benchmark_portfolio.volatility / 100) * 100).toFixed(2)}%` : "N/A"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">Expected Sharpe Ratio</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? data.benchmark_portfolio.sharpe.toFixed(2) : "N/A"}</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{metrics.sharpe.toFixed(2)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">
+                    {data.benchmark_portfolio ? (metrics.sharpe - data.benchmark_portfolio.sharpe).toFixed(2) : "N/A"}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">95% Value-at-Risk (1Y)</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.var_95)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">95% Conditional VaR (1Y)</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.cvar_95)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 font-medium text-neutral-800">Projected Max Drawdown</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                  <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.max_drawdown_estimate)}</td>
+                  <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Section 2: Portfolio Allocations & Views */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
+              II. Asset Allocations & Expected Returns
+            </h3>
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-black">
+                  <th className="py-1 font-semibold">Asset Class</th>
+                  <th className="py-1 text-right font-semibold">Strategic Benchmark</th>
+                  <th className="py-1 text-right font-semibold">Optimized Weight</th>
+                  <th className="py-1 text-right font-semibold">Active Weight</th>
+                  <th className="py-1 text-right font-semibold">Prior Return</th>
+                  <th className="py-1 text-right font-semibold">Posterior Return</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200">
+                {Object.keys(data.market_weights).map(asset => {
+                  const benchWt = data.market_weights[asset];
+                  const optWt = data.optimized_weights[asset];
+                  const diffWt = optWt - benchWt;
+                  const priorRet = data.prior_returns?.[asset] || 0;
+                  const postRet = data.posterior_returns[asset] || 0;
+                  return (
+                    <tr key={asset}>
+                      <td className="py-1.5 font-medium text-neutral-800">{ASSET_LABELS[asset] || asset}</td>
+                      <td className="py-1.5 text-right font-mono text-neutral-700">{formatPercent(benchWt)}</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(optWt)}</td>
+                      <td className={`py-1.5 text-right font-mono font-semibold ${diffWt >= 0 ? "text-neutral-900" : "text-neutral-600"}`}>
+                        {diffWt >= 0 ? "+" : ""}{formatPercent(diffWt)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-700">{formatPercent(priorRet)}</td>
+                      <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(postRet)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Section 3: Stress Scenario shock test */}
+          {data.historical_stress_tests && (
+            <div className="mb-6">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
+                III. Historical Crisis Scenario Analysis
+              </h3>
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-black">
+                    <th className="py-1 font-semibold">Crisis Scenario Name</th>
+                    <th className="py-1 text-right font-semibold">Portfolio Return</th>
+                    <th className="py-1 text-right font-semibold">KR Stock Impact</th>
+                    <th className="py-1 text-right font-semibold">Global Stock Impact</th>
+                    <th className="py-1 text-right font-semibold">Alternatives Impact</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-200">
+                  {data.historical_stress_tests.map((sc, idx) => (
+                    <tr key={idx}>
+                      <td className="py-1.5 font-medium text-neutral-800">{sc.name_kr} ({sc.name})</td>
+                      <td className={`py-1.5 text-right font-mono font-bold ${sc.portfolio_return < 0 ? "text-red-700" : "text-emerald-700"}`}>
+                        {formatPercent(sc.portfolio_return)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-700">
+                        {sc.asset_impacts.KR_STOCK < 0 ? "" : "+"}{formatPercent(sc.asset_impacts.KR_STOCK)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-700">
+                        {sc.asset_impacts.GLOBAL_STOCK < 0 ? "" : "+"}{formatPercent(sc.asset_impacts.GLOBAL_STOCK)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-neutral-700">
+                        {sc.asset_impacts.ALTERNATIVE < 0 ? "" : "+"}{formatPercent(sc.asset_impacts.ALTERNATIVE)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Section 4: Executive Commentary */}
+          {data.ai_commentary && (
+            <div className="mb-6">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-2">
+                IV. Strategic Commentary & Investment Thesis
+              </h3>
+              <p className="text-[10px] text-neutral-700 font-sans leading-relaxed whitespace-pre-line border border-neutral-200 p-3 bg-neutral-50/50 rounded-sm">
+                {data.ai_commentary.split("=============================================================================").pop()?.trim()}
+              </p>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="border-t border-neutral-300 pt-3 mt-8 text-center text-[9px] text-neutral-500">
+            <div>CONFIDENTIAL - FOR INVESTMENT COMMITTEE REVIEW ONLY</div>
+            <div className="mt-0.5">National Pension Service (NPS) Quantitative Allocation Platform © 2026</div>
+          </div>
+        </div>
+      )}
+
+      {/* Print CSS */}
+      <style>{`
+        @media print {
+          body {
+            background-color: white !important;
+            color: black !important;
+          }
+          #main-terminal-layout {
+            display: none !important;
+          }
+          #portfolio-pdf-report-root {
+            display: block !important;
+            background-color: white !important;
+            color: black !important;
+          }
+        }
+      `}</style>
+    </>
   );
 }
