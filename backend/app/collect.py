@@ -1,6 +1,7 @@
 """Collection orchestrator: run the macro collectors, score the results, and persist
 them as Document rows. Also exposes the ranked research queue read path.
 """
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,12 @@ from app.db import Document
 from app.sources.fred import fetch_fred_series
 from app.sources.gdelt import fetch_gdelt_articles
 from app.sources.normalize import make_document, NEWS
+from app.sources.ecos import fetch_ecos_series
+from app.sources.cftc import fetch_cftc_cot
+from app.sources.etf_flows import fetch_etf_flows
+from app.sources.central_banks import fetch_central_bank_docs
+from app.sources.bank_research import fetch_bank_research_docs
+from app.sources.news_feeds import fetch_news_feeds
 from app.research import score_documents, rank_queue
 
 logger = logging.getLogger(__name__)
@@ -84,14 +91,38 @@ async def _fetch_marketaux_as_docs() -> List[Dict[str, Any]]:
 
 
 async def collect_documents(db: Session) -> Dict[str, Any]:
-    """Runs all collectors, scores the union with existing stored docs, and upserts."""
+    """Runs all collectors in parallel, scores the union with existing stored docs, and upserts."""
+    # Load prior ETF flow snapshots so the ETF collector can compute week-over-week deltas.
+    prior_etf_shares: Dict[str, float] = {}
+    for row in db.query(Document).filter(Document.source == "ETF_FLOWS").all():
+        payload = row.payload or {}
+        ticker = payload.get("ticker")
+        shares = payload.get("shares")
+        if ticker and shares:
+            prior_etf_shares[ticker] = float(shares)
+
+    results = await asyncio.gather(
+        fetch_fred_series(),
+        fetch_gdelt_articles(),
+        _fetch_marketaux_as_docs(),
+        fetch_ecos_series(),
+        fetch_cftc_cot(),
+        fetch_etf_flows(prior_shares=prior_etf_shares),
+        fetch_central_bank_docs(),
+        fetch_bank_research_docs(),
+        fetch_news_feeds(),
+        return_exceptions=True,
+    )
+
+    (fred_docs, gdelt_docs, marketaux_docs,
+     ecos_docs, cftc_docs, etf_docs, cb_docs, bank_docs, news_docs) = [
+        r if isinstance(r, list) else [] for r in results
+    ]
+
     collected: List[Dict[str, Any]] = []
-    fred_docs = await fetch_fred_series()
-    gdelt_docs = await fetch_gdelt_articles()
-    marketaux_docs = await _fetch_marketaux_as_docs()
-    collected.extend(fred_docs)
-    collected.extend(gdelt_docs)
-    collected.extend(marketaux_docs)
+    for batch in (fred_docs, gdelt_docs, marketaux_docs,
+                  ecos_docs, cftc_docs, etf_docs, cb_docs, bank_docs, news_docs):
+        collected.extend(batch)
 
     # De-dup by id within this batch, then merge with everything already stored so
     # scoring/dedup clusters stay consistent across the whole corpus.
@@ -118,6 +149,12 @@ async def collect_documents(db: Session) -> Dict[str, Any]:
         "fred": len(fred_docs),
         "gdelt": len(gdelt_docs),
         "marketaux": len(marketaux_docs),
+        "ecos": len(ecos_docs),
+        "cftc": len(cftc_docs),
+        "etf_flows": len(etf_docs),
+        "central_banks": len(cb_docs),
+        "bank_research": len(bank_docs),
+        "news_feeds": len(news_docs),
         "total_in_store": len(union),
     }
 

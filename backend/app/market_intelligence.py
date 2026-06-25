@@ -335,6 +335,8 @@ Analyze the following recent financial headlines and, for EACH headline, generat
 You must output a JSON object containing a single key "theses" pointing to a list of these structured items.
 Ensure all asset keys are valid. Output ONLY valid, parseable JSON. Do not write markdown decorations other than JSON block.
 
+IMPORTANT LANGUAGE RULE: If the article's source or content is primarily in English (e.g. Bloomberg, Reuters, WSJ, FT, CNBC), write ALL text fields (title, content, executive_summary, rationale, etc.) in ENGLISH. Only use Korean if the article source is a Korean outlet (e.g. Yonhap, Hankyung, Chosun) or the original content is written in Korean.
+
 {extra_instructions}
 """
 
@@ -419,7 +421,7 @@ def extract_pdf_text(data: bytes, max_pages: int = 30) -> str:
         return ""
 
 
-async def fetch_url_text(url: str) -> Optional[str]:
+async def fetch_url_text(url: str, client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
     """
     Fetches a URL and extracts readable plain text. Handles both HTML pages and PDF
     documents. Returns None if the page can't be retrieved or yields no extractable
@@ -430,8 +432,11 @@ async def fetch_url_text(url: str) -> Optional[str]:
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        if client is not None:
             resp = await client.get(url, headers=headers, timeout=15.0)
+        else:
+            async with httpx.AsyncClient(follow_redirects=True) as c:
+                resp = await c.get(url, headers=headers, timeout=15.0)
         if resp.status_code != 200:
             logger.warning(f"URL fetch returned {resp.status_code} for {url}")
             return None
@@ -642,6 +647,143 @@ Output ONLY valid, parseable JSON. Do not write markdown decorations other than 
     return headlines[:12]
 
 
+
+async def sync_market_intelligence_with_progress(db: Session, force: bool = False):
+    """
+    Same pipeline as sync_market_intelligence, but yields SSE-compatible progress
+    events so the frontend can display a real-time task list.
+    Yields dicts like:
+      {"type": "phase", "phase": "fetching", "msg": "..."}
+      {"type": "article_read", "title": "...", "source": "...", "status": "reading|done"}
+      {"type": "article_selected", "title": "...", "source": "..."}
+      {"type": "article_analyzing", "title": "...", "source": "...", "status": "analyzing|done"}
+      {"type": "result", "data": [...]}
+    """
+    from typing import AsyncGenerator
+    import asyncio
+
+    # -- Phase 1: Fetch RSS --
+    yield {"type": "phase", "phase": "fetching", "msg": "Fetching latest headlines from RSS feeds..."}
+
+    queries = {
+        "EQUITY": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "equity valuations" OR "earnings yield" OR "stock market index" -earnings -ticker',
+        "BOND": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "yield curve" OR "treasury yields" OR "sovereign bonds" OR "credit spreads"',
+        "ALTERNATIVE": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "gold spot" OR "crude oil" OR "real estate REIT" OR "bitcoin macro" -earnings',
+        "MACRO": 'site:reuters.com OR site:bloomberg.com OR site:wsj.com OR site:ft.com OR site:cnbc.com OR site:economist.com "inflation" OR "interest rates" OR "Fed" OR "GDP" OR "monetary policy"'
+    }
+
+    age_days = 7
+    fetch_tasks = [
+        fetch_rss_headlines_for_category(cat, q, limit=50, age_days=age_days)
+        for cat, q in queries.items()
+    ]
+    category_headlines = await asyncio.gather(*fetch_tasks)
+
+    seen_urls: set = set()
+    seen_titles: set = set()
+    unique_headlines = []
+    for headlines in category_headlines:
+        for h in headlines:
+            url = h.get("url")
+            title_norm = h.get("title", "").strip().lower()
+            if url and url not in seen_urls and title_norm not in seen_titles:
+                seen_urls.add(url)
+                seen_titles.add(title_norm)
+                unique_headlines.append(h)
+
+    if len(unique_headlines) < 30:
+        age_days = 14
+        fetch_tasks = [
+            fetch_rss_headlines_for_category(cat, q, limit=50, age_days=age_days)
+            for cat, q in queries.items()
+        ]
+        category_headlines = await asyncio.gather(*fetch_tasks)
+        seen_urls.clear()
+        seen_titles.clear()
+        unique_headlines.clear()
+        for headlines in category_headlines:
+            for h in headlines:
+                url = h.get("url")
+                title_norm = h.get("title", "").strip().lower()
+                if url and url not in seen_urls and title_norm not in seen_titles:
+                    seen_urls.add(url)
+                    seen_titles.add(title_norm)
+                    unique_headlines.append(h)
+
+    # Emit each article as "read"
+    yield {"type": "phase", "phase": "reading", "msg": f"Found {len(unique_headlines)} articles. Showing headlines..."}
+    for h in unique_headlines:
+        yield {"type": "article_read", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
+
+    # -- Phase 2: Select top 10-15 --
+    yield {"type": "phase", "phase": "selecting", "msg": "AI is selecting the 10-15 most relevant articles..."}
+    selected_headlines = await select_top_articles_with_llm(unique_headlines)
+    for h in selected_headlines:
+        yield {"type": "article_selected", "title": h.get("title", "")[:80], "source": h.get("source", "")}
+
+    # -- Phase 3: Scrape full text --
+    yield {"type": "phase", "phase": "scraping", "msg": f"Scraping full article text for {len(selected_headlines)} articles..."}
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        scrape_tasks = [fetch_url_text(h["url"], client=client) for h in selected_headlines]
+        scraped_texts = await asyncio.gather(*scrape_tasks)
+    for h, text in zip(selected_headlines, scraped_texts):
+        if text and len(text.strip()) >= MIN_ARTICLE_CHARS:
+            h["description"] = text.strip()[:8000]
+
+    # -- Phase 4: Analyze with LLM --
+    yield {"type": "phase", "phase": "analyzing", "msg": f"Analyzing {len(selected_headlines)} articles in parallel..."}
+    for h in selected_headlines:
+        yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "analyzing"}
+
+    thesis_tasks = [
+        generate_theses_with_llm([h], category_hint=h.get("category_hint"))
+        for h in selected_headlines
+    ]
+    all_theses = []
+    if thesis_tasks:
+        try:
+            thesis_results = await asyncio.gather(*thesis_tasks)
+            for i, (h, cat_theses) in enumerate(zip(selected_headlines, thesis_results)):
+                if cat_theses:
+                    all_theses.extend(cat_theses)
+                yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
+        except Exception as e:
+            logger.error(f"Failed parallel LLM thesis generation: {e}")
+
+    # -- Phase 5: Commit to DB --
+    yield {"type": "phase", "phase": "saving", "msg": f"Saving {len(all_theses)} theses to database..."}
+    if all_theses:
+        try:
+            db.query(MarketIntelligence).filter(
+                (MarketIntelligence.category == "NEWS") | (MarketIntelligence.category.is_(None))
+            ).delete()
+            timestamp_sec = int(datetime.utcnow().timestamp())
+            for idx, t in enumerate(all_theses):
+                t["id"] = f"news-{timestamp_sec}-{idx}"
+            for t in all_theses:
+                db_item = MarketIntelligence(
+                    id=t["id"],
+                    author=t.get("author", "NPS Research Desk"),
+                    author_title=t.get("author_title", "Senior Macro Strategist"),
+                    source=t.get("source", "Financial News"),
+                    date=t.get("date", datetime.utcnow().isoformat()),
+                    title=t.get("title", ""),
+                    content=t.get("content", ""),
+                    image_url=t.get("image_url", ""),
+                    ai_interpretation=t.get("ai_interpretation", {}),
+                    full_report=t.get("full_report"),
+                    category="NEWS"
+                )
+                db.add(db_item)
+            db.commit()
+        except Exception as e:
+            logger.error(f"Failed to commit theses in stream: {e}")
+            db.rollback()
+
+    final_data = _serialize_feed(db.query(MarketIntelligence).all())
+    yield {"type": "result", "data": final_data}
+
+
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:
     """
     Retrieves market theses from DB cache. If empty or stale, fetches from RSS, analyzes with LLM, and caches.
@@ -722,8 +864,9 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
         
         # Scrape full text content for the selected articles in parallel
         logger.info(f"Concurrently scraping full webpage text for the selected {len(selected_headlines)} articles...")
-        scrape_tasks = [fetch_url_text(h["url"]) for h in selected_headlines]
-        scraped_texts = await asyncio.gather(*scrape_tasks)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            scrape_tasks = [fetch_url_text(h["url"], client=client) for h in selected_headlines]
+            scraped_texts = await asyncio.gather(*scrape_tasks)
         
         # Enrich headlines with scraped text or fallback to original description
         for h, text in zip(selected_headlines, scraped_texts):

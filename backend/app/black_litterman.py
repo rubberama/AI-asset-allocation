@@ -145,10 +145,13 @@ def run_black_litterman(
             asset = view["asset"]
             asset_idx = asset_to_idx[asset]
             P[idx, asset_idx] = 1.0
-            # Q represents excess return, so we subtract risk-free rate from the user's expected return
-            # User inputs expected return as total return (e.g. 12% -> 0.12).
-            # Excess expected return = total expected return - risk-free rate.
-            Q[idx] = view["expected_return"] - risk_free_rate
+            # Q represents excess return.
+            if view.get("is_active_tilt", False):
+                # Active view: excess expected return = prior implied excess return + signed tilt.
+                Q[idx] = Pi[asset_idx] + view["expected_return"]
+            else:
+                # User total return input: excess expected return = total expected return - risk-free rate.
+                Q[idx] = view["expected_return"] - risk_free_rate
             
         elif view["view_type"] == "relative":
             asset1 = view["asset1"]

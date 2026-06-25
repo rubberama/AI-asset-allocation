@@ -1,7 +1,9 @@
 import logging
 import numpy as np
+import json
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -11,7 +13,10 @@ from app.db import init_db, get_db, Simulation, NpsSnapshot
 from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU
 from app.crawler import fetch_and_sync_nps_data
 from app.market_data import fetch_market_data, fetch_risk_free_rate
-from app.llm import parse_views_with_llm, get_last_macro_context, generate_portfolio_commentary
+from app.llm import (
+    parse_views_with_llm, parse_views_with_llm_stream, parse_heuristics_and_validate,
+    get_last_macro_context, generate_portfolio_commentary, generate_pm_memo,
+)
 from app.black_litterman import run_black_litterman
 from app.optimizer import optimize_portfolio, run_efficient_frontier
 from app.stress_test import run_monte_carlo_simulation, run_historical_stress_test
@@ -118,20 +123,42 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             # 1. Fetch current NPS weights
             yield json.dumps({"step": 1, "message": "국민연금 기금운용본부의 공식 자산배분 목표 비중 데이터를 조회하고 있습니다."}) + "\n"
             await asyncio.sleep(0.02)  # Yield slice to allow UI update
-            market_weights = fetch_and_sync_nps_data(db)
+            market_weights = await asyncio.to_thread(fetch_and_sync_nps_data, db)
             
             # 2. Fetch market data (returns, covariance)
             yield json.dumps({"step": 2, "message": "야후 파이낸스에서 대표 ETF 종목 시세 및 국채 금리 데이터를 수집하고 있습니다."}) + "\n"
             await asyncio.sleep(0.02)
-            market_data = fetch_market_data()
+            market_data = await asyncio.to_thread(fetch_market_data)
             expected_returns_hist = market_data["expected_returns"]
             covariance = market_data["covariance"]
-            risk_free_rate = fetch_risk_free_rate()
+            risk_free_rate = await asyncio.to_thread(fetch_risk_free_rate)
             
-            # 3. Parse user views using OpenRouter
-            yield json.dumps({"step": 3, "message": "OpenRouter AI 모델(owl-alpha)을 활용하여 자연어 투자 의견을 구조화하고 있습니다."}) + "\n"
+            # 3. Parse user views with DeepSeek R1 (streaming CoT reasoning)
+            yield json.dumps({
+                "step": 3,
+                "message": "DeepSeek R1 추론 모델이 투자 의견을 분석하고 있습니다. 최대 2분 소요될 수 있습니다..."
+            }) + "\n"
             await asyncio.sleep(0.02)
-            parsed_views = await parse_views_with_llm(request.view_text)
+
+            parsed_views: list = []
+            async for event in parse_views_with_llm_stream(request.view_text):
+                if event["type"] == "thinking":
+                    yield json.dumps({"step": 3, "type": "thinking", "chunk": event["chunk"]}) + "\n"
+                elif event["type"] == "result":
+                    parsed_views = event["views"]
+
+            if not parsed_views:
+                parsed_views = parse_heuristics_and_validate(request.view_text)
+            
+            # Fetch macro context for PM memo
+            macro_context = get_last_macro_context()
+            if not macro_context:
+                from app.macro_data import fetch_macro_context
+                try:
+                    macro_context = fetch_macro_context()
+                except Exception:
+                    macro_context = {}
+            pm_memo = await generate_pm_memo(parsed_views, macro_context)
             
             # 4. Compute/estimate lambda and tau, and run Black-Litterman
             yield json.dumps({"step": 4, "message": "시장 균형수익률(Prior)과 사용자 의견을 결합하여 Black-Litterman 사후 기대수익률을 산정하고 있습니다."}) + "\n"
@@ -169,6 +196,13 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             # 5. Optimize portfolio using the selected strategy
             yield json.dumps({"step": 5, "message": f"선택한 최적화 알고리즘({request.optimizer.upper()})을 적용하여 자산배분 최적 가중치를 산출하고 있습니다."}) + "\n"
             await asyncio.sleep(0.02)
+            
+            # Fallback detection
+            min_variance_fallback = False
+            if request.optimizer.lower().strip() in ("markowitz", "resampled", "ensemble"):
+                if all(post_returns[a] < risk_free_rate for a in post_returns):
+                    min_variance_fallback = True
+
             optimized_weights = optimize_portfolio(
                 strategy=request.optimizer,
                 expected_returns=post_returns,
@@ -271,7 +305,9 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                     "tau": tau,
                     "macro_context": macro_context,
                     "ai_commentary": ai_commentary,
-                    "historical_stress_tests": historical_stress_tests
+                    "historical_stress_tests": historical_stress_tests,
+                    "pm_memo": pm_memo,
+                    "min_variance_fallback": min_variance_fallback
                 }
             )
             db.add(sim_record)
@@ -303,7 +339,9 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                 "tau": tau,
                 "macro_context": macro_context,
                 "ai_commentary": ai_commentary,
-                "historical_stress_tests": historical_stress_tests
+                "historical_stress_tests": historical_stress_tests,
+                "pm_memo": pm_memo,
+                "min_variance_fallback": min_variance_fallback
             }
             yield json.dumps({"step": 9, "message": "자산배분 시뮬레이션이 성공적으로 완료되었습니다.", "data": result_data}) + "\n"
             
@@ -330,15 +368,21 @@ def run_custom_stress_test(request: StressTestRequest):
         raise HTTPException(status_code=500, detail=f"Stress test error: {str(e)}")
 
 @app.get("/macro-data")
-def get_macro_data():
+def get_macro_data(refresh: bool = False):
     """
     Fetches real-time macro indicators.
     """
     try:
-        macro_context = get_last_macro_context()
-        if not macro_context:
+        if refresh:
             from app.macro_data import fetch_macro_context
+            import app.llm as llm
             macro_context = fetch_macro_context()
+            llm._last_macro_context = macro_context
+        else:
+            macro_context = get_last_macro_context()
+            if not macro_context:
+                from app.macro_data import fetch_macro_context
+                macro_context = fetch_macro_context()
         return {"data": macro_context}
     except Exception as e:
         logger.error(f"Failed to fetch macro data: {e}")
@@ -368,6 +412,25 @@ async def refresh_market_intelligence(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to refresh market intelligence: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/market-intelligence/refresh-stream")
+async def refresh_market_intelligence_stream(db: Session = Depends(get_db)):
+    """
+    SSE endpoint: streams live progress events during feed refresh so the
+    frontend can display a real-time task list (reading → selecting → analyzing).
+    """
+    from app.market_intelligence import sync_market_intelligence_with_progress
+
+    async def event_generator():
+        async for event in sync_market_intelligence_with_progress(db, force=True):
+            yield f"data: {json.dumps(event)}\n\n"
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 @app.post("/market-intelligence/from-url")
 async def ingest_market_intelligence_from_url(request: IngestUrlRequest, db: Session = Depends(get_db)):
@@ -454,8 +517,30 @@ async def build_thesis(db: Session = Depends(get_db)):
     """Stage 2: digest the research queue into calibrated house-view theses (Nemotron Ultra, 2-pass)."""
     try:
         from app.thesis_engine import build_theses
+        from app.collect import get_research_queue
+        from app.config import OPENROUTER_API_KEY
+
+        queue_size = len(get_research_queue(db, limit=1))
+        if queue_size == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Research queue is empty. Run '1 · COLLECT' first to gather macro documents."
+            )
+        if not OPENROUTER_API_KEY:
+            raise HTTPException(
+                status_code=400,
+                detail="OPENROUTER_API_KEY is not set. Add it to your .env file to enable thesis generation."
+            )
+
         theses = await build_theses(db)
+        if not theses:
+            raise HTTPException(
+                status_code=502,
+                detail="The LLM returned no views. Check OPENROUTER_API_KEY and ARTICLE_DIGESTION_MODEL in your .env, or try running collect again to refresh the queue."
+            )
         return {"status": "ok", "data": theses}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Thesis build failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -512,6 +597,12 @@ def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)
             market_weights=market_weights, covariance_dict=covariance, views=views,
             risk_free_rate=rf, risk_aversion=risk_aversion, tau=tau, omega_method="idzorek",
         )
+        # Fallback detection
+        min_variance_fallback = False
+        if request.optimizer.lower().strip() in ("markowitz", "resampled", "ensemble"):
+            if all(post_returns[a] < rf for a in post_returns):
+                min_variance_fallback = True
+
         optimized_weights = optimize_portfolio(
             strategy=request.optimizer, expected_returns=post_returns, covariance_dict=post_covariance,
             risk_free_rate=rf, risk_aversion=risk_aversion, benchmark_weights=market_weights,
@@ -536,6 +627,7 @@ def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)
             "omega_method": "idzorek",
             "theses_used": theses,
             "n_views": len(views),
+            "min_variance_fallback": min_variance_fallback
         }
     except Exception as e:
         logger.error(f"Allocation failed: {e}", exc_info=True)
@@ -543,13 +635,13 @@ def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)
 
 
 @app.get("/backtest")
-def backtest(db: Session = Depends(get_db)):
+async def backtest(db: Session = Depends(get_db)):
     """Scores stored theses (whose horizon has elapsed) against realized ETF returns:
     Information Coefficient + hit-rate."""
     try:
         from app.thesis_engine import get_theses
         from app.backtest import run_thesis_backtest
-        return run_thesis_backtest(get_theses(db))
+        return await asyncio.to_thread(run_thesis_backtest, get_theses(db))
     except Exception as e:
         logger.error(f"Backtest failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -650,7 +742,9 @@ def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
             "tau": sim.risk_metrics.get("tau"),
             "macro_context": sim.risk_metrics.get("macro_context"),
             "ai_commentary": sim.risk_metrics.get("ai_commentary"),
-            "historical_stress_tests": sim.risk_metrics.get("historical_stress_tests")
+            "historical_stress_tests": sim.risk_metrics.get("historical_stress_tests"),
+            "pm_memo": sim.risk_metrics.get("pm_memo"),
+            "min_variance_fallback": sim.risk_metrics.get("min_variance_fallback", False)
         }
     except Exception as e:
         logger.error(f"Failed to fetch simulation detail: {e}")

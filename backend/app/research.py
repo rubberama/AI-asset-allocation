@@ -19,21 +19,40 @@ logger = logging.getLogger(__name__)
 
 # Macro taxonomy: keywords that, when present, raise a document's relevance to a sleeve.
 ASSET_KEYWORDS: Dict[str, List[str]] = {
-    "KR_STOCK": ["korea", "korean", "kospi", "won", "samsung", "seoul", "bank of korea", "kr equity"],
+    "KR_STOCK": ["korea", "korean", "kospi", "won", "samsung", "seoul", "bank of korea", "kr equity",
+                 "ewy", "korean trade", "household credit", "ecos"],
     "GLOBAL_STOCK": ["equity", "equities", "stock", "s&p", "nasdaq", "earnings", "tech", "ai",
-                     "global growth", "msci", "wall street"],
-    "KR_BOND": ["korea", "korean", "bank of korea", "won", "kr bond", "korea bond", "ktb"],
+                     "global growth", "msci", "wall street", "e-mini s&p"],
+    "KR_BOND": ["korea", "korean", "bank of korea", "won", "kr bond", "korea bond", "ktb",
+                "mpb", "bok rate", "monetary policy board", "bank of korea minutes"],
     "GLOBAL_BOND": ["treasury", "yield", "bond", "duration", "fed funds", "interest rate", "rate cut",
-                    "rate hike", "federal reserve", "fomc", "inflation", "cpi", "pce", "fixed income"],
+                    "rate hike", "federal reserve", "fomc", "inflation", "cpi", "pce", "fixed income",
+                    "beige book", "ecb bulletin", "imf outlook", "treasury futures", "10-year treasury"],
     "ALTERNATIVE": ["oil", "crude", "energy", "commodity", "gold", "real estate", "reit", "infrastructure",
-                    "sanctions", "supply chain", "geopolitical", "tariffs", "bitcoin"],
+                    "sanctions", "supply chain", "geopolitical", "tariffs", "bitcoin",
+                    "cot", "speculator", "commitment of traders", "positioning", "gold futures"],
 }
 
 # Per-source credibility (0..1). Primary data and tier-1 outlets rank highest.
 SOURCE_CREDIBILITY = {
-    "FRED": 1.0,
+    # Primary / official data sources
+    "FRED": 1.0, "ECOS": 0.98,
+    # Central banks and multilateral institutions
+    "FederalReserve": 1.0, "ECB": 1.0, "BOK_MPB": 0.95, "IMF": 0.95, "BIS": 0.95,
+    # Official positioning / flow data
+    "CFTC": 0.9, "ETF_FLOWS": 0.85,
+    # Tier-1 financial press
     "reuters.com": 0.9, "bloomberg.com": 0.9, "ft.com": 0.9, "wsj.com": 0.9,
     "economist.com": 0.85, "cnbc.com": 0.75, "marketwatch.com": 0.7,
+    # Policy research institutions
+    "Brookings": 0.75, "PIIE": 0.75,
+    # Commercial bank public research (best-effort)
+    "GoldmanSachs": 0.8, "MorganStanley": 0.8, "JPMorgan": 0.8,
+    # News RSS feeds
+    "Reuters": 0.9, "FT": 0.9, "TheEconomist": 0.85,
+    "CNBC": 0.75, "MarketWatch": 0.7, "YahooFinance": 0.65, "Investopedia": 0.65,
+    "KoreaHerald": 0.7, "YonhapNews": 0.75,
+    "NBER": 0.95, "WorldBank": 0.95,
 }
 DEFAULT_CREDIBILITY = 0.55
 RECENCY_HALFLIFE_DAYS = 5.0
@@ -69,8 +88,10 @@ def recency_weight(published_at: str) -> float:
 
 
 def credibility_weight(source: str, source_type: str) -> float:
-    if source_type == "MACRO_DATA":
+    if source_type in ("MACRO_DATA", "CB_PUBLICATION"):
         return 1.0
+    if source_type == "POSITIONING":
+        return SOURCE_CREDIBILITY.get(source or "", DEFAULT_CREDIBILITY)
     return SOURCE_CREDIBILITY.get((source or "").lower(), DEFAULT_CREDIBILITY)
 
 

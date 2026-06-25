@@ -70,6 +70,8 @@ interface SimulationData {
   tau?: number;
   macro_context?: Record<string, any>;
   ai_commentary?: string;
+  pm_memo?: any;
+  min_variance_fallback?: boolean;
   historical_stress_tests?: {
     name: string;
     name_kr: string;
@@ -115,8 +117,8 @@ interface Thesis {
 export default function Dashboard() {
   // User Inputs
   const [viewText, setViewText] = useState("해외주식이 국내주식보다 연 5% 우세할 것 같다. 그리고 금리는 하락할 것이다.");
-  const [optimizer, setOptimizer] = useState("markowitz");
-  const [maxDeviation, setMaxDeviation] = useState<number>(0.10); // Default 10%
+  const [optimizer, setOptimizer] = useState("ensemble");
+  const [maxDeviation, setMaxDeviation] = useState<number>(0.05); // Default 5%
   
   // App States
   const [isLoading, setIsLoading] = useState(false);
@@ -128,6 +130,8 @@ export default function Dashboard() {
   // Streaming States
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [loadingMessage, setLoadingMessage] = useState<string>("");
+  const [thinkingText, setThinkingText] = useState<string>("");
+  const [showThinking, setShowThinking] = useState<boolean>(true);
 
   // Tab & New Feature States
   const [activeTab, setActiveTab] = useState<TabType>("SIMULATOR");
@@ -138,6 +142,7 @@ export default function Dashboard() {
   const [isFetchingMacro, setIsFetchingMacro] = useState(false);
   const [selectedThesisId, setSelectedThesisId] = useState<string | null>(null);
   const [isRefreshingIntel, setIsRefreshingIntel] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<{phase: string; items: string[]}| null>(null);
 
   // URL / article ingestion states
   const [articleUrl, setArticleUrl] = useState("");
@@ -165,6 +170,10 @@ export default function Dashboard() {
   const [isDragOverDock, setIsDragOverDock] = useState(false);
   const [showRunConfirmModal, setShowRunConfirmModal] = useState(false);
   const [selectedMacroKey, setSelectedMacroKey] = useState<string>("SPY");
+  const [selectedTimeframe, setSelectedTimeframe] = useState<"1M" | "3M" | "6M" | "1Y">("3M");
+  const [compareMacroKey, setCompareMacroKey] = useState<string>("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
+  const [selectedCell, setSelectedCell] = useState<{ x: string; y: string } | null>(null);
   const [isDragOverBox3, setIsDragOverBox3] = useState(false);
   const [activeHelpStep, setActiveHelpStep] = useState<number>(1);
   // Promotion queue for Box 3 (batch promote)
@@ -262,22 +271,54 @@ export default function Dashboard() {
 
   const handleRefreshIntelligence = async () => {
     setIsRefreshingIntel(true);
+    setRefreshProgress({ phase: "Connecting...", items: [] });
     try {
-      const res = await fetch(`${apiBaseUrl}/market-intelligence/refresh`, {
-        method: "POST"
-      });
-      if (res.ok) {
-        const json = await res.json();
-        const data = json.data || [];
-        setIntelligenceFeed(data);
-        if (data.length > 0) {
-          setSelectedThesisId(data[0].id);
+      const response = await fetch(`${apiBaseUrl}/market-intelligence/refresh-stream`);
+      if (!response.body) throw new Error("No stream body");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const items: string[] = [];
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === "phase") {
+              setRefreshProgress({ phase: evt.msg, items: [...items] });
+            } else if (evt.type === "article_read") {
+              items.push(`📰 ${evt.source}: ${evt.title}`);
+              setRefreshProgress(p => ({ phase: p?.phase ?? "", items: [...items].slice(-20) }));
+            } else if (evt.type === "article_selected") {
+              items.push(`✓ Selected: ${evt.title}`);
+              setRefreshProgress(p => ({ phase: p?.phase ?? "", items: [...items].slice(-20) }));
+            } else if (evt.type === "article_analyzing") {
+              if (evt.status === "done") {
+                items.push(`⬡ Analyzed: ${evt.title}`);
+                setRefreshProgress(p => ({ phase: p?.phase ?? "", items: [...items].slice(-20) }));
+              }
+            } else if (evt.type === "result") {
+              const data = evt.data || [];
+              setIntelligenceFeed(data);
+              if (data.length > 0) setSelectedThesisId(data[0].id);
+            } else if (evt.type === "done") {
+              break;
+            }
+          } catch { /* skip malformed lines */ }
         }
       }
     } catch (err) {
       console.error("Failed to refresh intelligence:", err);
     } finally {
       setIsRefreshingIntel(false);
+      setRefreshProgress(null);
     }
   };
 
@@ -387,7 +428,9 @@ export default function Dashboard() {
       const res = await fetch(`${apiBaseUrl}/research/collect`, { method: "POST" });
       const json = await res.json();
       const s = json.summary || {};
-      setResearchMsg(`수집 완료: FRED ${s.fred ?? 0} · GDELT ${s.gdelt ?? 0} · Marketaux ${s.marketaux ?? 0} (총 ${s.total_in_store ?? 0}건)`);
+      setResearchMsg(
+        `✓ 수집 완료 (총 ${s.total_in_store ?? 0}건) — FRED ${s.fred ?? 0} · GDELT ${s.gdelt ?? 0} · Marketaux ${s.marketaux ?? 0} · ECOS ${s.ecos ?? 0} · CFTC ${s.cftc ?? 0} · ETF Flows ${s.etf_flows ?? 0} · Central Banks ${s.central_banks ?? 0} · Bank Research ${s.bank_research ?? 0} · News Feeds ${s.news_feeds ?? 0}`
+      );
       await fetchResearchQueue();
     } catch (err) {
       setResearchMsg("수집 중 오류가 발생했습니다.");
@@ -396,14 +439,20 @@ export default function Dashboard() {
 
   const handleBuildTheses = async () => {
     setIsBuildingTheses(true);
-    setResearchMsg("Nemotron Ultra가 리서치 큐를 2단계로 분석하여 투자 의견(Thesis)을 생성하고 있습니다. 최대 2분 소요될 수 있습니다…");
+    setResearchMsg("DeepSeek R1 추론 모델이 Bull·Bear 페르소나로 리서치 큐를 분석한 후 포트폴리오 매니저 시각으로 하우스 뷰를 통합하고 있습니다. 최대 3분 소요될 수 있습니다…");
     try {
       const res = await fetch(`${apiBaseUrl}/thesis/build`, { method: "POST" });
       const json = await res.json();
-      setTheses(json.data || []);
-      setResearchMsg(`${(json.data || []).length}개의 보정된 하우스 뷰를 생성했습니다. 검토 후 승인하세요.`);
+      const built = json.data || [];
+      if (built.length > 0) {
+        setTheses(built);
+      } else {
+        await fetchTheses();
+      }
+      setResearchMsg(`✓ ${(built.length > 0 ? built : theses).length}개의 보정된 하우스 뷰를 생성했습니다. DRAG → Stage 3으로 이동 후 PROMOTE하세요.`);
     } catch (err) {
-      setResearchMsg("Thesis 생성 중 오류가 발생했습니다.");
+      setResearchMsg("Thesis 생성 중 오류가 발생했습니다. 모델 응답이 지연될 수 있습니다 — 잠시 후 다시 시도하세요.");
+      await fetchTheses();
     } finally { setIsBuildingTheses(false); }
   };
 
@@ -431,10 +480,10 @@ export default function Dashboard() {
     } finally { setIsAllocating(false); }
   };
 
-  const fetchMacroData = async () => {
+  const fetchMacroData = async (refresh = false) => {
     setIsFetchingMacro(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/macro-data`);
+      const res = await fetch(`${apiBaseUrl}/macro-data${refresh ? "?refresh=true" : ""}`);
       if (res.ok) {
         const json = await res.json();
         setMacroData(json.data || null);
@@ -578,6 +627,8 @@ export default function Dashboard() {
     setLoadingStep(0);
     setLoadingMessage("서버와의 연결을 초기화하고 있습니다...");
     setData(null);
+    setThinkingText("");
+    setShowThinking(true);
     
     const textToUse = customViewText !== undefined ? customViewText : viewText;
     const optToUse = customOptimizer !== undefined ? customOptimizer : optimizer;
@@ -627,6 +678,9 @@ export default function Dashboard() {
             }
             if (payload.message) {
               setLoadingMessage(payload.message);
+            }
+            if (payload.type === "thinking" && payload.chunk) {
+              setThinkingText(prev => prev + payload.chunk);
             }
             if (payload.step === 9 && payload.data) {
               setData(payload.data);
@@ -916,6 +970,19 @@ export default function Dashboard() {
                         {v.thesis}
                       </div>
                     )}
+
+                    {v.sources && v.sources.length > 0 && (
+                      <div className="border-t border-neutral-900 pt-1.5">
+                        <span className="font-display text-[8px] text-neutral-600 block mb-1">SOURCES</span>
+                        <div className="flex flex-wrap gap-1">
+                          {v.sources.map((src, si) => (
+                            <span key={si} className="font-mono text-[8px] bg-neutral-900 border border-neutral-800 px-1.5 py-0.5 text-neutral-500">
+                              {src}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -953,7 +1020,7 @@ export default function Dashboard() {
                 {[
                   { id: 1, label: "MARKET PORTFOLIO RETRIEVAL", desc: "국민연금 공시 비중 및 2026 자산배분 목표치 로드" },
                   { id: 2, label: "ETF HISTORICAL FEED & TREASURY CRAWL", desc: "대표 ETF 시세 데이터 수집 및 10년물 국채 금리 연계" },
-                  { id: 3, label: "LLM VIEW ENCODING (OPENROUTER)", desc: "자연어 시각을 AI 모델(owl-alpha)을 이용해 수치형 매트릭스로 변환" },
+                  { id: 3, label: "DEEPSEEK R1 REASONING (FREE)", desc: "자연어 투자 의견을 추론 모델로 분석 · BL 뷰 벡터 수치화 (최대 2분)" },
                   { id: 4, label: "BAYESIAN BLACK-LITTERMAN COMBINATION", desc: "Prior와 View의 확률 결합을 통해 사후 기대수익률 분포 추정" },
                   { id: 5, label: "CONSTRAINED MULTI-ASSET OPTIMIZATION", desc: "설정 제약조건 범위(δ) 내에서 최적의 가중치 행렬 도출" },
                   { id: 6, label: "10,000-TRIAL MONTE CARLO STRESS TEST", desc: "Student-t 분포(Fat Tail) 기반 몬테카를로 경로 시뮬레이션" },
@@ -991,6 +1058,32 @@ export default function Dashboard() {
                   );
                 })}
               </div>
+
+              {/* DeepSeek R1 Live Thinking Panel */}
+              {thinkingText && (
+                <div className="w-full max-w-lg mt-2 border border-neutral-800 bg-[#050505]">
+                  <button
+                    onClick={() => setShowThinking(p => !p)}
+                    className="w-full flex items-center justify-between px-4 py-2 text-[9px] font-display tracking-widest text-neutral-500 hover:text-neutral-300 transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      DEEPSEEK R1 · AI REASONING TRACE
+                    </span>
+                    <span>{showThinking ? "▲ COLLAPSE" : "▼ EXPAND"}</span>
+                  </button>
+                  {showThinking && (
+                    <div className="px-4 pb-4">
+                      <div className="font-mono text-[10px] text-neutral-500 leading-relaxed whitespace-pre-wrap max-h-52 overflow-y-auto border-t border-neutral-900 pt-2">
+                        {thinkingText}
+                        {loadingStep === 3 && (
+                          <span className="inline-block w-1.5 h-3 bg-amber-400 animate-pulse ml-0.5 align-middle" />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1128,6 +1221,14 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Min Variance Fallback Warning */}
+              {data.min_variance_fallback && (
+                <div className="border border-amber-800 bg-amber-950/20 text-amber-400 p-3 flex items-start gap-2 text-[10px] font-sans">
+                  <span className="font-display text-[9px] tracking-wider shrink-0 mt-0.5">⚠ MIN-VARIANCE FALLBACK</span>
+                  <span className="text-amber-300/80 leading-relaxed">모든 사후 기대수익률이 무위험금리를 하회하여 Markowitz 대신 최소분산(Min-Variance) 최적화로 전환되었습니다. 투자 의견을 조정하거나 다른 최적화 전략을 선택하세요.</span>
+                </div>
+              )}
+
               {/* AI Analysis Commentary & Macro Indicators */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* AI Commentary Card */}
@@ -1189,6 +1290,65 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* PM Memo Card */}
+              {data.pm_memo && (
+                <div className="border border-neutral-900 bg-[#0a0a0a] p-6 flex flex-col gap-3">
+                  <h3 className="font-display text-xs tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-white" />
+                    PM INTERNAL MEMO
+                    <span className="ml-auto text-[9px] font-mono text-neutral-600">CONFIDENTIAL · INTERNAL USE ONLY</span>
+                  </h3>
+                  <div className="text-xs text-neutral-300 font-sans leading-relaxed whitespace-pre-line max-h-[220px] overflow-y-auto pr-2">
+                    {typeof data.pm_memo === "object" ? (
+                      <div className="flex flex-col gap-4 font-sans text-xs">
+                        {data.pm_memo.macro_regime_sentiment && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold">Regime Bias:</span>
+                            <span className={`px-2 py-0.5 text-[9px] font-mono font-bold border ${
+                              data.pm_memo.macro_regime_sentiment === "RISK-OFF" ? "border-red-900 bg-red-950/20 text-red-400" :
+                              data.pm_memo.macro_regime_sentiment === "RISK-ON" ? "border-emerald-900 bg-emerald-950/20 text-emerald-400" :
+                              "border-neutral-800 bg-neutral-900/20 text-neutral-400"
+                            }`}>
+                              {data.pm_memo.macro_regime_sentiment}
+                            </span>
+                          </div>
+                        )}
+                        {data.pm_memo.investment_thesis_summary && (
+                          <div>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Investment Thesis Summary:</span>
+                            <p className="text-white leading-relaxed">{data.pm_memo.investment_thesis_summary}</p>
+                          </div>
+                        )}
+                        {data.pm_memo.strategic_positioning_advice && (
+                          <div>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Strategic Positioning Advice:</span>
+                            <p className="text-neutral-200 leading-relaxed">{data.pm_memo.strategic_positioning_advice}</p>
+                          </div>
+                        )}
+                        {data.pm_memo.adjusted_views_rationale && (
+                          <div>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Calibration Rationale:</span>
+                            <p className="text-neutral-300 leading-relaxed">{data.pm_memo.adjusted_views_rationale}</p>
+                          </div>
+                        )}
+                        {Array.isArray(data.pm_memo.key_risks_considered) && data.pm_memo.key_risks_considered.length > 0 && (
+                          <div>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Key Risks Considered:</span>
+                            <ul className="list-disc pl-4 flex flex-col gap-1 text-neutral-400">
+                              {data.pm_memo.key_risks_considered.map((risk: string, rIdx: number) => (
+                                <li key={rIdx}>{risk}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      data.pm_memo
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Chart Section 1: Weights & Expected Returns */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1509,6 +1669,23 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+
+            {/* Refresh Feed Progress Panel */}
+            {refreshProgress && (
+              <div className="border border-neutral-800 bg-[#050505] p-4 flex flex-col gap-2">
+                <div className="flex items-center gap-2 font-display text-[9px] tracking-widest text-amber-400">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  {refreshProgress.phase}
+                </div>
+                {refreshProgress.items.length > 0 && (
+                  <div className="font-mono text-[9px] text-neutral-500 flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+                    {refreshProgress.items.map((item, i) => (
+                      <span key={i} className="leading-relaxed">{item}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 3-Tier Source Tabs */}
             <div className="flex gap-2 border-b border-neutral-900 pb-1">
@@ -1959,7 +2136,7 @@ export default function Dashboard() {
                 </p>
               </div>
               <button 
-                onClick={fetchMacroData}
+                onClick={() => fetchMacroData(true)}
                 disabled={isFetchingMacro}
                 className="button-ghost-dark flex items-center gap-2"
               >
@@ -1977,22 +2154,160 @@ export default function Dashboard() {
                 "COMMODITIES, CRYTPO & ALTS": ["GOLD", "WTI", "BTC", "VNQ"],
                 "FOREIGN EXCHANGE (FX)": ["USD_KRW", "DXY"]
               };
+              
+              const correlationKeys = ["SPY", "QQQ", "KOSPI", "VIX", "US10Y", "YIELD_SPREAD", "HYG", "GOLD", "BTC", "USD_KRW"];
+              
+              const filterCategoriesList = ["ALL", "VOLATILITY", "YIELD CURVE", "CREDIT", "EQUITY", "COMMODITIES", "FX"];
+              
+              const getFilteredHistory = (history: any[]) => {
+                if (!history) return [];
+                const now = new Date();
+                let cutoff = new Date();
+                if (selectedTimeframe === "1M") cutoff.setMonth(now.getMonth() - 1);
+                else if (selectedTimeframe === "3M") cutoff.setMonth(now.getMonth() - 3);
+                else if (selectedTimeframe === "6M") cutoff.setMonth(now.getMonth() - 6);
+                else cutoff.setFullYear(now.getFullYear() - 1);
+                
+                return history.filter(pt => new Date(pt.date) >= cutoff);
+              };
+              
+              const getCombinedHistory = (primaryKey: string, compareKey: string) => {
+                const primaryHist = macroData[primaryKey]?.history || [];
+                if (!compareKey || !macroData[compareKey]) {
+                  return getFilteredHistory(primaryHist).map(pt => ({
+                    date: pt.date,
+                    value: pt.value,
+                  }));
+                }
+                
+                const compareHist = macroData[compareKey]?.history || [];
+                const compareMap = new Map(compareHist.map((pt: any) => [pt.date, pt.value]));
+                
+                const filteredPrimary = getFilteredHistory(primaryHist);
+                return filteredPrimary.map((pt: any) => ({
+                  date: pt.date,
+                  value: pt.value,
+                  compareValue: compareMap.get(pt.date) ?? null,
+                }));
+              };
+              
+              const getAlertBadge = (key: string, item: any) => {
+                if (key === "VIX" && item.current > 20 && item.current <= 30) {
+                  return (
+                    <span className="px-1.5 py-0.5 text-[7px] font-mono font-bold bg-amber-950/60 text-amber-400 border border-amber-800 rounded-sm animate-pulse ml-2 uppercase">
+                      SPIKE
+                    </span>
+                  );
+                }
+                if (key === "VIX" && item.current > 30) {
+                  return (
+                    <span className="px-1.5 py-0.5 text-[7px] font-mono font-bold bg-red-950/60 text-red-400 border border-red-800 rounded-sm animate-pulse ml-2 uppercase">
+                      CRISIS
+                    </span>
+                  );
+                }
+                if (key === "YIELD_SPREAD" && item.current < 0) {
+                  return (
+                    <span className="px-1.5 py-0.5 text-[7px] font-mono font-bold bg-red-950/60 text-red-400 border border-red-850 rounded-sm animate-pulse ml-2 uppercase">
+                      INVERTED
+                    </span>
+                  );
+                }
+                return null;
+              };
+
+              const filteredCategories = Object.entries(categories).filter(([catName]) => {
+                if (selectedCategory === "ALL") return true;
+                if (selectedCategory === "FX") return catName.includes("FX") || catName.includes("FOREIGN EXCHANGE");
+                return catName.includes(selectedCategory);
+              });
+              
               return (
                 <div className="flex flex-col gap-8">
-                  {/* Current Regime Header */}
-                  <div className="border border-neutral-900 bg-neutral-950 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <ShieldAlert className={`w-8 h-8 ${macroData.market_regime === "CRISIS" ? "text-red-500 animate-pulse" : macroData.market_regime === "ELEVATED_RISK" ? "text-amber-500 animate-bounce" : "text-emerald-500"}`} />
-                      <div>
-                        <span className="text-[10px] font-display tracking-widest text-neutral-500 block uppercase font-bold">Detected Market Regime</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg font-display text-white font-bold">{macroData.market_regime.replace("_", " ")}</span>
-                          <span className="text-xs text-neutral-400">({macroData.regime_kr})</span>
+                  {/* Current Regime Header & Impact Scale */}
+                  <div className="border border-neutral-900 bg-neutral-950 p-6 flex flex-col gap-6">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <ShieldAlert className={`w-8 h-8 ${macroData.market_regime === "CRISIS" ? "text-red-500 animate-pulse" : macroData.market_regime === "ELEVATED_RISK" ? "text-amber-500 animate-bounce" : "text-emerald-500"}`} />
+                        <div>
+                          <span className="text-[10px] font-display tracking-widest text-neutral-500 block uppercase font-bold">Detected Market Regime</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-display text-white font-bold">{macroData.market_regime.replace("_", " ")}</span>
+                            <span className="text-xs text-neutral-400">({macroData.regime_kr})</span>
+                          </div>
                         </div>
                       </div>
+                      
+                      {/* Gauge Scale */}
+                      <div className="flex gap-1.5 items-center w-full md:w-auto max-w-md">
+                        {["LOW_VOL", "NORMAL", "ELEVATED_RISK", "CRISIS"].map(r => {
+                          const isActive = macroData.market_regime === r;
+                          const colorClass = 
+                            r === "CRISIS" ? (isActive ? "bg-red-600 shadow-[0_0_8px_rgba(220,38,38,0.5)]" : "bg-red-950/40 text-red-800") :
+                            r === "ELEVATED_RISK" ? (isActive ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.5)]" : "bg-amber-950/40 text-amber-800") :
+                            r === "NORMAL" ? (isActive ? "bg-neutral-200" : "bg-neutral-900 text-neutral-700") :
+                            (isActive ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-emerald-950/40 text-emerald-800");
+                            
+                          return (
+                            <div 
+                              key={r} 
+                              className={`px-3 py-1.5 text-[8px] font-mono font-bold tracking-wider rounded-sm transition-all text-center flex-1 md:flex-initial ${colorClass} ${
+                                isActive ? "text-black scale-105" : ""
+                              }`}
+                            >
+                              {r.replace("_", " ")}
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="text-right text-[10px] font-mono text-neutral-500">
-                      STATUS: REAL-TIME FEED ACTIVE | SOURCE: YAHOO FINANCE API
+                    
+                    {/* Regime Details Explainer */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-neutral-900 pt-4">
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">VIX VOLATILITY LEVEL</span>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-xl font-display font-bold text-white">{macroData.VIX?.current ?? "N/A"}</span>
+                          <span className="text-xs text-neutral-400 font-sans">Index Points</span>
+                        </div>
+                        <p className="text-[11px] text-neutral-400 leading-normal font-sans">
+                          시장 심리를 반영하는 변동성 지수입니다. 20 이상은 리스크 상승, 30 이상은 역사적 패닉 국면으로 해석됩니다.
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">RISK-AVERSION MULTIPLIER (λ)</span>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-xl font-display font-bold text-white">
+                            {macroData.market_regime === "CRISIS" ? "1.60x" :
+                             macroData.market_regime === "ELEVATED_RISK" ? "1.25x" :
+                             macroData.market_regime === "LOW_VOL" ? "0.90x" : "1.00x"}
+                          </span>
+                          <span className="text-xs text-neutral-400 font-sans">Multiplier</span>
+                        </div>
+                        <p className="text-[11px] text-neutral-400 leading-normal font-sans">
+                          블랙-리터만 최적화 시 변동성에 가중되는 위험회피 계수입니다. 위기 상황 시 계수가 상향되어 포트폴리오 변동성을 적극 억제합니다.
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">ALLOCATION STRATEGY IMPACT</span>
+                        <div className="flex items-baseline gap-2">
+                          <span className={`text-xs font-display font-bold uppercase ${
+                            macroData.market_regime === "CRISIS" ? "text-red-400" :
+                            macroData.market_regime === "ELEVATED_RISK" ? "text-amber-400" :
+                            macroData.market_regime === "LOW_VOL" ? "text-emerald-400" : "text-white"
+                          }`}>
+                            {macroData.market_regime === "CRISIS" ? "Defensive Capital Preservation" :
+                             macroData.market_regime === "ELEVATED_RISK" ? "Tactical De-risking" :
+                             macroData.market_regime === "LOW_VOL" ? "Risk-on Expansion" : "Neutral Asset Rotation"}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-neutral-400 leading-normal font-sans">
+                          {macroData.market_regime === "CRISIS" ? "주식 비중을 최소화하고 해외 채권 및 대체투자, 안전자산으로 자금을 도피시킵니다." :
+                           macroData.market_regime === "ELEVATED_RISK" ? "국내외 주식의 비중 상한을 제한하고 채권 편입 비중을 높여 변동성 상승에 대응합니다." :
+                           macroData.market_regime === "LOW_VOL" ? "안정적인 상승 흐름으로 판단, 기대수익률이 높은 위험자산(주식 등) 편입 한도를 넓힙니다." :
+                           "기본 벤치마크 가중치 대비 인텔리전스 뷰에 따른 표준 최적화를 유지하며 자산을 회전시킵니다."}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -2000,30 +2315,90 @@ export default function Dashboard() {
                   {selectedMacroKey && macroData[selectedMacroKey] && (() => {
                     const selectedItem = macroData[selectedMacroKey];
                     const isSelectedUp = selectedItem.change_5d >= 0;
+                    
+                    const combinedHist = getCombinedHistory(selectedMacroKey, compareMacroKey);
+                    const isCompareUp = compareMacroKey ? (macroData[compareMacroKey]?.change_5d >= 0) : false;
+                    
                     return (
                       <div className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
-                        <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
+                        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-neutral-900 pb-4">
                           <div>
                             <span className="text-[9px] font-mono text-neutral-500 block">SELECTED INDICATOR: {selectedMacroKey}</span>
                             <h3 className="text-sm font-bold text-white font-sans">{selectedItem.name}</h3>
                           </div>
-                          <div className="text-right">
-                            <span className="text-sm font-display font-bold text-white block">{selectedItem.current}</span>
-                            <span className={`text-xs font-mono font-bold ${isSelectedUp ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {isSelectedUp ? '+' : ''}{selectedItem.change_5d}% (3M)
-                            </span>
+                          
+                          {/* Chart Controls */}
+                          <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
+                            {/* Timeframe selector */}
+                            <div className="flex items-center border border-neutral-900 p-0.5 rounded bg-black">
+                              {["1M", "3M", "6M", "1Y"].map((tf) => (
+                                <button
+                                  key={tf}
+                                  onClick={() => setSelectedTimeframe(tf as any)}
+                                  className={`px-3 py-1 text-[9px] font-display font-bold tracking-wider rounded transition-all ${
+                                    selectedTimeframe === tf 
+                                      ? "bg-neutral-800 text-white" 
+                                      : "text-neutral-500 hover:text-neutral-300"
+                                  }`}
+                                >
+                                  {tf}
+                                </button>
+                              ))}
+                            </div>
+                            
+                            {/* Compare Select Dropdown */}
+                            <div className="flex items-center gap-2">
+                              <span className="text-[8px] font-mono text-neutral-500 uppercase">OVERLAY:</span>
+                              <select
+                                value={compareMacroKey}
+                                onChange={(e) => setCompareMacroKey(e.target.value)}
+                                className="bg-black border border-neutral-900 text-white px-2 py-1 text-[9px] font-mono focus:outline-none focus:border-neutral-700"
+                              >
+                                <option value="">(NONE)</option>
+                                {Object.keys(macroData).filter(k => k !== selectedMacroKey && k !== "market_regime" && k !== "regime_kr" && k !== "correlation_matrix").map(key => (
+                                  <option key={key} value={key}>{key} - {macroData[key].name}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Value Display */}
+                            <div className="text-right ml-auto lg:ml-0">
+                              <div className="flex items-center gap-4 justify-end">
+                                <div>
+                                  <span className="text-sm font-display font-bold text-white block">{selectedItem.current}</span>
+                                  <span className={`text-[10px] font-mono font-bold ${isSelectedUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {isSelectedUp ? '+' : ''}{selectedItem.change_5d}% (1Y)
+                                  </span>
+                                </div>
+                                {compareMacroKey && macroData[compareMacroKey] && (
+                                  <div className="border-l border-neutral-850 pl-4 text-right">
+                                    <span className="text-[8px] font-mono text-neutral-500 block">OVERLAY ({compareMacroKey})</span>
+                                    <span className="text-sm font-display font-bold text-white block">{macroData[compareMacroKey].current}</span>
+                                    <span className={`text-[10px] font-mono font-bold ${isCompareUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {isCompareUp ? '+' : ''}{macroData[compareMacroKey].change_5d}% (1Y)
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
 
-                        {selectedItem.history && selectedItem.history.length > 0 ? (
+                        {combinedHist && combinedHist.length > 0 ? (
                           <div className="h-64 w-full mt-2">
                             <ResponsiveContainer width="100%" height="100%">
-                              <AreaChart data={selectedItem.history} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                              <AreaChart data={combinedHist} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
                                 <defs>
                                   <linearGradient id={`grad-main-${selectedMacroKey}`} x1="0" y1="0" x2="0" y2="1">
                                     <stop offset="5%" stopColor={isSelectedUp ? "#10b981" : "#ef4444"} stopOpacity={0.15}/>
                                     <stop offset="95%" stopColor={isSelectedUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
                                   </linearGradient>
+                                  {compareMacroKey && (
+                                    <linearGradient id={`grad-compare-${compareMacroKey}`} x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor={isCompareUp ? "#10b981" : "#ef4444"} stopOpacity={0.08}/>
+                                      <stop offset="95%" stopColor={isCompareUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                                    </linearGradient>
+                                  )}
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#111" vertical={false} />
                                 <XAxis 
@@ -2039,6 +2414,7 @@ export default function Dashboard() {
                                   }}
                                 />
                                 <YAxis 
+                                  yAxisId="left"
                                   domain={["auto", "auto"]} 
                                   stroke="#444" 
                                   fontSize={8} 
@@ -2046,20 +2422,48 @@ export default function Dashboard() {
                                   width={40}
                                   dx={-8}
                                 />
+                                {compareMacroKey && (
+                                  <YAxis 
+                                    yAxisId="right"
+                                    orientation="right"
+                                    domain={["auto", "auto"]} 
+                                    stroke="#666" 
+                                    fontSize={8} 
+                                    tickLine={false} 
+                                    width={40}
+                                    dx={8}
+                                  />
+                                )}
                                 <Tooltip 
                                   contentStyle={{ backgroundColor: "#070707", borderColor: "#222", borderRadius: 4 }} 
                                   labelStyle={{ color: "#888", fontSize: 9, fontFamily: "monospace" }} 
                                   itemStyle={{ color: "#fff", fontSize: 10, padding: 0 }} 
                                 />
                                 <Area 
+                                  yAxisId="left"
                                   type="monotone" 
                                   dataKey="value" 
+                                  name={selectedItem.name}
                                   stroke={isSelectedUp ? "#10b981" : "#ef4444"} 
                                   strokeWidth={1.5} 
                                   fillOpacity={1} 
                                   fill={`url(#grad-main-${selectedMacroKey})`} 
                                   dot={false}
                                 />
+                                {compareMacroKey && (
+                                  <Area 
+                                    yAxisId="right"
+                                    type="monotone" 
+                                    dataKey="compareValue" 
+                                    name={macroData[compareMacroKey]?.name}
+                                    stroke={isCompareUp ? "#34d399" : "#f87171"} 
+                                    strokeWidth={1.2} 
+                                    strokeDasharray="4 4"
+                                    fillOpacity={1} 
+                                    fill={`url(#grad-compare-${compareMacroKey})`} 
+                                    dot={false}
+                                  />
+                                )}
                               </AreaChart>
                             </ResponsiveContainer>
                           </div>
@@ -2072,71 +2476,218 @@ export default function Dashboard() {
                     );
                   })()}
 
-                  {/* Categories Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {Object.entries(categories).map(([catName, keys]) => (
-                      <div key={catName} className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
-                        <h3 className="font-display text-[10px] tracking-wider text-neutral-400 border-b border-neutral-900 pb-2 uppercase font-bold">
-                          {catName}
-                        </h3>
-                        <div className="flex flex-col gap-3">
-                          {keys.map(key => {
-                            const item = macroData[key];
-                            if (!item) return null;
-                            const isUp = item.change_5d >= 0;
-                            const isSelected = selectedMacroKey === key;
-                            return (
-                              <div 
-                                key={key} 
-                                onClick={() => setSelectedMacroKey(key)}
-                                className={`bg-[#070707] border p-4 flex flex-col justify-between hover:border-neutral-850 hover:bg-[#090909] transition-all min-w-0 cursor-pointer ${
-                                  isSelected ? 'border-white ring-1 ring-white/10' : 'border-neutral-900'
-                                }`}
-                              >
-                                <div className="flex items-start justify-between pointer-events-none">
-                                  <div>
-                                    <span className="text-[9px] font-mono text-neutral-500 block">{key}</span>
-                                    <span className="text-xs font-bold text-white leading-tight block">{item.name}</span>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="text-sm font-display font-bold text-white block">{item.current}</span>
-                                    <span className={`text-[10px] font-mono font-bold ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
-                                      {isUp ? '+' : ''}{item.change_5d}% (3M)
-                                    </span>
-                                  </div>
-                                </div>
-                                
-                                {/* Sparkline */}
-                                {item.history && item.history.length > 0 && (
-                                  <div className="h-10 w-full mt-3 min-w-0 opacity-80 hover:opacity-100 transition-opacity pointer-events-none">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                      <AreaChart data={item.history} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
-                                        <defs>
-                                          <linearGradient id={`grad-${key}`} x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor={isUp ? "#10b981" : "#ef4444"} stopOpacity={0.15}/>
-                                            <stop offset="95%" stopColor={isUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
-                                          </linearGradient>
-                                        </defs>
-                                        <YAxis domain={["dataMin", "dataMax"]} hide={true} />
-                                        <Area 
-                                          type="monotone" 
-                                          dataKey="value" 
-                                          stroke={isUp ? "#10b981" : "#ef4444"} 
-                                          strokeWidth={1.2} 
-                                          fillOpacity={1} 
-                                          fill={`url(#grad-${key})`} 
-                                          dot={false}
-                                        />
-                                      </AreaChart>
-                                    </ResponsiveContainer>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                  {/* Macro Correlation Heatmap Panel */}
+                  <div className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
+                    <h3 className="font-display text-[10px] tracking-wider text-neutral-400 border-b border-neutral-900 pb-2 uppercase font-bold">
+                      MACROECONOMIC CORRELATION HEATMAP
+                    </h3>
+                    <div className="flex flex-col xl:flex-row gap-6">
+                      {/* The Heatmap Grid */}
+                      <div className="overflow-x-auto p-1 flex-1">
+                        <table className="min-w-full table-fixed border-collapse">
+                          <thead>
+                            <tr>
+                              <th className="w-16 p-1 text-[8px] font-mono text-neutral-500 uppercase text-left"></th>
+                              {correlationKeys.map(k => (
+                                <th key={k} className="p-1 text-[8px] font-mono text-neutral-500 uppercase text-center font-bold">
+                                  {k}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {correlationKeys.map(rowKey => (
+                              <tr key={rowKey}>
+                                <td className="p-1 text-[8px] font-mono text-neutral-400 uppercase text-left font-bold border-r border-neutral-900 pr-2">
+                                  {rowKey}
+                                </td>
+                                {correlationKeys.map(colKey => {
+                                  const matrix = macroData.correlation_matrix || {};
+                                  const val = matrix[rowKey]?.[colKey] ?? 0;
+                                  const isDiagonal = rowKey === colKey;
+                                  
+                                  let bgStyle = { backgroundColor: "rgba(38, 38, 38, 0.4)", color: "#888" };
+                                  if (!isDiagonal) {
+                                    if (val > 0.1) {
+                                      bgStyle = { backgroundColor: `rgba(16, 185, 129, ${val * 0.7})`, color: val > 0.5 ? "#ffffff" : "#a7f3d0" };
+                                    } else if (val < -0.1) {
+                                      bgStyle = { backgroundColor: `rgba(239, 68, 68, ${Math.abs(val) * 0.7})`, color: val < -0.5 ? "#ffffff" : "#fca5a5" };
+                                    }
+                                  } else {
+                                    bgStyle = { backgroundColor: "#171717", color: "#ffffff" };
+                                  }
+                                  
+                                  const isSelected = selectedCell?.x === colKey && selectedCell?.y === rowKey;
+                                  
+                                  return (
+                                    <td
+                                      key={colKey}
+                                      onClick={() => setSelectedCell({ x: colKey, y: rowKey })}
+                                      style={bgStyle}
+                                      className={`p-2 text-center text-[10px] font-mono font-bold cursor-pointer transition-all hover:scale-105 hover:ring-1 hover:ring-white/30 border border-neutral-950 ${
+                                        isSelected ? "ring-2 ring-white hover:ring-2" : ""
+                                      }`}
+                                      title={`${rowKey} & ${colKey}: ${val.toFixed(2)}`}
+                                    >
+                                      {val.toFixed(2)}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    ))}
+                      
+                      {/* Cell Detail Explainer */}
+                      <div className="w-full xl:w-80 border border-neutral-900 bg-neutral-950 p-5 flex flex-col justify-between font-sans">
+                        {selectedCell ? (() => {
+                          const matrix = macroData.correlation_matrix || {};
+                          const val = matrix[selectedCell.y]?.[selectedCell.x] ?? 0;
+                          const xName = macroData[selectedCell.x]?.name || selectedCell.x;
+                          const yName = macroData[selectedCell.y]?.name || selectedCell.y;
+                          
+                          let relationship = "중립적 상관관계";
+                          let explanation = "두 지표는 뚜렷한 선형적 상관관계를 보이지 않습니다. 자산 다변화 효과가 극대화되는 구간입니다.";
+                          
+                          if (selectedCell.x === selectedCell.y) {
+                            relationship = "동일 지표";
+                            explanation = "자기 자신과의 상관관계는 항상 1.00입니다.";
+                          } else if (val > 0.6) {
+                            relationship = "강한 양의 상관관계";
+                            explanation = `${xName}와 ${yName}는 매우 유사한 방향으로 움직입니다. 포트폴리오 내 동시 편입 시 위험 분산 효과가 감소할 수 있으므로 주의가 필요합니다.`;
+                          } else if (val > 0.2) {
+                            relationship = "약한 양의 상관관계";
+                            explanation = `두 지표는 완만하게 같은 방향으로 움직이는 경향이 있습니다. 경기 확장 국면에서 동반 상승할 수 있습니다.`;
+                          } else if (val < -0.6) {
+                            relationship = "강한 음의 상관관계";
+                            explanation = `${xName}와 ${yName}는 반대 방향으로 움직이는 경향이 뚜렷합니다. 한 쪽의 하락 위험을 다른 쪽이 방어할 수 있는 강력한 헤지 자산 조합입니다. (예: 주식과 VIX)`;
+                          } else if (val < -0.2) {
+                            relationship = "약한 음의 상관관계";
+                            explanation = `두 지표는 서로 완만하게 반대 방향으로 움직입니다. 포트폴리오 위험 배분에 긍정적인 요소입니다.`;
+                          }
+                          
+                          return (
+                            <div className="flex flex-col gap-4 h-full justify-between">
+                              <div className="flex flex-col gap-2">
+                                <span className="text-[9px] font-mono text-neutral-500 uppercase">CORRELATION ANALYSIS</span>
+                                <div className="border-b border-neutral-900 pb-2">
+                                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">{selectedCell.y} × {selectedCell.x}</h4>
+                                  <span className="text-lg font-display font-bold text-white">{val.toFixed(4)}</span>
+                                </div>
+                                <div className="mt-2">
+                                  <span className={`text-[10px] font-mono font-bold uppercase ${val > 0.2 ? 'text-emerald-400' : val < -0.2 ? 'text-red-400' : 'text-neutral-400'}`}>
+                                    {relationship}
+                                  </span>
+                                  <p className="text-xs text-neutral-400 leading-relaxed mt-1.5">
+                                    {explanation}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-[8px] font-mono text-neutral-600 mt-4">
+                                * 1년 시계열 일단위 종가 기준 피어슨 상관계수
+                              </div>
+                            </div>
+                          );
+                        })() : (
+                          <div className="flex flex-col items-center justify-center text-center py-12 text-neutral-600 h-full">
+                            <Info className="w-6 h-6 mb-2 text-neutral-700" />
+                            <span className="text-[10px] font-display tracking-widest uppercase">SELECT CELL FOR ANALYSIS</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Categories Grid Filters & Cards */}
+                  <div className="flex flex-col gap-4">
+                    {/* Category Tabs */}
+                    <div className="flex flex-wrap gap-2 border-b border-neutral-900 pb-2">
+                      {filterCategoriesList.map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => setSelectedCategory(cat)}
+                          className={`px-3 py-1.5 text-[9px] font-display font-bold tracking-widest border transition-all ${
+                            selectedCategory === cat
+                              ? "bg-white text-black border-white"
+                              : "bg-black text-neutral-400 border-neutral-900 hover:text-white hover:border-neutral-800"
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Cards Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {filteredCategories.map(([catName, keys]) => (
+                        <div key={catName} className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
+                          <h3 className="font-display text-[10px] tracking-wider text-neutral-400 border-b border-neutral-900 pb-2 uppercase font-bold">
+                            {catName}
+                          </h3>
+                          <div className="flex flex-col gap-3">
+                            {keys.map(key => {
+                              const item = macroData[key];
+                              if (!item) return null;
+                              const isUp = item.change_5d >= 0;
+                              const isSelected = selectedMacroKey === key;
+                              const filteredHist = getFilteredHistory(item.history);
+                              return (
+                                <div 
+                                  key={key} 
+                                  onClick={() => setSelectedMacroKey(key)}
+                                  className={`bg-[#070707] border p-4 flex flex-col justify-between hover:border-neutral-850 hover:bg-[#090909] transition-all min-w-0 cursor-pointer ${
+                                    isSelected ? 'border-white ring-1 ring-white/10' : 'border-neutral-900'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between pointer-events-none">
+                                    <div>
+                                      <div className="flex items-center">
+                                        <span className="text-[9px] font-mono text-neutral-500 block">{key}</span>
+                                        {getAlertBadge(key, item)}
+                                      </div>
+                                      <span className="text-xs font-bold text-white leading-tight block">{item.name}</span>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="text-sm font-display font-bold text-white block">{item.current}</span>
+                                      <span className={`text-[10px] font-mono font-bold ${isUp ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {isUp ? '+' : ''}{item.change_5d}% (1Y)
+                                      </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Sparkline */}
+                                  {filteredHist && filteredHist.length > 0 && (
+                                    <div className="h-10 w-full mt-3 min-w-0 opacity-80 hover:opacity-100 transition-opacity pointer-events-none">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={filteredHist} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+                                          <defs>
+                                            <linearGradient id={`grad-${key}`} x1="0" y1="0" x2="0" y2="1">
+                                              <stop offset="5%" stopColor={isUp ? "#10b981" : "#ef4444"} stopOpacity={0.15}/>
+                                              <stop offset="95%" stopColor={isUp ? "#10b981" : "#ef4444"} stopOpacity={0}/>
+                                            </linearGradient>
+                                          </defs>
+                                          <YAxis domain={["dataMin", "dataMax"]} hide={true} />
+                                          <Area 
+                                            type="monotone" 
+                                            dataKey="value" 
+                                            stroke={isUp ? "#10b981" : "#ef4444"} 
+                                            strokeWidth={1.2} 
+                                            fillOpacity={1} 
+                                            fill={`url(#grad-${key})`} 
+                                            dot={false}
+                                          />
+                                        </AreaChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );
@@ -2172,11 +2723,6 @@ export default function Dashboard() {
                   className="button-ghost-dark flex items-center gap-2 disabled:opacity-50">
                   {isBuildingTheses ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
                   2 · BUILD THESES
-                </button>
-                <button onClick={handleAllocate} disabled={isAllocating}
-                  className="button-ghost-dark flex items-center gap-2 border-white text-white disabled:opacity-50">
-                  {isAllocating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  3 · ALLOCATE
                 </button>
               </div>
             </div>
@@ -2226,7 +2772,7 @@ export default function Dashboard() {
                       key={t.id} 
                       draggable={true}
                       onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.effectAllowed = "copy";
                         e.dataTransfer.setData("text/plain", t.id);
                       }}
                       className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1.5 cursor-grab active:cursor-grabbing hover:border-neutral-700 transition-all select-none"
@@ -2239,16 +2785,26 @@ export default function Dashboard() {
                         {t.view_type === "relative" ? `${t.asset1} > ${t.asset2}` : `${t.asset} ${t.direction || ""}`} · {t.horizon || "12M"}
                       </span>
                       <span className="text-[10px] text-neutral-400 leading-snug">{t.rationale}</span>
-                      <div className="flex gap-2 mt-1">
-                        <button onClick={() => setThesisStatus(t.id, "approved")}
-                          className={`text-[9px] font-display tracking-wider px-2 py-1 border ${t.status === "approved" ? "border-emerald-600 text-emerald-400" : "border-neutral-800 text-neutral-500 hover:text-white"}`}>
-                          <Check className="w-3 h-3 inline" /> APPROVE
-                        </button>
-                        <button onClick={() => setThesisStatus(t.id, "rejected")}
-                          className={`text-[9px] font-display tracking-wider px-2 py-1 border ${t.status === "rejected" ? "border-red-700 text-red-400" : "border-neutral-800 text-neutral-500 hover:text-white"}`}>
-                          REJECT
-                        </button>
-                        <span className="text-[9px] font-mono text-neutral-600 ml-auto self-center">{(t.provenance || []).length} src</span>
+
+                      {/* Bull / Bear debate transcript */}
+                      {t.evidence?.debate_log?.length > 0 && (
+                        <div className="mt-1.5 border-t border-neutral-900 pt-1.5 flex flex-col gap-1">
+                          <span className="font-display text-[8px] text-neutral-600 tracking-widest">DEBATE LOG</span>
+                          {t.evidence.debate_log.map((entry: any, di: number) => (
+                            <div key={di} className="flex gap-1.5 items-start">
+                              <span className={`font-display text-[8px] tracking-wider shrink-0 mt-0.5 ${
+                                entry.speaker === "Bull" ? "text-emerald-500" :
+                                entry.speaker === "Bear" ? "text-red-500" :
+                                "text-amber-400"
+                              }`}>{entry.speaker.toUpperCase()}</span>
+                              <span className="text-[9px] text-neutral-500 leading-snug">{entry.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex justify-end mt-1">
+                        <span className="text-[9px] font-mono text-neutral-600">{(t.provenance || []).length} src · drag to promote →</span>
                       </div>
                     </div>
                   ))}
@@ -2265,11 +2821,13 @@ export default function Dashboard() {
                   e.preventDefault();
                   setIsDragOverBox3(true);
                 }}
-                onDragLeave={() => setIsDragOverBox3(false)}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOverBox3(false);
+                }}
                 onDrop={(e) => {
                   e.preventDefault();
                   setIsDragOverBox3(false);
-                  const thesisId = e.dataTransfer.getData("thesis_id") || e.dataTransfer.getData("text/plain");
+                  const thesisId = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("thesis_id");
                   if (thesisId && !promotionQueue.includes(thesisId)) {
                     setPromotionQueue(prev => [...prev, thesisId]);
                   }
@@ -2365,6 +2923,48 @@ export default function Dashboard() {
                       : "border-red-950 bg-red-950/20 text-red-400"
                   }`}>
                     {researchMsg}
+                  </div>
+                )}
+
+                {/* Allocation result */}
+                {allocation && allocation.status === "ok" && (
+                  <div className="border border-neutral-800 bg-[#050505] p-3 flex flex-col gap-2 mt-1">
+                    <div className="flex items-center justify-between border-b border-neutral-900 pb-1.5">
+                      <span className="font-display text-[9px] tracking-widest text-neutral-300">ALLOCATION RESULT</span>
+                      <div className="flex gap-2 font-mono text-[8px]">
+                        <span className={`px-1.5 py-0.5 border ${
+                          allocation.regime === "CRISIS" ? "border-red-800 text-red-400" :
+                          allocation.regime === "ELEVATED_RISK" ? "border-amber-800 text-amber-400" :
+                          allocation.regime === "LOW_VOL" ? "border-emerald-800 text-emerald-400" :
+                          "border-neutral-700 text-neutral-400"
+                        }`}>{allocation.regime}</span>
+                        <span className="text-neutral-600">{allocation.n_views} views</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                      {Object.entries(allocation.optimized_weights || {}).map(([asset, w]: [string, any]) => {
+                        const bench = (allocation.market_weights || {})[asset] || 0;
+                        const diff = (w as number) - bench;
+                        return (
+                          <div key={asset} className="flex justify-between items-center font-mono text-[9px]">
+                            <span className="text-neutral-500 truncate">{asset.replace("_", " ")}</span>
+                            <span className="flex items-center gap-1">
+                              <span className="text-white">{((w as number) * 100).toFixed(1)}%</span>
+                              <span className={diff > 0.005 ? "text-emerald-500" : diff < -0.005 ? "text-red-500" : "text-neutral-600"}>
+                                {diff > 0 ? "+" : ""}{(diff * 100).toFixed(1)}%
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {allocation.risk_metrics && (
+                      <div className="flex gap-3 border-t border-neutral-900 pt-1.5 font-mono text-[8px] text-neutral-500">
+                        <span>Ret: <span className="text-white">{((allocation.risk_metrics.expected_return || 0) * 100).toFixed(1)}%</span></span>
+                        <span>Vol: <span className="text-white">{((allocation.risk_metrics.volatility || 0) * 100).toFixed(1)}%</span></span>
+                        <span>VaR95: <span className="text-white">{((allocation.risk_metrics.var_95 || 0) * 100).toFixed(1)}%</span></span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2821,14 +3421,18 @@ export default function Dashboard() {
                 onChange={(e) => setOptimizer(e.target.value)}
                 className="w-full bg-black border border-neutral-900 p-2.5 rounded text-xs outline-none text-white focus:border-white cursor-pointer font-sans"
               >
-                <option value="risk_parity">RISK PARITY (Recommended - Balanced Risk Allocation)</option>
-                <option value="markowitz">MARKOWITZ MVO (Yield Max - Maximizes Sharpe Ratio)</option>
-                <option value="hrp">HIERARCHICAL RISK PARITY (HRP - Out-of-Sample Stability)</option>
+                <option value="ensemble">ENSEMBLE (Recommended - Averages MVO + Risk Parity + HRP)</option>
+                <option value="risk_parity">RISK PARITY (Balanced Risk Allocation)</option>
+                <option value="markowitz">MARKOWITZ MVO (Sharpe Maximization)</option>
+                <option value="hrp">HIERARCHICAL RISK PARITY (HRP)</option>
+                <option value="resampled">RESAMPLED MVO (Michaud - Bootstrap Robust)</option>
               </select>
               <p className="text-[9px] text-neutral-600 leading-normal font-sans text-neutral-400">
-                {optimizer === "risk_parity" && "✓ Recommended: Allocates weights to equalize risk contributions, preventing concentration spikes."}
-                {optimizer === "markowitz" && "💡 Maximizes Expected Sharpe Ratio; sensitive to input view accuracy."}
-                {optimizer === "hrp" && "💡 Uses machine learning clustering to allocate weights based on hierarchical asset correlation trees."}
+                {optimizer === "ensemble" && "✓ Recommended: Averages Markowitz, Risk Parity, and HRP — reduces single-model sensitivity and prevents extreme concentrations."}
+                {optimizer === "risk_parity" && "✓ Allocates weights to equalize risk contributions, preventing concentration spikes."}
+                {optimizer === "markowitz" && "⚠ Maximizes Sharpe Ratio; most sensitive to expected return inputs — can produce concentrated portfolios."}
+                {optimizer === "hrp" && "💡 Hierarchical clustering-based allocation — stable out-of-sample, ignores expected returns."}
+                {optimizer === "resampled" && "💡 Bootstraps 50 MVO runs and averages — reduces estimation error vs standard Markowitz."}
               </p>
             </div>
 

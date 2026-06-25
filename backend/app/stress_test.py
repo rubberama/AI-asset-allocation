@@ -57,9 +57,9 @@ def run_monte_carlo_simulation(
     vol_component = port_ann_vol * np.sqrt(dt)
     
     # Z ~ Student-t for fat tails (typical of equity markets)
-    np.random.seed(42)  # Consistent results
+    rng = np.random.default_rng(42)
     df_t = 5  # Standard for equity markets
-    Z = t_dist.rvs(df=df_t, size=(n_simulations, n_days))
+    Z = t_dist.rvs(df=df_t, size=(n_simulations, n_days), random_state=rng)
     # Normalize to unit variance (t-distribution has variance df/(df-2))
     Z = Z / np.sqrt(df_t / (df_t - 2))
     

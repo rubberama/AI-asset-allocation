@@ -34,24 +34,60 @@ def optimize_portfolio(
             
     strategy = strategy.lower().strip()
     
+    # Sanity guard: check if all expected returns are below the risk-free rate
+    all_below_rf = np.all(mu < risk_free_rate)
+    if all_below_rf and strategy in ("markowitz", "resampled", "ensemble"):
+        logger.warning(
+            f"All expected returns are below the risk-free rate ({risk_free_rate:.4f}). "
+            "Auto-switching from return-seeking optimization to Minimum Variance for capital preservation."
+        )
+        strategy = "min_variance"
+    
     if strategy == "markowitz":
         weights = run_markowitz_mvo(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
+    elif strategy == "min_variance":
+        weights = run_min_variance(Sigma, assets, benchmark_weights, max_deviation)
     elif strategy == "risk_parity":
-        weights = run_risk_parity(Sigma)
+        weights = run_risk_parity(Sigma, assets, benchmark_weights, max_deviation)
     elif strategy == "hrp":
-        weights = run_hrp(Sigma, assets)
+        weights = run_hrp(Sigma, assets, benchmark_weights, max_deviation)
     elif strategy == "resampled":
         weights = run_resampled_weights(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
     elif strategy == "ensemble":
         # Average the three core optimizers to reduce single-model/estimation risk.
         w_mvo = run_markowitz_mvo(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
-        w_rp = run_risk_parity(Sigma)
-        w_hrp = run_hrp(Sigma, assets)
+        w_rp = run_risk_parity(Sigma, assets, benchmark_weights, max_deviation)
+        w_hrp = run_hrp(Sigma, assets, benchmark_weights, max_deviation)
         weights = (w_mvo + w_rp + w_hrp) / 3.0
         weights = weights / np.sum(weights)
     else:
         logger.warning(f"Unknown optimization strategy: {strategy}. Defaulting to Equal Weights.")
         weights = np.ones(n) / n
+
+    # -----------------------------------------------------------------------
+    # HARD POST-PROCESSING CLAMP: guarantee max_deviation is always respected
+    # regardless of which engine was used.  We iteratively project the weights
+    # into the feasible box [w_bench - delta, w_bench + delta] then renormalize.
+    # -----------------------------------------------------------------------
+    if max_deviation is not None and benchmark_weights is not None:
+        w_bench = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+        # Enforce a 2% minimum per asset regardless of benchmark position to prevent
+        # zero allocations that arise when benchmark weight ≤ max_deviation.
+        lo = np.maximum(0.02, w_bench - max_deviation)
+        hi = np.minimum(1.0, w_bench + max_deviation)
+        for _ in range(20):          # iterate until stable
+            weights = np.clip(weights, lo, hi)
+            total = np.sum(weights)
+            if total > 1e-8:
+                weights = weights / total
+            else:
+                weights = w_bench     # full fallback
+                break
+        # Final clip (idempotent after normalization)
+        weights = np.clip(weights, lo, hi)
+        total = np.sum(weights)
+        if total > 1e-8:
+            weights = weights / total
 
     return {assets[i]: float(weights[i]) for i in range(n)}
 
@@ -112,7 +148,10 @@ def run_markowitz_mvo(
         port_vol = np.sqrt(np.dot(w, np.dot(Sigma, w)))
         if port_vol < 1e-8:
             return 0
-        return - (port_return - rf) / port_vol
+        excess_return = port_return - rf
+        if excess_return < 0:
+            return - excess_return * port_vol
+        return - excess_return / port_vol
         
     # Constraints: weights sum to 1
     constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
@@ -121,13 +160,13 @@ def run_markowitz_mvo(
     if max_deviation is not None and benchmark_weights is not None and assets is not None:
         w_bench = np.array([benchmark_weights.get(a, 0.0) for a in assets])
         bounds = tuple(
-            (max(0.0, float(w_bench[i] - max_deviation)), min(1.0, float(w_bench[i] + max_deviation)))
+            (max(0.02, float(w_bench[i] - max_deviation)), min(1.0, float(w_bench[i] + max_deviation)))
             for i in range(n)
         )
     else:
-        # Default Bounds: 0 <= w_i <= 1
-        bounds = tuple((0.0, 1.0) for _ in range(n))
-    
+        # Default Bounds: 2% floor per asset, no single asset above 60%
+        bounds = tuple((0.02, 0.60) for _ in range(n))
+
     # Initial guess: equal weights or benchmark weights if available and valid
     if benchmark_weights is not None and assets is not None:
         w0 = np.array([benchmark_weights.get(a, 0.0) for a in assets])
@@ -136,7 +175,7 @@ def run_markowitz_mvo(
             w0 = np.ones(n) / n
     else:
         w0 = np.ones(n) / n
-    
+
     result = minimize(
         objective,
         w0,
@@ -248,46 +287,68 @@ def run_efficient_frontier(
     return sorted(frontier_points, key=lambda x: x["volatility"])
 
 
-def run_risk_parity(Sigma: np.ndarray) -> np.ndarray:
+def run_risk_parity(
+    Sigma: np.ndarray,
+    assets: List[str] = None,
+    benchmark_weights: Dict[str, float] = None,
+    max_deviation: float = None
+) -> np.ndarray:
     """
-    Solves the convex formulation for Equal Risk Contribution:
-    Minimize: 0.5 * x^T * Sigma * x - sum(ln(x_i))
-    Subject to: x_i > 0
-    Then normalized weights w = x / sum(x)
+    Solves the Equal Risk Contribution (Risk Parity) problem:
+    Minimize the sum of squared differences of risk contributions:
+    Minimize: sum_{i} (w_i * (Sigma * w)_i - w^T * Sigma * w / n)^2
+    Subject to: sum(w) = 1, w in [lo, hi]
     """
     n = len(Sigma)
     
-    def objective(x):
-        # Prevent log of negative or tiny numbers
-        if np.any(x <= 1e-10):
-            return 1e10
-        return 0.5 * np.dot(x, np.dot(Sigma, x)) - np.sum(np.log(x))
+    # Compute benchmark-constrained bounds if provided
+    if max_deviation is not None and benchmark_weights is not None and assets is not None:
+        w_bench = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+        lo = np.maximum(0.02, w_bench - max_deviation)
+        hi = np.minimum(1.0, w_bench + max_deviation)
+    else:
+        lo = np.full(n, 0.02)
+        hi = np.full(n, 0.60)
+
+    def objective(w):
+        port_var = np.dot(w, np.dot(Sigma, w))
+        if port_var < 1e-8:
+            return 0
+        rc = w * np.dot(Sigma, w)
+        target_rc = port_var / n
+        return np.sum((rc - target_rc) ** 2)
         
-    # Bounds: x_i > 0
-    bounds = tuple((1e-8, 10.0) for _ in range(n))
+    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
+    bounds = tuple((float(lo[i]), float(hi[i])) for i in range(n))
     
-    # Initial guess
-    x0 = np.ones(n) / n
+    # Initial guess: equal weights
+    w0 = np.ones(n) / n
     
     result = minimize(
         objective,
-        x0,
-        method="L-BFGS-B",
-        bounds=bounds
+        w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 1000}
     )
     
     if not result.success:
         logger.error(f"Risk Parity optimization failed: {result.message}. Using equal weights fallback.")
         return np.ones(n) / n
         
-    # Normalize weights to sum to 1
-    x_opt = result.x
-    w_opt = x_opt / np.sum(x_opt)
-    return w_opt
+    return result.x
 
-def run_hrp(Sigma: np.ndarray, assets: List[str]) -> np.ndarray:
+def run_hrp(
+    Sigma: np.ndarray,
+    assets: List[str],
+    benchmark_weights: Dict[str, float] = None,
+    max_deviation: float = None
+) -> np.ndarray:
     """
     Implements Hierarchical Risk Parity (HRP).
+    Optional: if benchmark_weights and max_deviation supplied, the result is
+    projected into the feasible box after the recursive bisection.
     """
     n = len(assets)
     if n <= 1:
@@ -369,3 +430,62 @@ def get_cluster_var(Sigma: np.ndarray, cluster_indices: np.ndarray) -> float:
     
     # Portfolio variance
     return float(np.dot(w, np.dot(sub_Sigma, w)))
+
+def run_min_variance(
+    Sigma: np.ndarray,
+    assets: List[str] = None,
+    benchmark_weights: Dict[str, float] = None,
+    max_deviation: float = None
+) -> np.ndarray:
+    """
+    Minimizes the portfolio variance.
+    Minimize w^T * Sigma * w
+    Subject to: sum(w) = 1, w >= 0
+    And optional bounds: max(0, w_bench - max_deviation) <= w <= min(1, w_bench + max_deviation)
+    """
+    n = len(Sigma)
+    
+    # Objective function: portfolio variance
+    def objective(w):
+        return np.dot(w, np.dot(Sigma, w))
+        
+    # Constraints: weights sum to 1
+    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
+    
+    # Bounds calculation
+    if max_deviation is not None and benchmark_weights is not None and assets is not None:
+        w_bench = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+        bounds = tuple(
+            (max(0.02, float(w_bench[i] - max_deviation)), min(1.0, float(w_bench[i] + max_deviation)))
+            for i in range(n)
+        )
+    else:
+        # Default Bounds: 2% floor per asset, no single asset above 60%
+        bounds = tuple((0.02, 0.60) for _ in range(n))
+
+    # Initial guess
+    if benchmark_weights is not None and assets is not None:
+        w0 = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+        if np.abs(np.sum(w0) - 1.0) > 1e-4:
+            w0 = np.ones(n) / n
+    else:
+        w0 = np.ones(n) / n
+
+    result = minimize(
+        objective,
+        w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 1000}
+    )
+
+    if not result.success:
+        logger.error(f"Min Variance optimization failed: {result.message}. Using equal weights fallback.")
+        if benchmark_weights is not None and assets is not None:
+            fallback = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+            if np.abs(np.sum(fallback) - 1.0) < 1e-4:
+                return fallback
+        return np.ones(n) / n
+        
+    return result.x

@@ -105,8 +105,8 @@ def init_db():
             columns = [c["name"] for c in inspector.get_columns("market_intelligence")]
             if "category" not in columns:
                 with engine.begin() as conn:
-                    conn.execute(text("DROP TABLE market_intelligence"))
-                print("Dropped cached market_intelligence table to run category column migration.")
+                    conn.execute(text("ALTER TABLE market_intelligence ADD COLUMN category VARCHAR(50) DEFAULT 'NEWS'"))
+                print("Added category column to market_intelligence table via migration.")
     except Exception as e:
         print(f"Migration check warning: {e}")
     Base.metadata.create_all(bind=engine)

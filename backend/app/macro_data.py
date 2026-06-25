@@ -43,7 +43,7 @@ def fetch_macro_context() -> dict:
     for key, t_info in TICKER_DETAILS.items():
         try:
             ticker_obj = yf.Ticker(t_info["ticker"])
-            history_df = ticker_obj.history(period="3mo")
+            history_df = ticker_obj.history(period="1y")
             if not history_df.empty:
                 closes = history_df["Close"].dropna().tolist()
                 dates = history_df.index.strftime("%Y-%m-%d").tolist()
@@ -110,8 +110,47 @@ def fetch_macro_context() -> dict:
         indicators["market_regime"] = "NORMAL"
         indicators["regime_kr"] = "정상 시장 국면"
         
-    logger.info(f"Fetched {len(indicators) - 2} macro indicators. Regime: {indicators.get('market_regime', 'UNKNOWN')}")
+    try:
+        indicators["correlation_matrix"] = compute_correlation_matrix(indicators)
+    except Exception as e:
+        logger.warning(f"Failed to compute correlation matrix: {e}")
+        indicators["correlation_matrix"] = {}
+
+    logger.info(f"Fetched {len(indicators) - 3} macro indicators. Regime: {indicators.get('market_regime', 'UNKNOWN')}")
     return indicators
+
+def compute_correlation_matrix(indicators: dict) -> dict:
+    """
+    Computes Pearson correlation matrix for key macro indicators over 1 year.
+    """
+    import pandas as pd
+    
+    target_keys = ["SPY", "QQQ", "KOSPI", "VIX", "US10Y", "YIELD_SPREAD", "HYG", "GOLD", "BTC", "USD_KRW"]
+    
+    series_dict = {}
+    for key in target_keys:
+        if key in indicators and isinstance(indicators[key], dict) and "history" in indicators[key]:
+            hist = indicators[key]["history"]
+            if hist:
+                dates = [pt["date"] for pt in hist]
+                values = [pt["value"] for pt in hist]
+                series_dict[key] = pd.Series(values, index=pd.to_datetime(dates))
+            
+    if not series_dict:
+        return {}
+        
+    df = pd.DataFrame(series_dict)
+    # Align and forward-fill/backward-fill missing values
+    df = df.ffill().bfill()
+    
+    # Compute correlation matrix
+    corr_df = df.corr()
+    
+    # Replace NaN with 0.0 for safety
+    corr_df = corr_df.fillna(0.0)
+    
+    # Convert to standard python dict
+    return corr_df.to_dict()
 
 def format_macro_context_for_llm(indicators: dict) -> str:
     """

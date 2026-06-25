@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 NEWS = "NEWS"
 MACRO_DATA = "MACRO_DATA"
 EVENT = "EVENT"
+POSITIONING = "POSITIONING"      # COT net speculator data, ETF flows
+CB_PUBLICATION = "CB_PUBLICATION"  # Central bank publications (Beige Book, MPB minutes, etc.)
 
 
 def make_document(

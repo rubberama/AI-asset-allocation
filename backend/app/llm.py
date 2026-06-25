@@ -5,7 +5,7 @@ import re
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Union, Dict, Any, Optional
-from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL
+from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL, VIEW_PARSING_MODEL, REASONING_MODEL
 from app.macro_data import fetch_macro_context, format_macro_context_for_llm
 
 logger = logging.getLogger(__name__)
@@ -153,28 +153,8 @@ def parse_with_heuristics(view_text: str) -> List[Dict[str, Any]]:
         
     return views
 
-async def parse_views_with_llm(view_text: str) -> List[Dict[str, Any]]:
-    """
-    Sends natural language investment views to OpenRouter and returns structured views list.
-    """
-    if not OPENROUTER_API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set. Using heuristic fallback parser.")
-        return parse_heuristics_and_validate(view_text)
-
-    # Fetch real-time macro context
-    try:
-        macro_indicators = fetch_macro_context()
-        macro_context_str = format_macro_context_for_llm(macro_indicators)
-    except Exception as e:
-        logger.warning(f"Failed to fetch macro context: {e}")
-        macro_context_str = "(Market data unavailable)"
-        macro_indicators = {}
-
-    global _last_macro_context
-    _last_macro_context = macro_indicators
-
-    system_prompt = f"""
-You are an expert financial AI assistant. Your task is to analyze the user's investment view (natural language) and output a structured JSON object representing the qualitative/quantitative view vector for a Black-Litterman model.
+def _build_views_system_prompt(macro_context_str: str) -> str:
+    return f"""You are an expert financial AI assistant. Your task is to analyze the user's investment view (natural language) and output a structured JSON object representing the qualitative/quantitative view vector for a Black-Litterman model.
 
 Supported assets are exactly:
 - KR_STOCK: 국내주식 / South Korean equities
@@ -191,9 +171,9 @@ Each view must be either an "absolute" or a "relative" view.
 {{
   "view_type": "absolute",
   "asset": "GLOBAL_STOCK",
-  "expected_return": 0.12,  // Decimal annualized return (e.g. 12% is 0.12, -5% is -0.05)
-  "confidence": 0.8,        // Number between 0.0 (no confidence) and 1.0 (complete confidence)
-  "thesis": "Specific detailed 1-2 sentence investment thesis or rationale explaining why this view was formulated.",
+  "expected_return": 0.12,
+  "confidence": 0.8,
+  "thesis": "Specific 1-2 sentence investment thesis explaining this view.",
   "sources": ["Source 1 (e.g., FRED CPI)", "Source 2 (e.g., CBOE VIX)"]
 }}
 
@@ -202,9 +182,9 @@ Each view must be either an "absolute" or a "relative" view.
   "view_type": "relative",
   "asset1": "GLOBAL_STOCK",
   "asset2": "KR_STOCK",
-  "outperformance": 0.05,  // Difference in returns (e.g. outperforming by 5% is 0.05)
-  "confidence": 0.75,      // Number between 0.0 and 1.0
-  "thesis": "Specific detailed 1-2 sentence investment thesis or rationale explaining why asset1 outperforms asset2.",
+  "outperformance": 0.05,
+  "confidence": 0.75,
+  "thesis": "Specific 1-2 sentence investment thesis explaining why asset1 outperforms asset2.",
   "sources": ["Source 1", "Source 2"]
 }}
 
@@ -214,77 +194,161 @@ IMPORTANT: Use the real-time market data above to CALIBRATE your expected return
 - If VIX > 25, lower confidence levels and widen expected return ranges.
 - If a market has rallied significantly (6M return > 15%), consider mean reversion risk.
 - If yields are dropping, bond expected returns should be higher (price appreciation).
-- Ground your thesis in the specific market data provided above.
 
 Rules:
-- Annualized returns should be realistic (generally between -0.30 and +0.30).
-- Confidences should be based on the strength of the user's assertion (strong words like "definitely" -> high confidence, "might" -> lower).
-- Provide a highly specific, high-quality, professional "thesis" explaining the economic mechanism behind the view.
-- List 1 to 3 realistic financial data sources, indices, database name, or reports under "sources" (e.g., "FRED Consumer Price Index", "IMF World Economic Outlook", "Nasdaq 100", "Yahoo Finance Bond Index", "BOK Monetary Policy Report", "EIA Crude Oil Report").
+- Annualized expected returns MUST be realistic: absolute views in [-0.15, +0.20], relative outperformance in [-0.10, +0.10].
+- Confidence strictly between 0.30 and 0.80.
+- Provide a professional "thesis" explaining the economic mechanism.
+- List 1-3 realistic data sources under "sources".
 - Only reference the allowed asset keys.
-- Output ONLY valid, parseable JSON. Do not write explanations.
-"""
+- Output ONLY valid, parseable JSON. No explanations outside the JSON."""
+
+
+def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
+    """Parse JSON answer text into validated, clamped BL views. Falls back to heuristics."""
+    try:
+        parsed_data = clean_and_parse_json(answer)
+        validated = InvestmentViews.model_validate(parsed_data)
+        filtered: List[Dict[str, Any]] = []
+        for v in validated.views:
+            vd = v.model_dump()
+            if vd["view_type"] == "absolute" and vd.get("asset") in VALID_ASSETS:
+                vd["expected_return"] = float(max(-0.15, min(0.20, float(vd["expected_return"]))))
+                vd["confidence"] = float(max(0.30, min(0.80, float(vd["confidence"]))))
+                filtered.append(vd)
+            elif (vd["view_type"] == "relative"
+                  and vd.get("asset1") in VALID_ASSETS
+                  and vd.get("asset2") in VALID_ASSETS):
+                vd["outperformance"] = float(max(-0.10, min(0.10, float(vd["outperformance"]))))
+                vd["confidence"] = float(max(0.30, min(0.80, float(vd["confidence"]))))
+                filtered.append(vd)
+        if filtered:
+            logger.info(f"Parsed and clamped {len(filtered)} BL views.")
+            return filtered
+    except Exception as e:
+        logger.warning(f"View parse/validate failed: {e}")
+    return parse_heuristics_and_validate(view_text)
+
+
+async def parse_views_with_llm_stream(view_text: str):
+    """
+    Async generator using DeepSeek R1 (free reasoning model) with streaming.
+    Yields:
+      {"type": "thinking", "chunk": "..."}  — live CoT tokens from <think> block
+      {"type": "result",   "views": [...]}  — final parsed BL views (always last)
+    """
+    if not OPENROUTER_API_KEY:
+        logger.warning("No OPENROUTER_API_KEY. Using heuristic fallback.")
+        yield {"type": "result", "views": parse_heuristics_and_validate(view_text)}
+        return
+
+    try:
+        import asyncio
+        macro_indicators = await asyncio.to_thread(fetch_macro_context)
+        macro_context_str = format_macro_context_for_llm(macro_indicators)
+    except Exception as e:
+        logger.warning(f"Macro context fetch failed: {e}")
+        macro_context_str = "(Market data unavailable)"
+        macro_indicators = {}
+
+    global _last_macro_context
+    _last_macro_context = macro_indicators
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
-        "X-Title": "NPS Black-Litterman Platform"
+        "X-Title": "NPS Black-Litterman Platform",
     }
-    
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": REASONING_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"User View: \"{view_text}\""}
+            {"role": "system", "content": _build_views_system_prompt(macro_context_str)},
+            {"role": "user", "content": f"User View: \"{view_text}\""},
         ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.1
+        "stream": True,
+        "temperature": 0.1,
     }
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=15.0)
-                
-            if response.status_code != 200:
-                logger.error(f"OpenRouter API returned error status: {response.status_code}, response: {response.text}")
-                raise httpx.HTTPStatusError("OpenRouter error", request=response.request, response=response)
-                
-            res_json = response.json()
-            choices = res_json.get("choices", [])
-            if not choices:
-                raise ValueError("No choices in OpenRouter response")
-                
-            raw_content = choices[0]["message"]["content"]
-            parsed_data = clean_and_parse_json(raw_content)
-            
-            # Validate with Pydantic
-            validated = InvestmentViews.model_validate(parsed_data)
-            
-            # Filter valid asset names just in case
-            filtered_views = []
-            for v in validated.views:
-                v_dict = v.model_dump()
-                if v_dict["view_type"] == "absolute":
-                    if v_dict["asset"] in VALID_ASSETS:
-                        filtered_views.append(v_dict)
-                elif v_dict["view_type"] == "relative":
-                    if v_dict["asset1"] in VALID_ASSETS and v_dict["asset2"] in VALID_ASSETS:
-                        filtered_views.append(v_dict)
-            
-            if not filtered_views:
-                raise ValueError("No valid views remained after asset validation")
-                
-            logger.info(f"Successfully parsed {len(filtered_views)} views using LLM.")
-            return filtered_views
-            
-        except Exception as e:
-            logger.warning(f"Attempt {attempt+1}/{max_retries} failed to parse LLM views: {e}")
-            if attempt == max_retries - 1:
-                logger.error("All LLM attempts failed. Falling back to heuristics.")
-                return parse_heuristics_and_validate(view_text)
+
+    full_content = ""
+    in_think = False
+    last_emitted = 0  # Index into full_content up to which we've yielded thinking text
+
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream(
+                "POST", OPENROUTER_API_URL, headers=headers, json=payload, timeout=180.0
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    logger.error(f"OpenRouter {response.status_code}: {body[:300]}")
+                    yield {"type": "result", "views": parse_heuristics_and_validate(view_text)}
+                    return
+
+                async for raw_line in response.aiter_lines():
+                    if not raw_line.startswith("data: "):
+                        continue
+                    data_str = raw_line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk_data = json.loads(data_str)
+                        choices = chunk_data.get("choices", [])
+                        if not choices:
+                            continue
+                        token = choices[0].get("delta", {}).get("content") or ""
+                        if not token:
+                            continue
+                        full_content += token
+
+                        # State machine: emit thinking chunks as they stream in
+                        while True:
+                            if not in_think:
+                                idx = full_content.find("<think>", last_emitted)
+                                if idx == -1:
+                                    break
+                                in_think = True
+                                last_emitted = idx + 7  # skip past "<think>"
+                            else:
+                                end_idx = full_content.find("</think>", last_emitted)
+                                if end_idx == -1:
+                                    # Still inside — emit everything except a 10-char safety buffer
+                                    safe_end = max(last_emitted, len(full_content) - 10)
+                                    if safe_end > last_emitted:
+                                        yield {"type": "thinking", "chunk": full_content[last_emitted:safe_end]}
+                                        last_emitted = safe_end
+                                    break
+                                else:
+                                    # Closing tag found — flush remaining thinking content
+                                    chunk_text = full_content[last_emitted:end_idx]
+                                    if chunk_text:
+                                        yield {"type": "thinking", "chunk": chunk_text}
+                                    last_emitted = end_idx + 9  # skip past "</think>"
+                                    in_think = False
+                                    # loop again in case model has multiple think blocks
+
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+    except Exception as e:
+        logger.error(f"parse_views_with_llm_stream error: {e}", exc_info=True)
+        yield {"type": "result", "views": parse_heuristics_and_validate(view_text)}
+        return
+
+    # Strip all <think>…</think> blocks, then extract JSON answer
+    answer = re.sub(r"<think>.*?</think>", "", full_content, flags=re.DOTALL).strip()
+    if not answer:
+        answer = full_content.strip()
+    yield {"type": "result", "views": _parse_and_clamp_views(answer, view_text)}
+
+
+async def parse_views_with_llm(view_text: str) -> List[Dict[str, Any]]:
+    """Non-streaming wrapper — collects the stream and returns the final views list."""
+    views: List[Dict[str, Any]] = []
+    async for event in parse_views_with_llm_stream(view_text):
+        if event["type"] == "result":
+            views = event["views"]
+    return views
 
 def parse_heuristics_and_validate(view_text: str) -> List[Dict[str, Any]]:
     """
@@ -426,3 +490,106 @@ def _generate_fallback_commentary(
             f"포트폴리오의 예상 연간 수익률은 {risk_metrics.get('expected_return', 0)*100:.2f}%이며, "
             f"연간 변동성은 {risk_metrics.get('volatility', 0)*100:.2f}%로 산출되었습니다. "
             f"95% 신뢰수준에서의 최대 예상 손실(VaR)은 {risk_metrics.get('var_95', 0)*100:.2f}%입니다.")
+
+
+async def generate_pm_memo(parsed_views: List[Dict[str, Any]], macro_context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Generates a qualitative investment memo from the Portfolio Manager (Jerry)
+    reviewing the user's views in the context of the real-time macro indicators.
+    """
+    if not OPENROUTER_API_KEY:
+        return {
+            "macro_regime_sentiment": "NEUTRAL",
+            "investment_thesis_summary": "AI memo generation disabled (API key not set).",
+            "key_risks_considered": ["Market volatility"],
+            "strategic_positioning_advice": "Maintain benchmark weights.",
+            "adjusted_views_rationale": "Defaulting to prior views."
+        }
+
+    # Format the inputs for the prompt
+    views_formatted = []
+    for idx, v in enumerate(parsed_views):
+        if v.get("view_type") == "absolute":
+            views_formatted.append(
+                f"- Absolute View: {v.get('asset')} | Expected Return: {v.get('expected_return'):+.2%} | Confidence: {v.get('confidence'):.2f}\n"
+                f"  Thesis: {v.get('thesis')}\n"
+                f"  Sources: {', '.join(v.get('sources', []))}"
+            )
+        elif v.get("view_type") == "relative":
+            views_formatted.append(
+                f"- Relative View: {v.get('asset1')} outperforming {v.get('asset2')} by {v.get('outperformance'):+.2%} | Confidence: {v.get('confidence'):.2f}\n"
+                f"  Thesis: {v.get('thesis')}\n"
+                f"  Sources: {', '.join(v.get('sources', []))}"
+            )
+    views_text = "\n".join(views_formatted)
+
+    macro_context_str = format_macro_context_for_llm(macro_context)
+
+    system_prompt = """
+You are Jerry, the Senior Portfolio Manager & Head of Asset Allocation at the NPS investment research desk. You hold a PhD in Economics and have 20 years of experience.
+Your task is to write a concise internal macro-asset allocation memo ("Jerry's PM Memo") reviewing the proposed active views under the current real-time macroeconomic environment.
+
+Your output must be a valid JSON object matching this schema exactly:
+{
+  "macro_regime_sentiment": "RISK-OFF" | "RISK-ON" | "NEUTRAL",
+  "investment_thesis_summary": "A 2-3 sentence overview of the consolidated investment thesis (what macro developments are driving this portfolio repositioning).",
+  "key_risks_considered": [
+    "Risk 1 (e.g. Fed policy error, inflation bounce, high VIX)",
+    "Risk 2",
+    "Risk 3"
+  ],
+  "strategic_positioning_advice": "A 1-2 sentence recommendation for Chris (Portfolio Management) explaining how the portfolio is tilting (e.g. tilting into Korean fixed income to capture capital gains, cutting global stock exposure).",
+  "adjusted_views_rationale": "A 1-2 sentence explanation of your calibration rationale (e.g. why returns are clamped or why confidence is adjusted based on VIX and historical base rates)."
+}
+
+Do NOT write markdown decorations other than the JSON block. Do not write explanations outside the JSON.
+"""
+
+    user_content = f"""
+=== REAL-TIME MACRO CONTEXT ===
+{macro_context_str}
+
+=== ACTIVE INVESTMENT VIEWS TO BE MERGED ===
+{views_text}
+
+Provide your Portfolio Manager (Jerry's) internal memo analyzing these views against the macro environment.
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
+        "X-Title": "NPS Black-Litterman Platform"
+    }
+
+    payload = {
+        "model": VIEW_PARSING_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=20.0)
+
+        if response.status_code == 200:
+            res_json = response.json()
+            raw_content = res_json["choices"][0]["message"]["content"]
+            parsed_memo = clean_and_parse_json(raw_content)
+            logger.info("Successfully generated PM Investment Memo (Jerry's reasoning).")
+            return parsed_memo
+    except Exception as e:
+        logger.error(f"Failed to generate PM Investment Memo: {e}")
+
+    # Fallback memo
+    return {
+        "macro_regime_sentiment": "NEUTRAL",
+        "investment_thesis_summary": "Proposed active views are being integrated into the Black-Litterman model.",
+        "key_risks_considered": ["General estimation error", "Market regimes shifts"],
+        "strategic_positioning_advice": "Tilt weights cautiously according to the active views.",
+        "adjusted_views_rationale": "Standard Prior weights modified by user active views."
+    }
