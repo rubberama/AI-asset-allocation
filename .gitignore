@@ -5,7 +5,7 @@
 !.env.example
 
 # ===== Claude Code local config (may capture command history/secrets) =====
-.claude/settings.local.json
+.claude/
 
 # ===== Python (backend) =====
 __pycache__/
