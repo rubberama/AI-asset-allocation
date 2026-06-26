@@ -196,8 +196,8 @@ IMPORTANT: Use the real-time market data above to CALIBRATE your expected return
 - If yields are dropping, bond expected returns should be higher (price appreciation).
 
 Rules:
-- Annualized expected returns MUST be realistic: absolute views in [-0.15, +0.20], relative outperformance in [-0.10, +0.10].
-- Confidence strictly between 0.30 and 0.80.
+- Annualized expected returns MUST be realistic: absolute views in [-0.10, +0.14], relative outperformance in [-0.08, +0.08].
+- Confidence strictly between 0.30 and 0.70. Do NOT output confidence above 0.70 — calibrate carefully.
 - Provide a professional "thesis" explaining the economic mechanism.
 - List 1-3 realistic data sources under "sources".
 - Only reference the allowed asset keys.
@@ -213,14 +213,16 @@ def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
         for v in validated.views:
             vd = v.model_dump()
             if vd["view_type"] == "absolute" and vd.get("asset") in VALID_ASSETS:
-                vd["expected_return"] = float(max(-0.15, min(0.20, float(vd["expected_return"]))))
-                vd["confidence"] = float(max(0.30, min(0.80, float(vd["confidence"]))))
+                # Realistic NPS-grade return range: bonds ~4-8%, equities ~6-14%
+                vd["expected_return"] = float(max(-0.10, min(0.14, float(vd["expected_return"]))))
+                # Cap confidence at 0.70 — high confidence drowns out market equilibrium
+                vd["confidence"] = float(max(0.30, min(0.70, float(vd["confidence"]))))
                 filtered.append(vd)
             elif (vd["view_type"] == "relative"
                   and vd.get("asset1") in VALID_ASSETS
                   and vd.get("asset2") in VALID_ASSETS):
-                vd["outperformance"] = float(max(-0.10, min(0.10, float(vd["outperformance"]))))
-                vd["confidence"] = float(max(0.30, min(0.80, float(vd["confidence"]))))
+                vd["outperformance"] = float(max(-0.08, min(0.08, float(vd["outperformance"]))))
+                vd["confidence"] = float(max(0.30, min(0.70, float(vd["confidence"]))))
                 filtered.append(vd)
         if filtered:
             logger.info(f"Parsed and clamped {len(filtered)} BL views.")
@@ -228,6 +230,7 @@ def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"View parse/validate failed: {e}")
     return parse_heuristics_and_validate(view_text)
+
 
 
 async def parse_views_with_llm_stream(view_text: str):

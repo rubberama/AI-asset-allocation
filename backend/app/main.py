@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, List, Any, Optional
 
 from app.db import init_db, get_db, Simulation, NpsSnapshot
-from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU
+from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU, DEFAULT_RISK_FREE_RATE
 from app.crawler import fetch_and_sync_nps_data
 from app.market_data import fetch_market_data, fetch_risk_free_rate
 from app.llm import (
@@ -179,10 +179,10 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                 else:
                     risk_aversion = 2.5
             
-            # Estimate tau if not provided
+            # Estimate tau if not provided — use He-Litterman (1999) standard of 0.05
             tau = request.tau
             if tau is None:
-                tau = 1.0 / (252 * 5)
+                tau = DEFAULT_TAU
 
             prior_returns, post_returns, post_covariance = run_black_litterman(
                 market_weights=market_weights,
@@ -591,7 +591,7 @@ def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)
         macro_context = get_last_macro_context()
         base_lambda = _estimate_risk_aversion(market_weights, covariance)
         risk_aversion = base_lambda * _regime_lambda_multiplier(macro_context)
-        tau = 1.0 / (252 * 5)
+        tau = DEFAULT_TAU  # He-Litterman (1999): 0.05 standard
 
         prior_returns, post_returns, post_covariance = run_black_litterman(
             market_weights=market_weights, covariance_dict=covariance, views=views,

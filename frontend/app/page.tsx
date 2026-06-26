@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { 
+import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  LineChart, Line, AreaChart, Area, ReferenceLine, ScatterChart, Scatter
+  LineChart, Line, AreaChart, Area, ReferenceLine, ScatterChart, Scatter, Cell
 } from "recharts";
 import { 
   TrendingUp, ShieldAlert, Cpu, BarChart3, LineChart as LineIcon, 
@@ -19,6 +19,24 @@ const ASSET_LABELS: Record<string, string> = {
   KR_BOND: "국내채권 (KBSTAR)",
   GLOBAL_BOND: "해외채권 (BNDX)",
   ALTERNATIVE: "대체투자 (VNQ)"
+};
+
+// Consistent color identity for the 5 NPS asset classes — used in all charts and tags.
+const ASSET_COLORS: Record<string, string> = {
+  KR_STOCK:     "#3B82F6",   // korea blue
+  GLOBAL_STOCK: "#A78BFA",   // global violet
+  KR_BOND:      "#34D399",   // safe local emerald
+  GLOBAL_BOND:  "#6EE7B7",   // safe global teal
+  ALTERNATIVE:  "#FBBF24",   // amber
+};
+
+// Short labels for charts
+const ASSET_SHORT: Record<string, string> = {
+  KR_STOCK: "국내주식",
+  GLOBAL_STOCK: "해외주식",
+  KR_BOND: "국내채권",
+  GLOBAL_BOND: "해외채권",
+  ALTERNATIVE: "대체투자",
 };
 
 interface ViewItem {
@@ -737,19 +755,42 @@ export default function Dashboard() {
   const getWeightsData = () => {
     if (!data) return [];
     return Object.keys(data.market_weights).map(asset => ({
-      name: ASSET_LABELS[asset] || asset,
-      "국민연금 (Market)": Math.round(data.market_weights[asset] * 1000) / 10,
-      "최적 포트폴리오 (BL)": Math.round(data.optimized_weights[asset] * 1000) / 10
+      name: ASSET_SHORT[asset] || asset,
+      asset,
+      "국민연금": Math.round(data.market_weights[asset] * 1000) / 10,
+      "최적화": Math.round(data.optimized_weights[asset] * 1000) / 10,
+      delta: Math.round((data.optimized_weights[asset] - data.market_weights[asset]) * 1000) / 10,
+      color: ASSET_COLORS[asset] || "#ffffff",
     }));
+  };
+
+  const getWeightsDeltaData = () => {
+    if (!data) return [];
+    return Object.keys(data.market_weights).map(asset => {
+      const delta = Math.round((data.optimized_weights[asset] - data.market_weights[asset]) * 1000) / 10;
+      return {
+        name: ASSET_SHORT[asset] || asset,
+        asset,
+        delta,
+        color: delta > 0 ? "#22C55E" : delta < 0 ? "#EF4444" : "#525252",
+      };
+    });
   };
 
   const getReturnsData = () => {
     if (!data) return [];
-    return Object.keys(data.market_weights).map(asset => ({
-      name: ASSET_LABELS[asset] || asset,
-      "시장 균형수익률 (Prior)": Math.round((data.prior_returns?.[asset] || 0) * 1000) / 10,
-      "BL 기대수익률 (Posterior)": Math.round(data.posterior_returns[asset] * 1000) / 10
-    }));
+    return Object.keys(data.market_weights).map(asset => {
+      const prior = Math.round((data.prior_returns?.[asset] || 0) * 1000) / 10;
+      const post = Math.round(data.posterior_returns[asset] * 1000) / 10;
+      return {
+        name: ASSET_SHORT[asset] || asset,
+        asset,
+        "Prior": prior,
+        "Posterior": post,
+        delta: Math.round((post - prior) * 10) / 10,
+        color: ASSET_COLORS[asset] || "#ffffff",
+      };
+    });
   };
 
   const getMonteCarloPaths = () => {
@@ -1158,66 +1199,22 @@ export default function Dashboard() {
               </div>
 
               {/* Metrics Explanation Box */}
-              <div className="border border-neutral-900 bg-[#050505] p-5 text-[11px] font-sans text-neutral-400 flex flex-col gap-4">
-                <div className="border-b border-neutral-900 pb-2">
-                  <h4 className="font-display text-[10px] tracking-wider text-neutral-400 uppercase font-bold">
-                    PORTFOLIO PERFORMANCE &amp; RISK METRICS EXPLAINED
-                  </h4>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  <div className="flex flex-col gap-1">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      EXP RETURN (Expected Return)
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      The forecasted annualized return of the portfolio based on market conditions and your customized outlook. Under current simulation parameters, your portfolio is projected to grow by <strong className="text-white font-mono">{formatPercent(data.risk_metrics.expected_return)}</strong> over the next year.
-                    </p>
-                  </div>
-                  
-                  <div className="flex flex-col gap-1">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      PORTFOLIO VOL (Volatility)
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      The annualized measure of price fluctuations (risk). A volatility of <strong className="text-white font-mono">{formatPercent(data.risk_metrics.volatility)}</strong> represents the standard deviation of returns; a lower number suggests a smoother, more stable investment journey.
-                    </p>
-                  </div>
-                  
-                  <div className="flex flex-col gap-1">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      SHARPE RATIO
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      A core metric measuring risk-adjusted returns (return earned per unit of risk). A Sharpe ratio of <strong className="text-white font-mono">{metrics.sharpe.toFixed(2)}</strong> indicates a moderate return relative to volatility; a higher ratio represents a more efficient asset allocation.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      95% VAR (Value at Risk - 1 Year)
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      The threshold loss not expected to be exceeded with 95% confidence over a 1-year horizon. There is a 95% probability that your portfolio's annual losses will be milder than <strong className="text-white font-mono">{formatPercent(data.risk_metrics.var_95)}</strong> under normal market behavior.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      95% CVAR (Conditional VaR / Expected Shortfall)
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      The average loss expected in the worst-case 5% of market outcomes. If a severe market crash occurs (tail risk), your portfolio is projected to lose an average of <strong className="text-white font-mono">{formatPercent(data.risk_metrics.cvar_95)}</strong> over that 1-year period.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-1 border-t border-neutral-950 pt-3 md:border-t-0 md:pt-0">
-                    <span className="font-display font-bold text-neutral-200 uppercase text-[9px] tracking-wider">
-                      MAX DRAWDOWN
-                    </span>
-                    <p className="leading-relaxed text-neutral-500">
-                      The projected peak-to-trough decline of the portfolio during periods of extreme macroeconomic stress. Under severe historical or simulated crises, the portfolio's value could fall by <strong className="text-white font-mono">{formatPercent(data.risk_metrics.max_drawdown_estimate)}</strong> before recovering.
-                    </p>
-                  </div>
+              <div className="border border-neutral-900 bg-[#050505] p-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-neutral-900">
+                  {[
+                    { label: "EXP RETURN", value: formatPercent(data.risk_metrics.expected_return), desc: "연간 기대수익률" },
+                    { label: "VOLATILITY", value: formatPercent(data.risk_metrics.volatility), desc: "연간 수익률 표준편차" },
+                    { label: "SHARPE", value: metrics.sharpe.toFixed(2), desc: "단위 리스크당 초과수익" },
+                    { label: "95% VaR", value: formatPercent(data.risk_metrics.var_95), desc: "95% 신뢰구간 최대손실" },
+                    { label: "95% CVaR", value: formatPercent(data.risk_metrics.cvar_95), desc: "극단손실 시나리오 평균" },
+                    { label: "MAX DD", value: formatPercent(data.risk_metrics.max_drawdown_estimate), desc: "고점 대비 최대 낙폭 추정" },
+                  ].map(({ label, value, desc }) => (
+                    <div key={label} className="bg-[#050505] p-3 flex flex-col gap-1">
+                      <span className="font-display text-[9px] tracking-wider text-neutral-500 uppercase">{label}</span>
+                      <span className="font-mono text-sm text-white font-bold">{value}</span>
+                      <span className="text-[9px] text-neutral-600 leading-tight">{desc}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -1358,24 +1355,28 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <BarChart3 className="w-4 h-4 text-white" />
-                      ASSET WEIGHT COMPONENT COMPARISON
+                      BL WEIGHT DEVIATION FROM MARKET
                     </h3>
                     <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
                   </div>
                   <div className="h-72 w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={getWeightsData()} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                      <BarChart data={getWeightsDeltaData()} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
                         <XAxis dataKey="name" stroke="#525252" fontSize={9} tickLine={false} />
-                        <YAxis stroke="#525252" fontSize={9} tickLine={false} />
-                        <Tooltip 
+                        <YAxis stroke="#525252" fontSize={9} tickLine={false} tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v}%`} />
+                        <ReferenceLine y={0} stroke="#525252" strokeWidth={1} />
+                        <Tooltip
                           contentStyle={{ backgroundColor: "#000000", border: "1px solid #262626", borderRadius: "0px" }}
                           itemStyle={{ fontSize: "10px", color: "#ffffff" }}
                           labelStyle={{ fontSize: "11px", fontWeight: "bold", color: "#ffffff" }}
+                          formatter={(value) => { const v = Number(value); return [`${v > 0 ? "+" : ""}${v}%`, "BL 편차"]; }}
                         />
-                        <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }} />
-                        <Bar dataKey="국민연금 (Market)" fill="#262626" />
-                        <Bar dataKey="최적 포트폴리오 (BL)" fill="#ffffff" />
+                        <Bar dataKey="delta" name="BL 편차 (pp)">
+                          {getWeightsDeltaData().map((entry, index) => (
+                            <Cell key={index} fill={entry.color} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -1402,8 +1403,12 @@ export default function Dashboard() {
                           labelStyle={{ fontSize: "11px", fontWeight: "bold", color: "#ffffff" }}
                         />
                         <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }} />
-                        <Bar dataKey="시장 균형수익률 (Prior)" fill="#262626" />
-                        <Bar dataKey="BL 기대수익률 (Posterior)" fill="#ffffff" />
+                        <Bar dataKey="Prior" name="시장 균형수익률 (Prior)" fill="#262626" opacity={0.7} />
+                        <Bar dataKey="Posterior" name="BL 기대수익률 (Posterior)">
+                          {getReturnsData().map((entry, index) => (
+                            <Cell key={index} fill={entry.color} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>

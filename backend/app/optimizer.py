@@ -54,11 +54,15 @@ def optimize_portfolio(
     elif strategy == "resampled":
         weights = run_resampled_weights(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
     elif strategy == "ensemble":
-        # Average the three core optimizers to reduce single-model/estimation risk.
+        # Blend the three core optimizers.
+        # MVO gets 60%: ensures BL views (which feed into expected returns) actually
+        # tilt the allocation. RP+HRP are return-agnostic and at 50% combined weight
+        # they flip the sign of the user's view signal, counteracting BL.
+        # RP and HRP each get 20% as diversification guardrails only.
         w_mvo = run_markowitz_mvo(mu, Sigma, risk_free_rate, assets, benchmark_weights, max_deviation)
         w_rp = run_risk_parity(Sigma, assets, benchmark_weights, max_deviation)
         w_hrp = run_hrp(Sigma, assets, benchmark_weights, max_deviation)
-        weights = (w_mvo + w_rp + w_hrp) / 3.0
+        weights = 0.60 * w_mvo + 0.20 * w_rp + 0.20 * w_hrp
         weights = weights / np.sum(weights)
     else:
         logger.warning(f"Unknown optimization strategy: {strategy}. Defaulting to Equal Weights.")
@@ -412,9 +416,31 @@ def run_hrp(
         recurse_bisection(w_vector, right_idx)
         
     recurse_bisection(weights, sort_indices)
-    
-    # Normalize final weights
-    return weights / np.sum(weights)
+
+    # Normalize
+    weights = weights / np.sum(weights)
+
+    # Project into feasible box [w_bench - delta, w_bench + delta] promised in the docstring.
+    # Without this, HRP can produce 50%+ in a single asset (e.g., low-vol GLOBAL_BOND)
+    # which corrupts the ensemble average even at 20% weight.
+    if max_deviation is not None and benchmark_weights is not None and assets is not None:
+        w_bench = np.array([benchmark_weights.get(a, 0.0) for a in assets])
+        lo = np.maximum(0.02, w_bench - max_deviation)
+        hi = np.minimum(1.0, w_bench + max_deviation)
+        for _ in range(20):
+            weights = np.clip(weights, lo, hi)
+            total = np.sum(weights)
+            if total > 1e-8:
+                weights = weights / total
+            else:
+                weights = w_bench
+                break
+        weights = np.clip(weights, lo, hi)
+        total = np.sum(weights)
+        if total > 1e-8:
+            weights = weights / total
+
+    return weights
 
 def get_cluster_var(Sigma: np.ndarray, cluster_indices: np.ndarray) -> float:
     """

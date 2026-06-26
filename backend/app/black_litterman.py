@@ -2,6 +2,7 @@ import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
+from app.config import DEFAULT_TAU, DEFAULT_RISK_AVERSION
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +106,10 @@ def run_black_litterman(
             risk_aversion = 2.5  # fallback
         logger.info(f"Dynamically estimated risk aversion lambda = {risk_aversion:.4f}")
 
-    # Estimate tau using Bayesian approach if not provided
+    # Estimate tau using He-Litterman (1999) default if not provided
     if tau is None:
-        # Meucci (2010) approach: tau = 1/T where T is the number of observations
-        # We approximate T from 5 years of daily data
-        tau = 1.0 / (252 * 5)
-        logger.info(f"Using Bayesian-estimated tau = {tau:.6f}")
+        tau = DEFAULT_TAU  # 0.05 per He & Litterman (1999) and standard practice
+        logger.info(f"Using default tau = {tau:.4f}")
 
     # Market Implied Excess Returns (Pi = lambda * Sigma * w)
     Pi = risk_aversion * np.dot(Sigma, w)
@@ -138,9 +137,11 @@ def run_black_litterman(
     confidences = []
 
     for idx, view in enumerate(views):
-        confidence = max(0.001, min(0.999, view["confidence"])) # Clamp to avoid division by zero/negative
+        # Cap confidence at 0.72 — at c=0.80 view precision is 4× prior precision which
+        # causes the posterior to over-weight user views relative to market equilibrium.
+        confidence = max(0.001, min(0.72, view["confidence"]))
         confidences.append(confidence)
-        
+
         if view["view_type"] == "absolute":
             asset = view["asset"]
             asset_idx = asset_to_idx[asset]
@@ -152,7 +153,7 @@ def run_black_litterman(
             else:
                 # User total return input: excess expected return = total expected return - risk-free rate.
                 Q[idx] = view["expected_return"] - risk_free_rate
-            
+
         elif view["view_type"] == "relative":
             asset1 = view["asset1"]
             asset2 = view["asset2"]
@@ -162,7 +163,12 @@ def run_black_litterman(
             P[idx, idx2] = -1.0
             # Q is the relative outperformance difference, which is already an excess measure
             Q[idx] = view["outperformance"]
-            
+
+        # James-Stein shrinkage: pull Q 20% toward the prior equilibrium implied by P@Pi.
+        # This moderates only extreme view deviations while still allowing meaningful tilts.
+        Pi_k = float(np.dot(P[idx], Pi))
+        Q[idx] = 0.80 * float(Q[idx]) + 0.20 * Pi_k
+
         # Compute Omega_jj = tau * p_j * Sigma * p_j^T * (1 - c_j) / c_j
         p_j = P[idx]
         variance_prior_view = np.dot(p_j, np.dot(Sigma, p_j))
@@ -199,16 +205,20 @@ def run_black_litterman(
         
         # Posterior excess returns
         post_excess = np.dot(post_covariance_excess, rhs)
-        
+
+        # Final posterior shrinkage: blend 8% back toward the prior equilibrium Pi.
+        # A light safety valve for correlated multi-view scenarios that compound.
+        post_excess = 0.92 * post_excess + 0.08 * Pi
+
         # Posterior covariance matrix (including the scaling variance from prior)
         # Sigma_bl = Sigma + [ (tau*Sigma)^-1 + P^T * Omega^-1 * P ]^-1
         post_Sigma = Sigma + post_covariance_excess
-        
+
     except np.linalg.LinAlgError as e:
         logger.error(f"Matrix inversion failed in Black-Litterman calculations: {e}. Falling back to default prior.")
         post_excess = Pi
         post_Sigma = Sigma + tau * Sigma
-        
+
     # Convert excess returns back to total expected returns: R_bl = mu_bl + risk_free_rate
     prior_total = Pi + risk_free_rate
     post_total = post_excess + risk_free_rate
