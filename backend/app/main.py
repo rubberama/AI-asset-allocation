@@ -77,6 +77,67 @@ class AllocateRequest(BaseModel):
     use_theses: bool = Field(True, description="Use approved theses as Black-Litterman views")
 
 
+_ASSET_KR = {
+    "KR_STOCK": "국내주식", "GLOBAL_STOCK": "해외주식",
+    "KR_BOND": "국내채권", "GLOBAL_BOND": "해외채권", "ALTERNATIVE": "대체투자"
+}
+
+def _generate_simulation_title(parsed_views: list, ts: datetime) -> str:
+    if not parsed_views:
+        return f"기준 포트폴리오 시뮬레이션 · {ts.strftime('%m/%d %H:%M')}"
+    parts = []
+    for v in parsed_views[:2]:
+        if v["view_type"] == "absolute":
+            r = v.get("expected_return", 0)
+            tag = "강세" if r > 0.08 else "약세" if r < 0.04 else "중립"
+            parts.append(f"{_ASSET_KR.get(v['asset'], v['asset'])} {tag}")
+        else:
+            parts.append(f"{_ASSET_KR.get(v.get('asset1',''), v.get('asset1',''))} > {_ASSET_KR.get(v.get('asset2',''), v.get('asset2',''))}")
+    title = " / ".join(parts)
+    if len(parsed_views) > 2:
+        title += f" 외 {len(parsed_views)-2}건"
+    return title + f" · {ts.strftime('%m/%d %H:%M')}"
+
+
+def _build_view_attribution(
+    assets: list,
+    prior_returns: Dict[str, float],
+    posterior_returns: Dict[str, float],
+    parsed_views: list,
+) -> list:
+    result = []
+    for asset in assets:
+        driving = []
+        for v in parsed_views:
+            if v["view_type"] == "absolute" and v.get("asset") == asset:
+                driving.append(v)
+            elif v["view_type"] == "relative" and asset in (v.get("asset1"), v.get("asset2")):
+                driving.append(v)
+        prior = prior_returns.get(asset, 0.0)
+        post  = posterior_returns.get(asset, 0.0)
+        result.append({
+            "asset": asset,
+            "prior_return": round(prior * 100, 2),
+            "posterior_return": round(post * 100, 2),
+            "delta_pp": round((post - prior) * 100, 2),
+            "driving_views": [
+                {
+                    "view_type": v["view_type"],
+                    "confidence": v.get("confidence", 0),
+                    "thesis": v.get("thesis", ""),
+                    "sources": v.get("sources", []),
+                    "expected_return": v.get("expected_return"),
+                    "outperformance": v.get("outperformance"),
+                    "asset": v.get("asset"),
+                    "asset1": v.get("asset1"),
+                    "asset2": v.get("asset2"),
+                }
+                for v in driving
+            ],
+        })
+    return result
+
+
 def _estimate_risk_aversion(market_weights: Dict[str, float], covariance: Dict[str, Dict[str, float]]) -> float:
     """Market-implied risk aversion lambda = equity_premium / market variance."""
     assets = list(market_weights.keys())
@@ -271,8 +332,14 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             )
             
             # 9. Save simulation to Database
+            now = datetime.utcnow()
+            sim_title = _generate_simulation_title(parsed_views, now)
+            view_attribution = _build_view_attribution(
+                assets_list, prior_returns, post_returns, parsed_views
+            )
             sim_record = Simulation(
-                created_at=datetime.utcnow(),
+                created_at=now,
+                title=sim_title,
                 user_view=request.view_text,
                 optimizer=request.optimizer,
                 posterior_returns=post_returns,
@@ -317,8 +384,11 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             # 10. Return combined response
             result_data = {
                 "simulation_id": sim_record.id,
+                "title": sim_title,
+                "optimizer": request.optimizer,
                 "market_weights": market_weights,
                 "parsed_views": parsed_views,
+                "view_attribution": view_attribution,
                 "risk_free_rate": risk_free_rate,
                 "prior_returns": prior_returns,
                 "posterior_returns": post_returns,
@@ -683,6 +753,7 @@ def list_simulations(db: Session = Depends(get_db)):
             {
                 "id": s.id,
                 "created_at": s.created_at.isoformat(),
+                "title": s.title or s.user_view[:60],
                 "user_view": s.user_view,
                 "optimizer": s.optimizer
             }
@@ -726,10 +797,16 @@ def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
         benchmark_portfolio = sim.risk_metrics.get("benchmark_portfolio", {})
         optimized_portfolio = sim.risk_metrics.get("optimized_portfolio", {})
         
+        view_attribution = _build_view_attribution(
+            list(market_weights.keys()), prior_returns, sim.posterior_returns, parsed_views
+        )
         return {
             "simulation_id": sim.id,
+            "title": sim.title or sim.user_view[:60],
+            "optimizer": sim.optimizer,
             "market_weights": market_weights,
             "parsed_views": parsed_views,
+            "view_attribution": view_attribution,
             "risk_free_rate": risk_free_rate,
             "prior_returns": prior_returns,
             "posterior_returns": sim.posterior_returns,

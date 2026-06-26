@@ -57,7 +57,7 @@ def load_persona(filename: str) -> str:
     return _persona_cache[filename]
 
 
-async def _call_llm(system_prompt: str, user_content: str, timeout: float = 90.0) -> Optional[Dict[str, Any]]:
+async def _call_llm(system_prompt: str, user_content: str, timeout: float = 600.0) -> Optional[Dict[str, Any]]:
     """Single OpenRouter JSON call using ARTICLE_DIGESTION_MODEL. Returns parsed dict or None."""
     from app.config import OPENROUTER_API_KEY as _key, OPENROUTER_API_URL as _url, ARTICLE_DIGESTION_MODEL as _model
     if not _key:
@@ -85,7 +85,7 @@ async def _call_llm(system_prompt: str, user_content: str, timeout: float = 90.0
         return None
 
 
-async def _call_reasoning_llm(system_prompt: str, user_content: str, timeout: float = 180.0) -> Optional[Dict[str, Any]]:
+async def _call_reasoning_llm(system_prompt: str, user_content: str, timeout: float = 600.0) -> Optional[Dict[str, Any]]:
     """
     OpenRouter call using REASONING_MODEL (DeepSeek R1 free).
     Strips <think>…</think> CoT blocks before JSON parsing.

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { translations, type Lang } from "./translations";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   LineChart, Line, AreaChart, Area, ReferenceLine, ScatterChart, Scatter, Cell
@@ -20,6 +21,8 @@ const ASSET_LABELS: Record<string, string> = {
   GLOBAL_BOND: "해외채권 (BNDX)",
   ALTERNATIVE: "대체투자 (VNQ)"
 };
+
+const VERSION = "v0.4.0";
 
 // Consistent color identity for the 5 NPS asset classes — used in all charts and tags.
 const ASSET_COLORS: Record<string, string> = {
@@ -51,10 +54,31 @@ interface ViewItem {
   sources?: string[];
 }
 
+interface ViewAttribution {
+  asset: string;
+  prior_return: number;
+  posterior_return: number;
+  delta_pp: number;
+  driving_views: {
+    view_type: string;
+    confidence: number;
+    thesis?: string;
+    sources?: string[];
+    expected_return?: number;
+    outperformance?: number;
+    asset?: string;
+    asset1?: string;
+    asset2?: string;
+  }[];
+}
+
 interface SimulationData {
   simulation_id: number;
+  title?: string;
+  optimizer?: string;
   market_weights: Record<string, number>;
   parsed_views: ViewItem[];
+  view_attribution?: ViewAttribution[];
   risk_free_rate: number;
   prior_returns: Record<string, number>;
   posterior_returns: Record<string, number>;
@@ -101,6 +125,7 @@ interface SimulationData {
 interface SimulationMeta {
   id: number;
   created_at: string;
+  title?: string;
   user_view: string;
   optimizer: string;
 }
@@ -133,6 +158,10 @@ interface Thesis {
 }
 
 export default function Dashboard() {
+  // Language toggle
+  const [lang, setLang] = useState<Lang>('ko');
+  const t = translations[lang];
+
   // User Inputs
   const [viewText, setViewText] = useState("해외주식이 국내주식보다 연 5% 우세할 것 같다. 그리고 금리는 하락할 것이다.");
   const [optimizer, setOptimizer] = useState("ensemble");
@@ -152,7 +181,7 @@ export default function Dashboard() {
   const [showThinking, setShowThinking] = useState<boolean>(true);
 
   // Tab & New Feature States
-  const [activeTab, setActiveTab] = useState<TabType>("SIMULATOR");
+  const [activeTab, setActiveTab] = useState<TabType>("INTELLIGENCE");
   const [intelligenceFeed, setIntelligenceFeed] = useState<Thesis[]>([]);
   const [macroData, setMacroData] = useState<any | null>(null);
   const [selectedTheses, setSelectedTheses] = useState<string[]>([]);
@@ -181,7 +210,7 @@ export default function Dashboard() {
 
   // Search, Category, and Sorting States
   const [searchQuery, setSearchQuery] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<"RESEARCH" | "NEWS" | "USER_ASSET">("RESEARCH");
+  const [sourceFilter, setSourceFilter] = useState<"RESEARCH" | "NEWS" | "USER_ASSET">("NEWS");
   const [categoryFilter, setCategoryFilter] = useState<"ALL" | "EQUITY" | "BOND" | "ALTERNATIVE" | "MACRO">("ALL");
   const [sortMode, setSortMode] = useState<"CHRONOLOGICAL" | "RANKED">("CHRONOLOGICAL");
   const [isPromoting, setIsPromoting] = useState(false);
@@ -197,6 +226,14 @@ export default function Dashboard() {
   // Promotion queue for Box 3 (batch promote)
   const [promotionQueue, setPromotionQueue] = useState<string[]>([]);
   const [batchPromoteProgress, setBatchPromoteProgress] = useState<string | null>(null);
+
+  // Auto-scroll ref for the thinking panel
+  const thinkingScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (thinkingScrollRef.current) {
+      thinkingScrollRef.current.scrollTop = thinkingScrollRef.current.scrollHeight;
+    }
+  }, [thinkingText]);
 
   // Computed global rank map based on confidence
   const globalRankMap = React.useMemo(() => {
@@ -261,9 +298,8 @@ export default function Dashboard() {
   }, [intelligenceFeed, sourceFilter, categoryFilter, searchQuery, sortMode]);
 
 
-  // Fetch initial simulation & history list
+  // Fetch initial data (no auto-run simulation)
   useEffect(() => {
-    handleRunSimulation();
     fetchSimulationsList();
     fetchIntelligenceFeed();
     fetchMacroData();
@@ -764,6 +800,17 @@ export default function Dashboard() {
     }));
   };
 
+  const getGroupedWeightsData = () => {
+    if (!data) return [];
+    return Object.keys(data.market_weights).map(asset => ({
+      name: ASSET_SHORT[asset] || asset,
+      asset,
+      benchmark: Math.round(data.market_weights[asset] * 1000) / 10,
+      optimized: Math.round(data.optimized_weights[asset] * 1000) / 10,
+      color: ASSET_COLORS[asset] || "#ffffff",
+    }));
+  };
+
   const getWeightsDeltaData = () => {
     if (!data) return [];
     return Object.keys(data.market_weights).map(asset => {
@@ -867,45 +914,45 @@ export default function Dashboard() {
       <nav className="border-b border-neutral-950 sticky top-0 bg-black/90 backdrop-blur z-50">
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="font-display text-lg tracking-[0.2em] text-white">ASSET ALLOCATION MODELING</span>
+            <span className="font-display text-lg tracking-[0.2em] text-white">{t.appTitle}</span>
           </div>
 
           <div className="flex items-center gap-6">
-            <button 
+            <button
               onClick={() => setActiveTab("SIMULATOR")}
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "SIMULATOR" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
-              PORTFOLIO SIMULATOR
+              {t.tabSimulator}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab("INTELLIGENCE")}
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "INTELLIGENCE" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
-              MARKET INTELLIGENCE
+              {t.tabIntelligence}
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab("MACRO")}
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "MACRO" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
-              MACRO DASHBOARD
+              {t.tabMacro}
             </button>
             <button
               onClick={() => setActiveTab("RESEARCH")}
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "RESEARCH" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
-              RESEARCH PIPELINE
+              {t.tabResearch}
             </button>
             <button
               onClick={() => setActiveTab("HELP")}
               className={`font-display text-[10px] tracking-widest pb-1 border-b-2 transition-colors ${activeTab === "HELP" ? "border-white text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}
             >
-              HELP
+              {t.tabHelp}
             </button>
           </div>
           <div className="flex gap-4 items-center text-xs">
             {data && data.macro_context && data.macro_context.market_regime && (
               <div className="flex gap-2 items-center text-[10px] text-neutral-400 border border-neutral-900 px-3 py-1 bg-neutral-950/50">
-                <span>MARKET REGIME:</span>
+                <span>{t.marketRegime}</span>
                 <span className={`px-2 py-0.5 font-mono text-[9px] font-bold tracking-wider ${
                   data.macro_context.market_regime === "CRISIS" ? "bg-red-950/80 text-red-400 border border-red-900/50" :
                   data.macro_context.market_regime === "ELEVATED_RISK" ? "bg-amber-950/80 text-amber-400 border border-amber-900/50" :
@@ -916,12 +963,20 @@ export default function Dashboard() {
                 </span>
               </div>
             )}
+            <span className="font-mono text-[9px] text-neutral-700 tracking-widest">{VERSION}</span>
+            {/* Language toggle */}
+            <button
+              onClick={() => setLang(l => l === 'ko' ? 'en' : 'ko')}
+              className="font-display text-[10px] tracking-widest border border-neutral-700 px-3 py-1 text-neutral-400 hover:text-white hover:border-neutral-500 transition-colors"
+            >
+              {lang === 'ko' ? 'KO' : 'EN'}
+            </button>
             <div className="flex gap-2 items-center text-[10px] text-neutral-400 border border-neutral-900 px-3 py-1">
               <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-              <span>HOST:</span>
-              <input 
-                type="text" 
-                value={apiBaseUrl} 
+              <span>{t.host}</span>
+              <input
+                type="text"
+                value={apiBaseUrl}
                 onChange={(e) => setApiBaseUrl(e.target.value)}
                 className="bg-transparent text-white font-mono outline-none w-28 text-center"
               />
@@ -938,93 +993,93 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         
         {/* Left Side Control Panel */}
-        <aside className="lg:col-span-1 flex flex-col gap-8">
-          
-          {/* Past Simulations History Sidebar */}
-          <div className="bg-[#0a0a0a] border border-neutral-900 p-6 flex flex-col gap-4">
-            <h3 className="font-display text-sm tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
-              <History className="w-4 h-4 text-white" />
-              SIMULATION HISTORY
+        <aside className="lg:col-span-1 flex flex-col gap-4">
+
+          {/* Input Panel */}
+          <div className="bg-[#0a0a0a] border border-neutral-900 p-5 flex flex-col gap-4">
+            <h3 className="font-display text-[10px] tracking-widest text-neutral-400 flex items-center gap-2">
+              <Play className="w-3.5 h-3.5 text-white" />
+              {t.pipelineTitle}
             </h3>
-            
-            <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
-              {simulationsList.length === 0 ? (
-                <p className="text-[10px] text-neutral-600 italic">기록된 시뮬레이션이 없습니다.</p>
-              ) : (
-                simulationsList.map((sim) => (
+            <textarea
+              value={viewText}
+              onChange={(e) => setViewText(e.target.value)}
+              rows={5}
+              placeholder="투자 의견을 자유롭게 입력하세요 (예: 해외주식이 국내주식보다 연 5% 우세할 것 같다)"
+              className="w-full bg-black border border-neutral-900 focus:border-neutral-700 p-3 text-xs text-neutral-300 font-sans outline-none resize-none leading-relaxed placeholder:text-neutral-700"
+            />
+            <div className="flex flex-col gap-2">
+              <select
+                value={optimizer}
+                onChange={(e) => setOptimizer(e.target.value)}
+                className="w-full bg-black border border-neutral-900 p-2 text-xs text-neutral-300 outline-none focus:border-neutral-700 font-sans"
+              >
+                <option value="ensemble">{t.optEnsembleDesc}</option>
+                <option value="risk_parity">{t.optRpDesc}</option>
+                <option value="markowitz">{t.optMvoDesc}</option>
+                <option value="hrp">{t.optHrpDesc}</option>
+                <option value="resampled">{t.optResampledDesc}</option>
+              </select>
+              <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
+                <span>δ max {t.maxDeviation}</span>
+                <span className="text-white">{(maxDeviation * 100).toFixed(0)}%</span>
+              </div>
+              <input
+                type="range" min="0.01" max="0.30" step="0.01"
+                value={maxDeviation}
+                onChange={(e) => setMaxDeviation(parseFloat(e.target.value))}
+                className="w-full accent-white bg-neutral-900 h-0.5 cursor-pointer"
+              />
+            </div>
+            <button
+              onClick={() => handleRunSimulation()}
+              disabled={isLoading || !viewText.trim()}
+              className="w-full bg-white hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed text-black font-display font-bold text-[10px] tracking-widest py-2.5 border border-white transition-all uppercase flex items-center justify-center gap-2"
+            >
+              {isLoading
+                ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> {t.stepRunning}</>
+                : <><Play className="w-3.5 h-3.5 fill-black" /> {t.executeSimulation}</>
+              }
+            </button>
+          </div>
+
+          {/* Compact Metrics — only shown after run */}
+          {data && (
+            <div className="bg-[#0a0a0a] border border-neutral-900 p-5 flex flex-col gap-2">
+              <h3 className="font-display text-[10px] tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 mb-1">{t.simulationResults}</h3>
+              {[
+                { label: t.expReturn,     value: formatPercent(data.risk_metrics.expected_return) },
+                { label: t.portfolioVol,  value: formatPercent(data.risk_metrics.volatility) },
+                { label: t.sharpeRatio,   value: metrics.sharpe.toFixed(2) },
+                { label: t.var95,         value: formatPercent(data.risk_metrics.var_95) },
+                { label: t.cvar95,        value: formatPercent(data.risk_metrics.cvar_95) },
+                { label: t.maxDrawdown,   value: formatPercent(data.risk_metrics.max_drawdown_estimate) },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex justify-between items-center text-[10px]">
+                  <span className="text-neutral-500 font-sans">{label}</span>
+                  <span className="font-mono text-white font-bold">{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Recent runs — compact */}
+          {simulationsList.length > 0 && (
+            <div className="bg-[#0a0a0a] border border-neutral-900 p-4 flex flex-col gap-2">
+              <h3 className="font-display text-[9px] tracking-widest text-neutral-600 flex items-center gap-2">
+                <History className="w-3 h-3" />
+                {t.simulationHistory}
+              </h3>
+              <div className="flex flex-col gap-1 max-h-[200px] overflow-y-auto">
+                {simulationsList.map((sim) => (
                   <button
                     key={sim.id}
                     onClick={() => handleLoadSimulation(sim.id)}
-                    className="w-full text-left bg-[#050505] hover:bg-neutral-950 border border-neutral-900 hover:border-neutral-800 p-3 transition flex flex-col gap-1 cursor-pointer"
+                    className="w-full text-left px-2 py-1.5 hover:bg-neutral-900 transition flex justify-between items-center gap-2 rounded"
                   >
-                    <div className="flex justify-between items-center text-[9px] font-mono text-neutral-500">
-                      <span>RUN #{sim.id}</span>
-                      <span>{new Date(sim.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                    <p className="text-[10px] text-neutral-300 font-sans line-clamp-2 leading-relaxed">
-                      {sim.user_view}
-                    </p>
-                    <span className="text-[8px] font-display text-neutral-600 mt-1">
-                      {sim.optimizer.toUpperCase()}
-                    </span>
+                    <span className="text-[9px] text-neutral-400 font-sans line-clamp-1 flex-1">{sim.title || sim.user_view}</span>
+                    <span className="text-[8px] font-mono text-neutral-700 flex-shrink-0">#{sim.id}</span>
                   </button>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* AI Parser Thesis Card */}
-          {data && data.parsed_views.length > 0 && (
-            <div className="bg-[#0a0a0a] border border-neutral-900 p-6 flex flex-col gap-4">
-              <h3 className="font-display text-sm tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-white" />
-                AI INTERPRETATION
-              </h3>
-              
-              <div className="flex flex-col gap-3 max-h-[300px] overflow-y-auto pr-1">
-                {data.parsed_views.map((v, i) => (
-                  <div key={i} className="border border-neutral-900 p-3 text-[10px] flex flex-col gap-2">
-                    <div className="flex justify-between items-center font-display text-[9px]">
-                      <span className="text-white border border-neutral-700 px-1 py-0.5">
-                        {v.view_type.toUpperCase()} VIEW
-                      </span>
-                      <span className="text-neutral-500 font-mono">CONF: {(v.confidence * 100).toFixed(0)}%</span>
-                    </div>
-
-                    <div className="font-semibold text-neutral-200">
-                      {v.view_type === "absolute" ? (
-                        <p>
-                          <span>{ASSET_LABELS[v.asset!] || v.asset}</span>: 
-                          <span className="text-neutral-100 ml-1">+{formatPercent(v.expected_return!)}</span>
-                        </p>
-                      ) : (
-                        <p>
-                          <span>{ASSET_LABELS[v.asset1!] || v.asset1}</span> vs <span>{ASSET_LABELS[v.asset2!] || v.asset2}</span>:
-                          <span className="text-neutral-100 font-bold ml-1">+{formatPercent(v.outperformance!)}</span>
-                        </p>
-                      )}
-                    </div>
-                    
-                    {v.thesis && (
-                      <div className="text-[10px] text-neutral-400 leading-relaxed font-sans border-t border-neutral-900 pt-1.5">
-                        <span className="font-display text-[8px] text-neutral-500 block mb-0.5">THESIS</span>
-                        {v.thesis}
-                      </div>
-                    )}
-
-                    {v.sources && v.sources.length > 0 && (
-                      <div className="border-t border-neutral-900 pt-1.5">
-                        <span className="font-display text-[8px] text-neutral-600 block mb-1">SOURCES</span>
-                        <div className="flex flex-wrap gap-1">
-                          {v.sources.map((src, si) => (
-                            <span key={si} className="font-mono text-[8px] bg-neutral-900 border border-neutral-800 px-1.5 py-0.5 text-neutral-500">
-                              {src}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 ))}
               </div>
             </div>
@@ -1039,35 +1094,38 @@ export default function Dashboard() {
             <div className="border border-red-900 bg-red-950/20 text-red-400 p-4 flex gap-3 items-start">
               <AlertCircle className="w-5 h-5 flex-shrink-0" />
               <div>
-                <h4 className="font-display text-xs tracking-wider text-white">SYSTEM ANOMALY DETECTED</h4>
+                <h4 className="font-display text-xs tracking-wider text-white">{t.systemAnomaly}</h4>
                 <p className="text-xs text-neutral-400 mt-1 font-sans leading-relaxed">{error}</p>
               </div>
             </div>
           )}
 
+          {/* Empty state — no simulation run yet */}
+          {!data && !error && !isLoading && (
+            <div className="border border-neutral-900 bg-[#0a0a0a] p-12 flex flex-col items-center justify-center gap-4 min-h-[400px] text-center">
+              <BarChart3 className="w-8 h-8 text-neutral-800" />
+              <h3 className="font-display text-sm tracking-widest text-neutral-600">{t.simulationResults}</h3>
+              <p className="text-[11px] text-neutral-700 font-sans max-w-sm leading-relaxed">
+                좌측 패널에 투자 의견을 입력하고 시뮬레이션을 실행하거나, 마켓 인텔리전스 탭에서 소스를 선택하세요.
+              </p>
+            </div>
+          )}
+
           {/* Loading Stepper */}
-          {!data && !error && (
+          {!data && !error && isLoading && (
             <div className="border border-neutral-900 bg-[#0a0a0a] p-8 flex flex-col gap-6 min-h-[500px] justify-center items-center">
               <div className="text-center flex flex-col items-center gap-2 max-w-md mb-4">
                 <RefreshCw className="w-8 h-8 text-neutral-600 animate-spin mb-2" />
-                <h3 className="font-display text-sm tracking-wider text-neutral-300">PORTFOLIO SIMULATION PIPELINE</h3>
+                <h3 className="font-display text-sm tracking-wider text-neutral-300">{t.pipelineTitle}</h3>
                 <p className="text-xs text-neutral-500 leading-relaxed font-sans">
-                  FastAPI 백엔드에서 실시간 베이지안 업데이트 연산 및 10,000회 몬테카를로 경로 시뮬레이션을 진행하고 있습니다.
+                  {t.pipelineDesc}
                 </p>
               </div>
 
               {/* Progress Stepper List */}
               <div className="w-full max-w-lg bg-[#050505] border border-neutral-900 p-6 flex flex-col gap-4">
-                {[
-                  { id: 1, label: "MARKET PORTFOLIO RETRIEVAL", desc: "국민연금 공시 비중 및 2026 자산배분 목표치 로드" },
-                  { id: 2, label: "ETF HISTORICAL FEED & TREASURY CRAWL", desc: "대표 ETF 시세 데이터 수집 및 10년물 국채 금리 연계" },
-                  { id: 3, label: "DEEPSEEK R1 REASONING (FREE)", desc: "자연어 투자 의견을 추론 모델로 분석 · BL 뷰 벡터 수치화 (최대 2분)" },
-                  { id: 4, label: "BAYESIAN BLACK-LITTERMAN COMBINATION", desc: "Prior와 View의 확률 결합을 통해 사후 기대수익률 분포 추정" },
-                  { id: 5, label: "CONSTRAINED MULTI-ASSET OPTIMIZATION", desc: "설정 제약조건 범위(δ) 내에서 최적의 가중치 행렬 도출" },
-                  { id: 6, label: "10,000-TRIAL MONTE CARLO STRESS TEST", desc: "Student-t 분포(Fat Tail) 기반 몬테카를로 경로 시뮬레이션" },
-                  { id: 7, label: "HISTORICAL CRISIS SCENARIO SHOCK TEST", desc: "역사적 금융 위기 시나리오(GFC, 코로나19 등) 스트레스 테스트 수행" },
-                  { id: 8, label: "REAL-TIME MACRO & AI INVESTMENT REPORTING", desc: "실시간 매크로 지표 분석 및 AI 포트폴리오 코멘터리 생성" }
-                ].map((step) => {
+                {t.steps.map((stepDef, idx) => {
+                  const step = { id: idx + 1, label: stepDef.label, desc: stepDef.desc };
                   const isCompleted = loadingStep > step.id;
                   const isActive = loadingStep === step.id;
 
@@ -1088,7 +1146,7 @@ export default function Dashboard() {
                             {step.label}
                           </span>
                           {isActive && (
-                            <span className="text-neutral-500 font-mono text-[9px] animate-pulse">RUNNING</span>
+                            <span className="text-neutral-500 font-mono text-[9px] animate-pulse">{t.stepRunning}</span>
                           )}
                         </div>
                         <span className={`text-[10px] font-sans ${isCompleted ? "text-neutral-500" : isActive ? "text-neutral-300" : "text-neutral-800"}`}>
@@ -1100,25 +1158,38 @@ export default function Dashboard() {
                 })}
               </div>
 
-              {/* DeepSeek R1 Live Thinking Panel */}
+              {/* Nemotron 3 Ultra — Live Reasoning Trace */}
               {thinkingText && (
-                <div className="w-full max-w-lg mt-2 border border-neutral-800 bg-[#050505]">
-                  <button
-                    onClick={() => setShowThinking(p => !p)}
-                    className="w-full flex items-center justify-between px-4 py-2 text-[9px] font-display tracking-widest text-neutral-500 hover:text-neutral-300 transition-colors"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                      DEEPSEEK R1 · AI REASONING TRACE
-                    </span>
-                    <span>{showThinking ? "▲ COLLAPSE" : "▼ EXPAND"}</span>
-                  </button>
+                <div className="w-full max-w-lg mt-2 border border-neutral-800/60 bg-[#050505] overflow-hidden">
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-900">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-60" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500" />
+                      </span>
+                      <span className="font-display text-[9px] tracking-[0.2em] text-neutral-500">NEMOTRON 3 ULTRA · 추론 중</span>
+                    </div>
+                    <button
+                      onClick={() => setShowThinking(p => !p)}
+                      className="text-[9px] font-mono text-neutral-700 hover:text-neutral-400 transition-colors px-1"
+                    >
+                      {showThinking ? "−" : "+"}
+                    </button>
+                  </div>
+                  {/* Thinking body */}
                   {showThinking && (
-                    <div className="px-4 pb-4">
-                      <div className="font-mono text-[10px] text-neutral-500 leading-relaxed whitespace-pre-wrap max-h-52 overflow-y-auto border-t border-neutral-900 pt-2">
+                    <div className="relative">
+                      {/* Fade at top */}
+                      <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-[#050505] to-transparent z-10 pointer-events-none" />
+                      <div
+                        ref={thinkingScrollRef}
+                        className="px-4 py-3 font-mono text-[10px] text-neutral-600 leading-relaxed whitespace-pre-wrap h-40 overflow-y-auto"
+                        style={{ scrollbarWidth: "none" }}
+                      >
                         {thinkingText}
                         {loadingStep === 3 && (
-                          <span className="inline-block w-1.5 h-3 bg-amber-400 animate-pulse ml-0.5 align-middle" />
+                          <span className="inline-block w-1 h-3.5 bg-violet-400 animate-pulse ml-0.5 align-middle opacity-80" />
                         )}
                       </div>
                     </div>
@@ -1132,22 +1203,26 @@ export default function Dashboard() {
           {data && (
             <>
               {/* Simulation Header with PDF Export Button */}
-              <div className="flex items-center justify-between border-b border-neutral-900 pb-4 mb-4">
-                <div>
-                  <h3 className="font-display text-sm tracking-widest text-white flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-neutral-400" />
-                    SIMULATION RUN RESULTS (RUN #{data.simulation_id})
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-5 flex items-start justify-between gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 text-[9px] font-mono text-neutral-600">
+                    <span>RUN #{data.simulation_id}</span>
+                    <span>·</span>
+                    <span className="uppercase">{data.optimizer || "ensemble"}</span>
+                  </div>
+                  <h3 className="font-display text-base tracking-wide text-white leading-snug">
+                    {data.title || `${t.simulationResults} #${data.simulation_id}`}
                   </h3>
-                  <p className="text-[10px] text-neutral-500 font-sans mt-0.5">
-                    Expected metrics, risk statistics, and optimized asset allocations.
+                  <p className="text-[10px] text-neutral-500 font-sans">
+                    {t.simulationSubtitle}
                   </p>
                 </div>
                 <button
                   onClick={handleExportPDF}
-                  className="bg-white hover:bg-neutral-200 text-black font-display font-bold text-[10px] tracking-widest px-4 py-2 border border-white transition-all uppercase flex items-center gap-1.5 rounded-sm cursor-pointer"
+                  className="flex-shrink-0 bg-white hover:bg-neutral-200 text-black font-display font-bold text-[10px] tracking-widest px-4 py-2 border border-white transition-all uppercase flex items-center gap-1.5 rounded-sm cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  EXPORT REPORT (PDF)
+                  {t.exportPdf}
                 </button>
               </div>
 
@@ -1155,42 +1230,42 @@ export default function Dashboard() {
               <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">EXP RETURN</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.expReturn}</span>
                   <span className="text-xl font-display text-white">
                     {formatPercent(data.risk_metrics.expected_return)}
                   </span>
                 </div>
 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">PORTFOLIO VOL</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.portfolioVol}</span>
                   <span className="text-xl font-display text-white">
                     {formatPercent(data.risk_metrics.volatility)}
                   </span>
                 </div>
 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">SHARPE RATIO</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.sharpeRatio}</span>
                   <span className="text-xl font-display text-white">
                     {metrics.sharpe.toFixed(2)}
                   </span>
                 </div>
 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">95% VAR (1Y)</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.var95}</span>
                   <span className="text-xl font-display text-white">
                     {formatPercent(data.risk_metrics.var_95)}
                   </span>
                 </div>
 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">95% CVAR (1Y)</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.cvar95}</span>
                   <span className="text-xl font-display text-white">
                     {formatPercent(data.risk_metrics.cvar_95)}
                   </span>
                 </div>
 
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-1 text-center justify-center">
-                  <span className="text-[9px] font-display tracking-widest text-neutral-500">MAX DRAWDOWN</span>
+                  <span className="text-[9px] font-display tracking-widest text-neutral-500">{t.maxDrawdown}</span>
                   <span className="text-xl font-display text-white">
                     {formatPercent(data.risk_metrics.max_drawdown_estimate)}
                   </span>
@@ -1202,12 +1277,12 @@ export default function Dashboard() {
               <div className="border border-neutral-900 bg-[#050505] p-4">
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-neutral-900">
                   {[
-                    { label: "EXP RETURN", value: formatPercent(data.risk_metrics.expected_return), desc: "연간 기대수익률" },
-                    { label: "VOLATILITY", value: formatPercent(data.risk_metrics.volatility), desc: "연간 수익률 표준편차" },
-                    { label: "SHARPE", value: metrics.sharpe.toFixed(2), desc: "단위 리스크당 초과수익" },
-                    { label: "95% VaR", value: formatPercent(data.risk_metrics.var_95), desc: "95% 신뢰구간 최대손실" },
-                    { label: "95% CVaR", value: formatPercent(data.risk_metrics.cvar_95), desc: "극단손실 시나리오 평균" },
-                    { label: "MAX DD", value: formatPercent(data.risk_metrics.max_drawdown_estimate), desc: "고점 대비 최대 낙폭 추정" },
+                    { label: t.expReturn, value: formatPercent(data.risk_metrics.expected_return), desc: t.metricDescExpReturn },
+                    { label: t.portfolioVol, value: formatPercent(data.risk_metrics.volatility), desc: t.metricDescVol },
+                    { label: t.sharpeRatio, value: metrics.sharpe.toFixed(2), desc: t.metricDescSharpe },
+                    { label: t.var95, value: formatPercent(data.risk_metrics.var_95), desc: t.metricDescVar },
+                    { label: t.cvar95, value: formatPercent(data.risk_metrics.cvar_95), desc: t.metricDescCvar },
+                    { label: t.maxDrawdown, value: formatPercent(data.risk_metrics.max_drawdown_estimate), desc: t.metricDescMaxDd },
                   ].map(({ label, value, desc }) => (
                     <div key={label} className="bg-[#050505] p-3 flex flex-col gap-1">
                       <span className="font-display text-[9px] tracking-wider text-neutral-500 uppercase">{label}</span>
@@ -1218,11 +1293,104 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* BL View Attribution — compact table */}
+              {data.view_attribution && data.view_attribution.length > 0 && (
+                <div className="border border-neutral-900 bg-[#0a0a0a] p-5 flex flex-col gap-3">
+                  <h3 className="font-display text-[10px] tracking-widest text-neutral-400 flex items-center gap-2">
+                    <Cpu className="w-3.5 h-3.5 text-white" />
+                    {t.blAttributionTitle}
+                  </h3>
+                  <table className="w-full text-[10px] font-mono">
+                    <thead>
+                      <tr className="border-b border-neutral-900 text-neutral-600">
+                        <th className="text-left pb-2 font-display text-[9px] tracking-wider">자산</th>
+                        <th className="text-right pb-2 font-display text-[9px] tracking-wider">Prior</th>
+                        <th className="text-right pb-2 font-display text-[9px] tracking-wider">Post</th>
+                        <th className="text-right pb-2 font-display text-[9px] tracking-wider">Δ</th>
+                        <th className="text-left pb-2 font-display text-[9px] tracking-wider pl-3">뷰 근거</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-950">
+                      {data.view_attribution.map((row) => (
+                        <tr key={row.asset} className="hover:bg-neutral-950/40 transition-colors">
+                          <td className="py-2 pr-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: ASSET_COLORS[row.asset] || "#525252" }} />
+                              <span className="text-neutral-300">{ASSET_SHORT[row.asset] || row.asset}</span>
+                            </div>
+                          </td>
+                          <td className="py-2 text-right text-neutral-600">{row.prior_return.toFixed(1)}%</td>
+                          <td className="py-2 text-right text-white font-bold">{row.posterior_return.toFixed(1)}%</td>
+                          <td className={`py-2 text-right font-bold ${row.delta_pp > 0 ? "text-emerald-400" : row.delta_pp < 0 ? "text-red-400" : "text-neutral-600"}`}>
+                            {row.delta_pp > 0 ? "+" : ""}{row.delta_pp.toFixed(1)}
+                          </td>
+                          <td className="py-2 pl-3">
+                            {row.driving_views.length > 0 ? (
+                              <div className="flex flex-col gap-0.5">
+                                {row.driving_views.map((v, vi) => (
+                                  <div key={vi} className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[8px] font-display border border-neutral-800 px-1 text-neutral-600">
+                                      {v.view_type === "absolute" ? "ABS" : "REL"}
+                                    </span>
+                                    <span className="text-neutral-500">{(v.confidence * 100).toFixed(0)}%</span>
+                                    {v.thesis && (
+                                      <span className="text-neutral-500 text-[9px] font-sans line-clamp-1 max-w-[200px]">{v.thesis.slice(0, 60)}{v.thesis.length > 60 ? "…" : ""}</span>
+                                    )}
+                                    {v.sources && v.sources.slice(0, 2).map((src, si) => (
+                                      <span key={si} className="text-[8px] bg-neutral-900 px-1 text-neutral-600">{src}</span>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-neutral-700 italic text-[9px] font-sans">균형 유지</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Grouped Allocation Chart */}
+              <div className="border border-neutral-900 bg-[#0a0a0a] p-6 flex flex-col gap-4">
+                <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
+                  <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-white" />
+                    {t.chartGroupedAllocation}
+                  </h3>
+                  <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
+                </div>
+                <div className="h-72 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={getGroupedWeightsData()} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
+                      <XAxis dataKey="name" stroke="#525252" fontSize={9} tickLine={false} />
+                      <YAxis stroke="#525252" fontSize={9} tickLine={false} tickFormatter={(v: number) => `${v}%`} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: "#000000", border: "1px solid #262626", borderRadius: "0px" }}
+                        itemStyle={{ fontSize: "10px", color: "#ffffff" }}
+                        labelStyle={{ fontSize: "11px", fontWeight: "bold", color: "#ffffff" }}
+                        formatter={(value) => { const v = Number(value); return [`${v.toFixed(1)}%`]; }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }} />
+                      <Bar dataKey="benchmark" name={t.legendBenchmarkShort} fill="#404040" opacity={0.8} />
+                      <Bar dataKey="optimized" name={t.legendOptimizedShort}>
+                        {getGroupedWeightsData().map((entry, index) => (
+                          <Cell key={index} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
               {/* Min Variance Fallback Warning */}
               {data.min_variance_fallback && (
                 <div className="border border-amber-800 bg-amber-950/20 text-amber-400 p-3 flex items-start gap-2 text-[10px] font-sans">
-                  <span className="font-display text-[9px] tracking-wider shrink-0 mt-0.5">⚠ MIN-VARIANCE FALLBACK</span>
-                  <span className="text-amber-300/80 leading-relaxed">모든 사후 기대수익률이 무위험금리를 하회하여 Markowitz 대신 최소분산(Min-Variance) 최적화로 전환되었습니다. 투자 의견을 조정하거나 다른 최적화 전략을 선택하세요.</span>
+                  <span className="font-display text-[9px] tracking-wider shrink-0 mt-0.5">{t.minVarianceFallback}</span>
+                  <span className="text-amber-300/80 leading-relaxed">{t.minVarianceFallbackDesc}</span>
                 </div>
               )}
 
@@ -1233,14 +1401,14 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <Cpu className="w-4 h-4 text-white" />
-                      AI PORTFOLIO ANALYSIS & INVESTMENT COMMENTARY
+                      {t.aiCommentaryTitle}
                     </h3>
                   </div>
-                  <div className="text-xs text-neutral-300 font-sans leading-relaxed whitespace-pre-line max-h-[220px] overflow-y-auto pr-2">
+                  <div className="text-xs text-neutral-300 font-sans leading-relaxed whitespace-pre-line">
                     {data.ai_commentary ? (
                       data.ai_commentary
                     ) : (
-                      <p className="text-neutral-500 italic">생성된 AI 분석 리포트가 없습니다.</p>
+                      <p className="text-neutral-500 italic">{t.noAiCommentary}</p>
                     )}
                   </div>
                 </div>
@@ -1250,39 +1418,37 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <TrendingUp className="w-4 h-4 text-white" />
-                      REAL-TIME MACRO INDICATORS
+                      {t.macroIndicatorsTitle}
                     </h3>
                   </div>
-                  <div className="flex flex-col gap-2.5 font-mono text-[10px] text-neutral-400">
+                  <div className="flex flex-col gap-2 font-mono text-[10px] text-neutral-400">
                     {data.macro_context ? (
-                      <>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>CBOE VIX (Fear Index)</span>
-                          <span className="text-white font-bold">{data.macro_context.vix ?? "N/A"} ({data.macro_context.vix_5d_change > 0 ? "+" : ""}{(data.macro_context.vix_5d_change ?? 0).toFixed(1)}%)</span>
-                        </div>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>US 10Y Treasury Yield</span>
-                          <span className="text-white font-bold">{data.macro_context.us_10y_yield ?? "N/A"}%</span>
-                        </div>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>S&P 500 (1M / 6M)</span>
-                          <span className="text-white font-bold">{(data.macro_context.sp500_1m_return ?? 0).toFixed(1)}% / {(data.macro_context.sp500_6m_return ?? 0).toFixed(1)}%</span>
-                        </div>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>KOSPI (Level / 1M)</span>
-                          <span className="text-white font-bold">{data.macro_context.kospi_level ?? "N/A"} ({(data.macro_context.kospi_1m_return ?? 0).toFixed(1)}%)</span>
-                        </div>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>US Dollar Index (DXY)</span>
-                          <span className="text-white font-bold">{data.macro_context.dxy_index ?? "N/A"}</span>
-                        </div>
-                        <div className="flex justify-between border-b border-neutral-950 pb-1">
-                          <span>USD/KRW Rate</span>
-                          <span className="text-white font-bold">{data.macro_context.usd_krw ?? "N/A"} 원</span>
-                        </div>
-                      </>
+                      (() => {
+                        const mc = data.macro_context;
+                        const rows: { label: string; value: string; show: boolean }[] = [
+                          { label: "CBOE VIX", value: mc.vix != null ? `${mc.vix}${mc.vix_5d_change != null ? ` (${mc.vix_5d_change > 0 ? "+" : ""}${Number(mc.vix_5d_change).toFixed(1)}%)` : ""}` : "", show: mc.vix != null },
+                          { label: "US 10Y Yield", value: mc.us_10y_yield != null ? `${mc.us_10y_yield}%` : "", show: mc.us_10y_yield != null },
+                          { label: "S&P 500 (1M/6M)", value: `${Number(mc.sp500_1m_return ?? 0).toFixed(1)}% / ${Number(mc.sp500_6m_return ?? 0).toFixed(1)}%`, show: mc.sp500_1m_return != null },
+                          { label: "KOSPI", value: mc.kospi_level != null ? `${mc.kospi_level} (${Number(mc.kospi_1m_return ?? 0).toFixed(1)}%)` : "", show: mc.kospi_level != null },
+                          { label: "DXY", value: mc.dxy_index != null ? String(mc.dxy_index) : "", show: mc.dxy_index != null },
+                          { label: "USD/KRW", value: mc.usd_krw != null ? `${mc.usd_krw}원` : "", show: mc.usd_krw != null },
+                        ];
+                        const visible = rows.filter(r => r.show);
+                        return visible.length > 0 ? (
+                          <>
+                            {visible.map(r => (
+                              <div key={r.label} className="flex justify-between border-b border-neutral-950 pb-1 last:border-0">
+                                <span>{r.label}</span>
+                                <span className="text-white font-bold">{r.value}</span>
+                              </div>
+                            ))}
+                          </>
+                        ) : (
+                          <p className="text-neutral-600 italic text-[9px]">{t.noMacroData}</p>
+                        );
+                      })()
                     ) : (
-                      <p className="text-neutral-500 italic">수집된 거시 경제 데이터가 없습니다.</p>
+                      <p className="text-neutral-500 italic">{t.noMacroData}</p>
                     )}
                   </div>
                 </div>
@@ -1293,15 +1459,15 @@ export default function Dashboard() {
                 <div className="border border-neutral-900 bg-[#0a0a0a] p-6 flex flex-col gap-3">
                   <h3 className="font-display text-xs tracking-wider text-neutral-400 border-b border-neutral-900 pb-3 flex items-center gap-2">
                     <MessageSquare className="w-4 h-4 text-white" />
-                    PM INTERNAL MEMO
-                    <span className="ml-auto text-[9px] font-mono text-neutral-600">CONFIDENTIAL · INTERNAL USE ONLY</span>
+                    {t.pmMemoTitle}
+                    <span className="ml-auto text-[9px] font-mono text-neutral-600">{t.pmMemoConfidential}</span>
                   </h3>
-                  <div className="text-xs text-neutral-300 font-sans leading-relaxed whitespace-pre-line max-h-[220px] overflow-y-auto pr-2">
+                  <div className="text-xs text-neutral-300 font-sans leading-relaxed whitespace-pre-line">
                     {typeof data.pm_memo === "object" ? (
                       <div className="flex flex-col gap-4 font-sans text-xs">
                         {data.pm_memo.macro_regime_sentiment && (
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold">Regime Bias:</span>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold">{t.pmRegimeBias}</span>
                             <span className={`px-2 py-0.5 text-[9px] font-mono font-bold border ${
                               data.pm_memo.macro_regime_sentiment === "RISK-OFF" ? "border-red-900 bg-red-950/20 text-red-400" :
                               data.pm_memo.macro_regime_sentiment === "RISK-ON" ? "border-emerald-900 bg-emerald-950/20 text-emerald-400" :
@@ -1313,25 +1479,25 @@ export default function Dashboard() {
                         )}
                         {data.pm_memo.investment_thesis_summary && (
                           <div>
-                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Investment Thesis Summary:</span>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">{t.pmThesisSummary}</span>
                             <p className="text-white leading-relaxed">{data.pm_memo.investment_thesis_summary}</p>
                           </div>
                         )}
                         {data.pm_memo.strategic_positioning_advice && (
                           <div>
-                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Strategic Positioning Advice:</span>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">{t.pmPositioningAdvice}</span>
                             <p className="text-neutral-200 leading-relaxed">{data.pm_memo.strategic_positioning_advice}</p>
                           </div>
                         )}
                         {data.pm_memo.adjusted_views_rationale && (
                           <div>
-                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Calibration Rationale:</span>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">{t.pmCalibrationRationale}</span>
                             <p className="text-neutral-300 leading-relaxed">{data.pm_memo.adjusted_views_rationale}</p>
                           </div>
                         )}
                         {Array.isArray(data.pm_memo.key_risks_considered) && data.pm_memo.key_risks_considered.length > 0 && (
                           <div>
-                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">Key Risks Considered:</span>
+                            <span className="text-[10px] font-display text-neutral-500 uppercase tracking-wider font-bold block mb-1">{t.pmKeyRisks}</span>
                             <ul className="list-disc pl-4 flex flex-col gap-1 text-neutral-400">
                               {data.pm_memo.key_risks_considered.map((risk: string, rIdx: number) => (
                                 <li key={rIdx}>{risk}</li>
@@ -1355,9 +1521,9 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <BarChart3 className="w-4 h-4 text-white" />
-                      BL WEIGHT DEVIATION FROM MARKET
+                      {t.chartWeightDeviation}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
                   </div>
                   <div className="h-72 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1370,9 +1536,9 @@ export default function Dashboard() {
                           contentStyle={{ backgroundColor: "#000000", border: "1px solid #262626", borderRadius: "0px" }}
                           itemStyle={{ fontSize: "10px", color: "#ffffff" }}
                           labelStyle={{ fontSize: "11px", fontWeight: "bold", color: "#ffffff" }}
-                          formatter={(value) => { const v = Number(value); return [`${v > 0 ? "+" : ""}${v}%`, "BL 편차"]; }}
+                          formatter={(value) => { const v = Number(value); return [`${v > 0 ? "+" : ""}${v}%`, t.legendBLDelta]; }}
                         />
-                        <Bar dataKey="delta" name="BL 편차 (pp)">
+                        <Bar dataKey="delta" name={t.legendBLDelta}>
                           {getWeightsDeltaData().map((entry, index) => (
                             <Cell key={index} fill={entry.color} />
                           ))}
@@ -1387,9 +1553,9 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <TrendingUp className="w-4 h-4 text-white" />
-                      EXPECTED RETURNS (PRIOR VS POSTERIOR)
+                      {t.chartExpReturns}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
                   </div>
                   <div className="h-72 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1403,8 +1569,8 @@ export default function Dashboard() {
                           labelStyle={{ fontSize: "11px", fontWeight: "bold", color: "#ffffff" }}
                         />
                         <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }} />
-                        <Bar dataKey="Prior" name="시장 균형수익률 (Prior)" fill="#262626" opacity={0.7} />
-                        <Bar dataKey="Posterior" name="BL 기대수익률 (Posterior)">
+                        <Bar dataKey="Prior" name={t.legendPrior} fill="#262626" opacity={0.7} />
+                        <Bar dataKey="Posterior" name={t.legendPosterior}>
                           {getReturnsData().map((entry, index) => (
                             <Cell key={index} fill={entry.color} />
                           ))}
@@ -1424,9 +1590,9 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <TrendingUp className="w-4 h-4 text-white" />
-                      EFFICIENT FRONTIER CURVE
+                      {t.chartEfficientFrontier}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
                   </div>
                   <div className="h-72 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1445,8 +1611,8 @@ export default function Dashboard() {
                                   <p className="font-display text-[9px] tracking-wider text-neutral-400 border-b border-neutral-800 pb-1 mb-1">
                                     {pt.name || "PORTFOLIO POINT"}
                                   </p>
-                                  <p>기대수익률: {pt.return.toFixed(2)}%</p>
-                                  <p>변동성: {pt.volatility.toFixed(2)}%</p>
+                                  <p>{t.efExpReturn}: {pt.return.toFixed(2)}%</p>
+                                  <p>{t.efVolatility}: {pt.volatility.toFixed(2)}%</p>
                                   <p>Sharpe Ratio: {pt.sharpe.toFixed(2)}</p>
                                 </div>
                               );
@@ -1466,21 +1632,21 @@ export default function Dashboard() {
                         
                         {/* Benchmark Dot */}
                         {getBenchmarkDot() && (
-                          <Scatter 
-                            name="국민연금 Benchmark" 
-                            data={[getBenchmarkDot()]} 
-                            fill="#8a8a8f" 
-                            shape="circle" 
+                          <Scatter
+                            name={t.legendBenchmark}
+                            data={[getBenchmarkDot()]}
+                            fill="#8a8a8f"
+                            shape="circle"
                           />
                         )}
                         
                         {/* Optimal Portfolio Dot */}
                         {getOptimizedDot() && (
-                          <Scatter 
-                            name="최적화 포트폴리오" 
-                            data={[getOptimizedDot()]} 
-                            fill="#ffffff" 
-                            shape="triangle" 
+                          <Scatter
+                            name={t.legendOptimized}
+                            data={[getOptimizedDot()]}
+                            fill="#ffffff"
+                            shape="triangle"
                           />
                         )}
                         <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "10px" }} />
@@ -1494,9 +1660,9 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <LineIcon className="w-4 h-4 text-white" />
-                      MONTE CARLO DRIFT PATHS (15 SAMPLES)
+                      {t.chartMonteCarlo}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
                   </div>
                   <div className="h-72 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1534,9 +1700,9 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <ShieldAlert className="w-4 h-4 text-white" />
-                      CUMULATIVE RETURN PROBABILITY DENSITY & 95% VAR
+                      {t.chartReturnDist}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">UNIT: %</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartUnitPct}</span>
                   </div>
                   <div className="h-60 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1567,19 +1733,19 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center border-b border-neutral-900 pb-3">
                     <h3 className="font-display text-xs tracking-wider text-neutral-400 flex items-center gap-2">
                       <History className="w-4 h-4 text-white" />
-                      HISTORICAL CRISIS SCENARIO STRESS TEST
+                      {t.chartStressTest}
                     </h3>
-                    <span className="text-[9px] text-neutral-600 font-mono">PORTFOLIO IMPACT</span>
+                    <span className="text-[9px] text-neutral-600 font-mono">{t.chartImpact}</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left font-mono text-[9px] text-neutral-400">
                       <thead>
                         <tr className="border-b border-neutral-900 text-neutral-500">
-                          <th className="pb-2 font-display text-[9px] tracking-wider">CRISIS SCENARIO</th>
-                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">IMPACT</th>
-                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">KR STOCK</th>
-                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">GLOBAL STOCK</th>
-                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">ALTERNATIVE</th>
+                          <th className="pb-2 font-display text-[9px] tracking-wider">{t.stressCrisisScenario}</th>
+                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">{t.stressImpact}</th>
+                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">{t.stressKrStock}</th>
+                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">{t.stressGlobalStock}</th>
+                          <th className="pb-2 text-right font-display text-[9px] tracking-wider">{t.stressAlt}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-neutral-950">
@@ -1606,7 +1772,7 @@ export default function Dashboard() {
                         ) : (
                           <tr>
                             <td colSpan={5} className="py-4 text-center italic text-neutral-600">
-                              No historical stress test results found.
+                              {t.stressNoData}
                             </td>
                           </tr>
                         )}
@@ -1621,17 +1787,17 @@ export default function Dashboard() {
               <div className="border border-neutral-900 bg-[#0a0a0a] p-6 flex flex-col md:flex-row gap-4 items-center justify-between text-[10px] text-neutral-500 font-mono">
                 <div className="flex gap-2 items-center">
                   <Info className="text-white flex-shrink-0 w-3.5 h-3.5" />
-                  <p>국민연금 가중치 모델 매핑 자산: 
-                    <span className="text-neutral-300 ml-1">국내주식(EWY), 해외주식(VT), 국내채권(136340.KS), 해외채권(BNDX), 대체투자(VNQ)</span>.
+                  <p>{t.assetMappingLabel}
+                    <span className="text-neutral-300 ml-1">{t.assetMappingValues}</span>.
                   </p>
                 </div>
                 <div>
                   <p>
-                    위험회피도 (Lambda): <span className="text-white">{(data.risk_aversion ?? 2.5).toFixed(4)}</span>
-                    {data.risk_aversion === undefined || data.risk_aversion === null ? " (기본값)" : " (동적추정)"} | 
-                    척도 (Tau): <span className="text-white">{(data.tau ?? 0.05).toFixed(6)}</span>
-                    {data.tau === undefined || data.tau === null ? " (기본값)" : " (베이지안)"} | 
-                    무위험수익률: <span className="text-white">{(data.risk_free_rate * 100).toFixed(2)}%</span> (^TNX 10Y Treasury)
+                    {t.lambdaLabel} <span className="text-white">{(data.risk_aversion ?? 2.5).toFixed(4)}</span>
+                    {data.risk_aversion === undefined || data.risk_aversion === null ? ` ${t.lambdaDefault}` : ` ${t.lambdaDynamic}`} |
+                    {t.tauLabel} <span className="text-white">{(data.tau ?? 0.05).toFixed(6)}</span>
+                    {data.tau === undefined || data.tau === null ? ` ${t.tauDefault}` : ` ${t.tauBayesian}`} |
+                    {t.rfLabel} <span className="text-white">{(data.risk_free_rate * 100).toFixed(2)}%</span> (^TNX 10Y Treasury)
                   </p>
                 </div>
               </div>
@@ -1649,10 +1815,10 @@ export default function Dashboard() {
               <div>
                 <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
                   <Globe className="w-5 h-5 text-neutral-400" />
-                  REAL-TIME MARKET INTELLIGENCE
+                  {t.intelTitle}
                 </h2>
                 <p className="text-xs text-neutral-500 font-sans mt-1">
-                  Curated investment theses from market professionals with AI interpretations.
+                  {t.intelSubtitle}
                 </p>
               </div>
               <div className="flex gap-4">
@@ -1662,15 +1828,15 @@ export default function Dashboard() {
                   className="button-ghost-dark flex items-center gap-2"
                 >
                   <RefreshCw className={`w-4 h-4 ${isRefreshingIntel ? "animate-spin" : ""}`} />
-                  REFRESH FEED
+                  {t.refreshFeed}
                 </button>
-                <button 
+                <button
                   onClick={() => setShowRunConfirmModal(true)}
                   disabled={selectedTheses.length === 0}
                   className="button-ghost-dark flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border-white text-white"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  APPLY TO SIMULATOR ({selectedTheses.length})
+                  {t.applyToSimulator} ({selectedTheses.length})
                 </button>
               </div>
             </div>
@@ -1692,9 +1858,9 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* 3-Tier Source Tabs */}
+            {/* 3-Tier Source Tabs: News → Research → Asset */}
             <div className="flex gap-2 border-b border-neutral-900 pb-1">
-              {(["RESEARCH", "NEWS", "USER_ASSET"] as const).map((src) => (
+              {(["NEWS", "RESEARCH", "USER_ASSET"] as const).map((src) => (
                 <button
                   key={src}
                   onClick={() => {
@@ -1707,7 +1873,7 @@ export default function Dashboard() {
                       : "bg-transparent text-neutral-500 border-neutral-950 hover:border-neutral-800"
                   }`}
                 >
-                  {src === "RESEARCH" ? "1. Research" : src === "NEWS" ? "2. News Article" : "3. User Asset (Link/PDF)"}
+                  {src === "NEWS" ? t.srcNews : src === "RESEARCH" ? t.srcResearch : t.srcUserAsset}
                 </button>
               ))}
             </div>
@@ -1717,15 +1883,15 @@ export default function Dashboard() {
               <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
                 <label className="text-[10px] font-display tracking-widest text-neutral-400 flex items-center gap-2 font-bold">
                   <Newspaper className="w-3.5 h-3.5 text-white" />
-                  ADD USER RESEARCH ASSETS (LINK OR PDF UPLOAD)
+                  {t.addUserAssets}
                   <span className="text-neutral-600 normal-case font-sans tracking-normal">
-                    — 링크 입력 또는 PDF 업로드 시 AI가 본문을 판독해 보고서 피드에 추가합니다.
+                    {t.addUserAssetsHint}
                   </span>
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="url"
-                    placeholder="https://example.com/market-article"
+                    placeholder={t.urlPlaceholder}
                     value={articleUrl}
                     onChange={(e) => setArticleUrl(e.target.value)}
                     disabled={isIngesting}
@@ -1738,14 +1904,14 @@ export default function Dashboard() {
                     className="button-ghost-dark flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isIngesting
-                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> ANALYZING…</>
-                      : <><Play className="w-4 h-4" /> ANALYZE LINK</>}
+                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> {t.analyzing}</>
+                      : <><Play className="w-4 h-4" /> {t.analyzeLink}</>}
                   </button>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <label className={`button-ghost-dark flex items-center gap-2 cursor-pointer whitespace-nowrap ${isIngesting ? "opacity-50 pointer-events-none" : ""}`}>
-                    <Newspaper className="w-3.5 h-3.5" /> UPLOAD PDF REPORT
+                    <Newspaper className="w-3.5 h-3.5" /> {t.uploadPdf}
                     <input
                       type="file"
                       accept="application/pdf,.pdf"
@@ -1754,13 +1920,13 @@ export default function Dashboard() {
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleIngestPdf(f); e.currentTarget.value = ""; }}
                     />
                   </label>
-                  <span className="text-[9px] text-neutral-600 font-sans">리서치 리포트·정책 문서 PDF를 업로드하면 AI가 본문을 읽고 분석합니다.</span>
+                  <span className="text-[9px] text-neutral-600 font-sans">{t.pdfHint}</span>
                 </div>
 
                 {ingestNeedsContent && (
                   <div className="flex flex-col gap-2">
                     <textarea
-                      placeholder="URL을 자동으로 불러오지 못했습니다. 기사 본문을 복사하여 여기에 붙여넣은 뒤 ANALYZE를 다시 누르세요."
+                      placeholder={t.pasteContentPlaceholder}
                       rows={5}
                       value={pastedContent}
                       onChange={(e) => setPastedContent(e.target.value)}
@@ -1773,7 +1939,7 @@ export default function Dashboard() {
                 {isIngesting && (
                   <p className="text-[10px] text-neutral-500 font-sans flex items-center gap-1.5 animate-pulse">
                     <RefreshCw className="w-3 h-3 animate-spin" />
-                    문서를 해독하고 AI 분석 보고서를 생성하는 중입니다. 최대 1분가량 소요될 수 있습니다…
+                    {t.ingestingMsg}
                   </p>
                 )}
                 {ingestNotice && !isIngesting && (
@@ -1800,7 +1966,7 @@ export default function Dashboard() {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="SEARCH INTEL (TITLE, CONTENT, AUTHOR)..."
+                      placeholder={t.searchPlaceholder}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full bg-[#050505] border border-neutral-900 text-xs text-white px-3 py-2 outline-none focus:border-neutral-700 font-mono tracking-wider placeholder-neutral-700"
@@ -1810,7 +1976,7 @@ export default function Dashboard() {
                         onClick={() => setSearchQuery("")}
                         className="absolute right-2.5 top-2.5 text-[9px] text-neutral-500 hover:text-white font-mono"
                       >
-                        CLEAR
+                        {t.clear}
                       </button>
                     )}
                   </div>
@@ -1827,27 +1993,27 @@ export default function Dashboard() {
                             : "bg-[#050505] text-neutral-400 border-neutral-950 hover:border-neutral-800"
                         }`}
                       >
-                        {cat === "ALL" ? "ALL" : cat === "EQUITY" ? "EQUITIES" : cat === "BOND" ? "FIXED INCOME" : cat === "ALTERNATIVE" ? "ALT" : "ECON & ETC"}
+                        {cat === "ALL" ? t.catAll : cat === "EQUITY" ? t.catEquity : cat === "BOND" ? t.catBond : cat === "ALTERNATIVE" ? t.catAlt : t.catMacro}
                       </button>
                     ))}
                   </div>
 
                   {/* Sorting Toggles */}
                   <div className="flex justify-between items-center text-[9px] font-mono text-neutral-500">
-                    <span>SORT ORDER:</span>
+                    <span>{t.sortOrder}</span>
                     <div className="flex gap-2 items-center">
                       <button
                         onClick={() => setSortMode("CHRONOLOGICAL")}
                         className={`hover:text-white transition-all ${sortMode === "CHRONOLOGICAL" ? "text-white font-bold" : "text-neutral-500"}`}
                       >
-                        NEWEST
+                        {t.sortNewest}
                       </button>
                       <span>|</span>
                       <button
                         onClick={() => setSortMode("RANKED")}
                         className={`hover:text-white transition-all ${sortMode === "RANKED" ? "text-white font-bold" : "text-neutral-500"}`}
                       >
-                        RANKED (AI CONFIDENCE)
+                        {t.sortRanked}
                       </button>
                     </div>
                   </div>
@@ -1888,7 +2054,7 @@ export default function Dashboard() {
                               {thesis.source || (thesis.category === 'RESEARCH' ? 'NPS Research' : 'News')}
                             </span>
                             {inBasket && (
-                              <span className="text-[9px] font-display text-emerald-400 border border-emerald-900/60 bg-emerald-950/20 px-1.5 rounded-full tracking-wider">ACTIVE</span>
+                              <span className="text-[9px] font-display text-emerald-400 border border-emerald-900/60 bg-emerald-950/20 px-1.5 rounded-full tracking-wider">{t.active}</span>
                             )}
                           </div>
                           <span className="text-[10px] text-neutral-400 font-mono tabular-nums">
@@ -1938,7 +2104,7 @@ export default function Dashboard() {
                   })
                 ) : (
                   <div className="py-16 text-center text-neutral-600 font-display text-[10px] tracking-widest border border-neutral-900 bg-[#050505]">
-                    NO MATCHING INTEL FOUND
+                    {t.noIntelFound}
                   </div>
                 )}
               </div>
@@ -1968,7 +2134,7 @@ export default function Dashboard() {
 
                       {/* SOURCE ATTRIBUTION — top of report */}
                       <div className="border border-neutral-800/60 bg-neutral-950/40 px-4 py-3 flex flex-col gap-2 rounded-sm">
-                        <span className="font-display text-[9px] tracking-widest text-neutral-500 uppercase font-bold">Source Attribution</span>
+                        <span className="font-display text-[9px] tracking-widest text-neutral-500 uppercase font-bold">{t.sourceAttribution}</span>
                         <div className="flex flex-wrap gap-3 items-center">
                           <div className="flex items-center gap-2">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -1976,7 +2142,7 @@ export default function Dashboard() {
                               thesis.category === 'USER_ASSET' ? 'bg-purple-950/40 text-purple-300 border border-purple-800/40' :
                               'bg-blue-950/40 text-blue-300 border border-blue-800/40'
                             }`}>
-                              {thesis.category === 'RESEARCH' ? 'NPS House View' : thesis.category === 'USER_ASSET' ? 'User Asset' : 'Market News'}
+                              {thesis.category === 'RESEARCH' ? t.npsHouseView : thesis.category === 'USER_ASSET' ? t.userAssetLabel : t.marketNews}
                             </span>
                             <span className="text-[11px] font-semibold text-neutral-200">{thesis.source}</span>
                           </div>
@@ -1989,7 +2155,7 @@ export default function Dashboard() {
                               <span className="text-neutral-700">·</span>
                               <a href={thesis.full_report.source_url} target="_blank" rel="noopener noreferrer"
                                 className="text-[10px] text-blue-400 hover:text-blue-300 underline underline-offset-2 font-mono transition-colors">
-                                View Original Article ↗
+                                {t.viewOriginalArticle}
                               </a>
                             </>
                           )}
@@ -2001,10 +2167,10 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <Cpu className="w-3.5 h-3.5 text-neutral-400 animate-pulse" />
-                            <span className="font-display text-[9px] tracking-widest text-neutral-400">AI INTERPRETATION</span>
+                            <span className="font-display text-[9px] tracking-widest text-neutral-400">{t.aiInterpretationLabel}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="font-display text-[9px] text-neutral-500">CONFIDENCE:</span>
+                            <span className="font-display text-[9px] text-neutral-500">{t.confidenceLabel}</span>
                             <div className="flex items-center gap-1.5">
                               <div className="w-20 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
                                 <div className="h-full bg-gradient-to-r from-neutral-400 to-white rounded-full"
@@ -2028,7 +2194,7 @@ export default function Dashboard() {
 
                       {/* Main Thesis text */}
                       <div className="flex flex-col gap-2">
-                        <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">Executive Abstract</h4>
+                        <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.execAbstract}</h4>
                         <p className="text-base text-neutral-100 font-sans leading-relaxed">
                           "{thesis.content}"
                         </p>
@@ -2038,32 +2204,32 @@ export default function Dashboard() {
                       {thesis.full_report && (
                         <div className="flex flex-col gap-5 border-t border-neutral-900 pt-5">
                           <div className="flex flex-col gap-1.5">
-                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">I. Executive Summary</h4>
+                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.reportSection1}</h4>
                             <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.executive_summary)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">II. Macroeconomic Rationale</h4>
+                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.reportSection2}</h4>
                             <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.rationale)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">III. Target Assets Implications</h4>
+                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.reportSection3}</h4>
                             <div className="text-xs md:text-sm text-neutral-300 font-sans leading-relaxed">{renderReportField(thesis.full_report.target_assets)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">IV. Portfolio Allocation Recommendation</h4>
+                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.reportSection4}</h4>
                             <div className="text-xs md:text-sm text-emerald-400 font-sans leading-relaxed font-semibold">{renderReportField(thesis.full_report.recommendation)}</div>
                           </div>
                           <div className="flex flex-col gap-1.5">
-                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">V. Risk Factors & Caveats</h4>
+                            <h4 className="font-display text-[10px] tracking-wider text-neutral-500 uppercase">{t.reportSection5}</h4>
                             <div className="text-xs md:text-sm text-red-400/90 font-sans leading-relaxed">{renderReportField(thesis.full_report.risk_factors)}</div>
                           </div>
 
                           {/* SOURCES USED — bottom of report */}
                           <div className="border-t border-neutral-900/60 pt-4 flex flex-col gap-2 mt-1">
-                            <span className="font-display text-[9px] tracking-widest text-neutral-600 uppercase font-bold">Sources Used in This Analysis</span>
+                            <span className="font-display text-[9px] tracking-widest text-neutral-600 uppercase font-bold">{t.sourcesUsed}</span>
                             <div className="flex flex-col gap-1.5">
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                <span className="text-[10px] text-neutral-500 font-mono">Primary Source:</span>
+                                <span className="text-[10px] text-neutral-500 font-mono">{t.primarySource}</span>
                                 <span className="text-[11px] text-neutral-200 font-semibold">{thesis.source}</span>
                                 <span className="text-neutral-700">·</span>
                                 <span className="text-[10px] text-neutral-500 font-mono">
@@ -2071,7 +2237,7 @@ export default function Dashboard() {
                                 </span>
                               </div>
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                <span className="text-[10px] text-neutral-500 font-mono">Author:</span>
+                                <span className="text-[10px] text-neutral-500 font-mono">{t.authorLabel}</span>
                                 <span className="text-[11px] text-neutral-200">{thesis.author}</span>
                                 <span className="text-neutral-700">·</span>
                                 <span className="text-[10px] text-neutral-400 italic">{thesis.author_title}</span>
@@ -2086,7 +2252,7 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <MessageSquare className="w-3.5 h-3.5 text-neutral-500" />
-                            <span className="font-display text-[9px] tracking-widest text-neutral-500 uppercase font-bold">Include in Active Simulation</span>
+                            <span className="font-display text-[9px] tracking-widest text-neutral-500 uppercase font-bold">{t.includedInSimulation}</span>
                           </div>
                           <div className="flex items-center gap-3">
                             <button
@@ -2097,7 +2263,7 @@ export default function Dashboard() {
                                   : 'bg-white text-black border-white hover:bg-neutral-200'
                               }`}
                             >
-                              {inBasket ? 'ACTIVE IN DOCK (CLICK TO REMOVE)' : 'ADD TO ACTIVE DOCK'}
+                              {inBasket ? t.removeFromDock : t.addToDock}
                             </button>
                           </div>
                         </div>
@@ -2107,7 +2273,7 @@ export default function Dashboard() {
                             <textarea 
                               value={userComments[thesis.id] || ""}
                               onChange={(e) => updateComment(thesis.id, e.target.value)}
-                              placeholder="Type custom feedback/modifications to this thesis (AI will incorporate these adjustments in the optimization)..."
+                              placeholder={t.feedbackPlaceholder}
                               className="w-full bg-black border border-neutral-800 text-xs text-white p-3 outline-none focus:border-neutral-600 resize-none font-sans"
                               rows={3}
                             />
@@ -2119,7 +2285,7 @@ export default function Dashboard() {
                 })() : (
                   <div className="border border-neutral-900 bg-[#050505] p-12 flex flex-col items-center justify-center text-neutral-500 h-full">
                     <Newspaper className="w-8 h-8 mb-4 opacity-50" />
-                    <p className="font-display text-xs tracking-widest">SELECT A THESIS TO VIEW REPORT</p>
+                    <p className="font-display text-xs tracking-widest">{t.selectThesisPrompt}</p>
                   </div>
                 )}
               </div>
@@ -2134,10 +2300,10 @@ export default function Dashboard() {
               <div>
                 <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-neutral-400" />
-                  MACROECONOMIC DASHBOARD
+                  {t.macroTitle}
                 </h2>
                 <p className="text-xs text-neutral-500 font-sans mt-1">
-                  Real-time global market indicators and regime detection.
+                  {t.macroSubtitle}
                 </p>
               </div>
               <button 
@@ -2146,7 +2312,7 @@ export default function Dashboard() {
                 className="button-ghost-dark flex items-center gap-2"
               >
                 <RefreshCw className={`w-4 h-4 ${isFetchingMacro ? "animate-spin" : ""}`} />
-                REFRESH DATA
+                {t.refreshData}
               </button>
             </div>
 
@@ -2235,7 +2401,7 @@ export default function Dashboard() {
                       <div className="flex items-center gap-4">
                         <ShieldAlert className={`w-8 h-8 ${macroData.market_regime === "CRISIS" ? "text-red-500 animate-pulse" : macroData.market_regime === "ELEVATED_RISK" ? "text-amber-500 animate-bounce" : "text-emerald-500"}`} />
                         <div>
-                          <span className="text-[10px] font-display tracking-widest text-neutral-500 block uppercase font-bold">Detected Market Regime</span>
+                          <span className="text-[10px] font-display tracking-widest text-neutral-500 block uppercase font-bold">{t.detectedRegime}</span>
                           <div className="flex items-center gap-2">
                             <span className="text-lg font-display text-white font-bold">{macroData.market_regime.replace("_", " ")}</span>
                             <span className="text-xs text-neutral-400">({macroData.regime_kr})</span>
@@ -2270,7 +2436,7 @@ export default function Dashboard() {
                     {/* Regime Details Explainer */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 border-t border-neutral-900 pt-4">
                       <div className="flex flex-col gap-1.5">
-                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">VIX VOLATILITY LEVEL</span>
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">{t.vixLabel}</span>
                         <div className="flex items-baseline gap-2">
                           <span className="text-xl font-display font-bold text-white">{macroData.VIX?.current ?? "N/A"}</span>
                           <span className="text-xs text-neutral-400 font-sans">Index Points</span>
@@ -2280,7 +2446,7 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">RISK-AVERSION MULTIPLIER (λ)</span>
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">{t.lambdaMultiplierLabel}</span>
                         <div className="flex items-baseline gap-2">
                           <span className="text-xl font-display font-bold text-white">
                             {macroData.market_regime === "CRISIS" ? "1.60x" :
@@ -2294,7 +2460,7 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">ALLOCATION STRATEGY IMPACT</span>
+                        <span className="text-[9px] font-mono text-neutral-500 uppercase font-bold">{t.allocationStrategyLabel}</span>
                         <div className="flex items-baseline gap-2">
                           <span className={`text-xs font-display font-bold uppercase ${
                             macroData.market_regime === "CRISIS" ? "text-red-400" :
@@ -2353,7 +2519,7 @@ export default function Dashboard() {
                             
                             {/* Compare Select Dropdown */}
                             <div className="flex items-center gap-2">
-                              <span className="text-[8px] font-mono text-neutral-500 uppercase">OVERLAY:</span>
+                              <span className="text-[8px] font-mono text-neutral-500 uppercase">{t.overlayLabel}</span>
                               <select
                                 value={compareMacroKey}
                                 onChange={(e) => setCompareMacroKey(e.target.value)}
@@ -2474,7 +2640,7 @@ export default function Dashboard() {
                           </div>
                         ) : (
                           <div className="py-16 text-center text-neutral-600 font-display text-[10px] tracking-widest border border-neutral-900 bg-[#050505] rounded-sm">
-                            NO HISTORICAL DATA AVAILABLE
+                            {t.noHistoricalData}
                           </div>
                         )}
                       </div>
@@ -2484,7 +2650,7 @@ export default function Dashboard() {
                   {/* Macro Correlation Heatmap Panel */}
                   <div className="border border-neutral-900 bg-[#020202] p-5 flex flex-col gap-4">
                     <h3 className="font-display text-[10px] tracking-wider text-neutral-400 border-b border-neutral-900 pb-2 uppercase font-bold">
-                      MACROECONOMIC CORRELATION HEATMAP
+                      {t.correlationHeatmap}
                     </h3>
                     <div className="flex flex-col xl:flex-row gap-6">
                       {/* The Heatmap Grid */}
@@ -2575,7 +2741,7 @@ export default function Dashboard() {
                           return (
                             <div className="flex flex-col gap-4 h-full justify-between">
                               <div className="flex flex-col gap-2">
-                                <span className="text-[9px] font-mono text-neutral-500 uppercase">CORRELATION ANALYSIS</span>
+                                <span className="text-[9px] font-mono text-neutral-500 uppercase">{t.correlationAnalysis}</span>
                                 <div className="border-b border-neutral-900 pb-2">
                                   <h4 className="text-xs font-bold text-white uppercase tracking-wider">{selectedCell.y} × {selectedCell.x}</h4>
                                   <span className="text-lg font-display font-bold text-white">{val.toFixed(4)}</span>
@@ -2597,7 +2763,7 @@ export default function Dashboard() {
                         })() : (
                           <div className="flex flex-col items-center justify-center text-center py-12 text-neutral-600 h-full">
                             <Info className="w-6 h-6 mb-2 text-neutral-700" />
-                            <span className="text-[10px] font-display tracking-widest uppercase">SELECT CELL FOR ANALYSIS</span>
+                            <span className="text-[10px] font-display tracking-widest uppercase">{t.selectCellForAnalysis}</span>
                           </div>
                         )}
                       </div>
@@ -2699,7 +2865,7 @@ export default function Dashboard() {
             })() : (
               <div className="border border-neutral-900 bg-[#0a0a0a] p-12 flex flex-col items-center justify-center text-neutral-500">
                 <RefreshCw className="w-8 h-8 animate-spin mb-4" />
-                <p className="font-display text-xs tracking-widest">FETCHING MARKET DATA...</p>
+                <p className="font-display text-xs tracking-widest">{t.fetchingMarketData}</p>
               </div>
             )}
           </div>
@@ -2712,22 +2878,22 @@ export default function Dashboard() {
               <div>
                 <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
                   <Cpu className="w-5 h-5 text-neutral-400" />
-                  MACRO RESEARCH PIPELINE
+                  {t.researchTitle}
                 </h2>
                 <p className="text-xs text-neutral-500 font-sans mt-1">
-                  Search &amp; select macro info → build calibrated theses (Nemotron Ultra) → compute allocation (Idzorek BL).
+                  {t.researchSubtitle}
                 </p>
               </div>
               <div className="flex gap-3">
                 <button onClick={handleCollect} disabled={isCollecting}
                   className="button-ghost-dark flex items-center gap-2 disabled:opacity-50">
                   {isCollecting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-                  1 · COLLECT
+                  {t.btnCollect}
                 </button>
                 <button onClick={handleBuildTheses} disabled={isBuildingTheses}
                   className="button-ghost-dark flex items-center gap-2 disabled:opacity-50">
                   {isBuildingTheses ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
-                  2 · BUILD THESES
+                  {t.btnBuildTheses}
                 </button>
               </div>
             </div>
@@ -2742,10 +2908,10 @@ export default function Dashboard() {
               {/* Stage 1 — Research Queue */}
               <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
                 <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
-                  <Newspaper className="w-3.5 h-3.5 text-white" /> RESEARCH QUEUE ({researchQueue.length})
+                  <Newspaper className="w-3.5 h-3.5 text-white" /> {t.researchQueueLabel} ({researchQueue.length})
                 </h3>
                 <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto pr-1">
-                  {researchQueue.length === 0 && <p className="text-[10px] text-neutral-600 italic">큐가 비어 있습니다. COLLECT를 실행하세요.</p>}
+                  {researchQueue.length === 0 && <p className="text-[10px] text-neutral-600 italic">{t.queueEmpty}</p>}
                   {researchQueue.map((d) => {
                     const rel = d.relevance || {};
                     const top = Object.entries(rel).sort((a: any, b: any) => b[1] - a[1])[0];
@@ -2768,34 +2934,34 @@ export default function Dashboard() {
               {/* Stage 2 — Theses */}
               <div className="border border-neutral-900 bg-[#0a0a0a] p-4 flex flex-col gap-3">
                 <h3 className="font-display text-xs tracking-widest text-neutral-400 border-b border-neutral-900 pb-2 flex items-center gap-2">
-                  <MessageSquare className="w-3.5 h-3.5 text-white" /> HOUSE THESES ({theses.length})
+                  <MessageSquare className="w-3.5 h-3.5 text-white" /> {t.houseThesesLabel} ({theses.length})
                 </h3>
                 <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto pr-1">
-                  {theses.length === 0 && <p className="text-[10px] text-neutral-600 italic">Thesis가 없습니다. BUILD THESES를 실행하세요.</p>}
-                  {theses.map((t) => (
-                    <div 
-                      key={t.id} 
+                  {theses.length === 0 && <p className="text-[10px] text-neutral-600 italic">{t.noTheses}</p>}
+                  {theses.map((th) => (
+                    <div
+                      key={th.id}
                       draggable={true}
                       onDragStart={(e) => {
                         e.dataTransfer.effectAllowed = "copy";
-                        e.dataTransfer.setData("text/plain", t.id);
+                        e.dataTransfer.setData("text/plain", th.id);
                       }}
                       className="bg-[#050505] border border-neutral-900 p-2.5 flex flex-col gap-1.5 cursor-grab active:cursor-grabbing hover:border-neutral-700 transition-all select-none"
                     >
                       <div className="flex justify-between items-center gap-2">
-                        <span className="text-[11px] text-white font-bold leading-snug">{t.title || `${t.asset || t.asset1}`}</span>
-                        <span className="text-[9px] font-mono text-emerald-400 whitespace-nowrap">conf {(t.confidence ?? 0).toFixed(2)}</span>
+                        <span className="text-[11px] text-white font-bold leading-snug">{th.title || `${th.asset || th.asset1}`}</span>
+                        <span className="text-[9px] font-mono text-emerald-400 whitespace-nowrap">conf {(th.confidence ?? 0).toFixed(2)}</span>
                       </div>
                       <span className="text-[9px] font-mono text-neutral-500 uppercase">
-                        {t.view_type === "relative" ? `${t.asset1} > ${t.asset2}` : `${t.asset} ${t.direction || ""}`} · {t.horizon || "12M"}
+                        {th.view_type === "relative" ? `${th.asset1} > ${th.asset2}` : `${th.asset} ${th.direction || ""}`} · {th.horizon || "12M"}
                       </span>
-                      <span className="text-[10px] text-neutral-400 leading-snug">{t.rationale}</span>
+                      <span className="text-[10px] text-neutral-400 leading-snug">{th.rationale}</span>
 
                       {/* Bull / Bear debate transcript */}
-                      {t.evidence?.debate_log?.length > 0 && (
+                      {th.evidence?.debate_log?.length > 0 && (
                         <div className="mt-1.5 border-t border-neutral-900 pt-1.5 flex flex-col gap-1">
-                          <span className="font-display text-[8px] text-neutral-600 tracking-widest">DEBATE LOG</span>
-                          {t.evidence.debate_log.map((entry: any, di: number) => (
+                          <span className="font-display text-[8px] text-neutral-600 tracking-widest">{t.debateLog}</span>
+                          {th.evidence.debate_log.map((entry: any, di: number) => (
                             <div key={di} className="flex gap-1.5 items-start">
                               <span className={`font-display text-[8px] tracking-wider shrink-0 mt-0.5 ${
                                 entry.speaker === "Bull" ? "text-emerald-500" :
@@ -2809,7 +2975,7 @@ export default function Dashboard() {
                       )}
 
                       <div className="flex justify-end mt-1">
-                        <span className="text-[9px] font-mono text-neutral-600">{(t.provenance || []).length} src · drag to promote →</span>
+                        <span className="text-[9px] font-mono text-neutral-600">{(th.provenance || []).length} {t.dragToPromote}</span>
                       </div>
                     </div>
                   ))}
@@ -2848,10 +3014,10 @@ export default function Dashboard() {
                 {/* Header row */}
                 <div className="flex items-center justify-between border-b border-neutral-900 pb-2">
                   <h3 className="font-display text-xs tracking-widest text-neutral-400 flex items-center gap-2">
-                    <TrendingUp className="w-3.5 h-3.5 text-white" /> ANALYSIS &amp; PROMOTION
+                    <TrendingUp className="w-3.5 h-3.5 text-white" /> {t.analysisPromotion}
                     {promotionQueue.length > 0 && (
                       <span className="text-[9px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded-full ml-1">
-                        {promotionQueue.length} queued
+                        {promotionQueue.length} {t.queued}
                       </span>
                     )}
                   </h3>
@@ -2878,7 +3044,7 @@ export default function Dashboard() {
                     <RefreshCw className="w-7 h-7 text-amber-400 animate-spin" />
                     <p className="font-display text-[10px] tracking-widest text-amber-300 uppercase">{batchPromoteProgress}</p>
                     <p className="text-[9px] text-neutral-500 max-w-[200px] leading-relaxed">
-                      Running {promotionQueue.length} parallel LLM analysis{promotionQueue.length > 1 ? 'es' : ''}…
+                      Running {promotionQueue.length} {t.parallelAnalyses}{promotionQueue.length > 1 ? '' : ''}…
                     </p>
                   </div>
                 )}
@@ -2912,10 +3078,10 @@ export default function Dashboard() {
                   <div className="flex flex-col items-center justify-center flex-grow py-8 text-center border-2 border-dashed border-neutral-900/50 rounded-sm pointer-events-none">
                     <ArrowUpCircle className="w-10 h-10 mb-3 text-neutral-500 animate-pulse" />
                     <p className="font-display text-[10px] tracking-widest text-neutral-400 font-bold uppercase mb-1">
-                      DRAG THESES HERE
+                      {t.dragThesesHere}
                     </p>
                     <p className="text-[9px] text-neutral-600 font-sans max-w-[200px] leading-relaxed">
-                      Drop multiple theses to queue them. Hit ▶ to promote all in parallel to Market Intelligence.
+                      {t.dragThesesHint}
                     </p>
                   </div>
                 )}
@@ -2935,7 +3101,7 @@ export default function Dashboard() {
                 {allocation && allocation.status === "ok" && (
                   <div className="border border-neutral-800 bg-[#050505] p-3 flex flex-col gap-2 mt-1">
                     <div className="flex items-center justify-between border-b border-neutral-900 pb-1.5">
-                      <span className="font-display text-[9px] tracking-widest text-neutral-300">ALLOCATION RESULT</span>
+                      <span className="font-display text-[9px] tracking-widest text-neutral-300">{t.allocationResult}</span>
                       <div className="flex gap-2 font-mono text-[8px]">
                         <span className={`px-1.5 py-0.5 border ${
                           allocation.regime === "CRISIS" ? "border-red-800 text-red-400" :
@@ -2979,86 +3145,16 @@ export default function Dashboard() {
 
         {/* HELP TAB */}
         {activeTab === "HELP" && (() => {
-          const HELP_STEPS = [
-            {
-              id: 1,
-              title: "COLLECT",
-              subtitle: "Gather Intelligence",
-              icon: Newspaper,
-              description: "Initialize the workflow by fetching the latest macroeconomic indicators, financial news, and global RSS feeds. The system processes real-time feeds from Yahoo Finance and RSS sources.",
-              howItWorks: [
-                "Click the 'COLLECT' button in the Research Pipeline tab.",
-                "The system queries backend crawlers to parse global market feeds.",
-                "Relevance and composite sentiment scores are calculated automatically for each article."
-              ],
-              tip: "You can refresh this data periodically to stay aligned with intraday macroeconomic shifts."
-            },
-            {
-              id: 2,
-              title: "BUILD",
-              subtitle: "Draft House Theses",
-              icon: MessageSquare,
-              description: "Transform raw news and data into structured investment ideas. The AI core reads the collected queue and generates high-level macroeconomic view definitions.",
-              howItWorks: [
-                "Click the 'BUILD THESES' button in Column 2 of the Research Pipeline.",
-                "The Nemotron AI agent evaluates the news context and forms discrete asset outlooks.",
-                "Each thesis is assigned a subject-specific confidence score (0% to 100%) and market horizon."
-              ],
-              tip: "You can directly APPROVE or REJECT these AI-drafted theses to filter out noise."
-            },
-            {
-              id: 3,
-              title: "PROMOTE",
-              subtitle: "Expand to Reports",
-              icon: TrendingUp,
-              description: "Deepen your approved ideas into institutional-grade analyst reports. Drag-and-drop a house thesis card into Column 3 to generate a full Bloomberg-style dossier.",
-              howItWorks: [
-                "Select a draft card in the 'HOUSE THESES' column.",
-                "Drag it and drop it into the dashed 'ANALYSIS & PROMOTION' zone.",
-                "The AI agent automatically expands the thesis with an Executive Summary, Macro Rationale, and specific Risk Factors."
-              ],
-              tip: "Once promoted, the thesis is transferred to the 'Market Intelligence' tab as an active source."
-            },
-            {
-              id: 4,
-              title: "DOCK",
-              subtitle: "Select Active Views",
-              icon: Upload,
-              description: "Interact with the Market Intelligence catalog. Organize your research, news, and user uploaded assets, then select the viewpoints to apply to your portfolio simulation.",
-              howItWorks: [
-                "Browse the Market Intelligence folders (Research, News, User Assets).",
-                "Drag any relevant card and drop it into the bottom floating 'Active Simulation Basket'.",
-                "Optionally, click on a source card to read the full analyst dossier and type custom adjustments."
-              ],
-              tip: "The floating dock acts as a liquid glass container that updates dynamically as you drag cards over it."
-            },
-            {
-              id: 5,
-              title: "SIMULATE",
-              subtitle: "Run Black-Litterman",
-              icon: Play,
-              description: "Combine subjective views with market equilibrium to optimize allocation. Configure parameters and run a Bayesian combination modeling pipeline.",
-              howItWorks: [
-                "Click the circular Play button in the bottom dock.",
-                "In the confirmation popup, review the active sources and adjust the Max Benchmark Deviation (δ).",
-                "Choose an optimization engine (e.g. Risk Parity, Markowitz MVO, or HRP) and click 'EXECUTE SIMULATION'."
-              ],
-              tip: "The backend will run a 10,000-trial Monte Carlo stress test and historical shock tests."
-            },
-            {
-              id: 6,
-              title: "EXPORT",
-              subtitle: "Generate Dossier",
-              icon: Info,
-              description: "Generate a vector-sharp one-page PDF report summarizing the simulation outcomes, optimized portfolio weights, and stress test resilience.",
-              howItWorks: [
-                "After the simulation finishes, navigate to the Portfolio Simulator dashboard.",
-                "Click the 'EXPORT REPORT (PDF)' button next to the simulation header.",
-                "Save or print the vector-styled dossier for the investment committee."
-              ],
-              tip: "The printed version is automatically optimized for standard letter/A4 page templates, removing UI elements."
-            }
-          ];
+          const HELP_STEP_ICONS = [Newspaper, MessageSquare, TrendingUp, Upload, Play, Info];
+          const HELP_STEPS = t.helpSteps.map((s, idx) => ({
+            id: idx + 1,
+            title: s.title,
+            subtitle: s.subtitle,
+            icon: HELP_STEP_ICONS[idx],
+            description: s.description,
+            howItWorks: s.howItWorks,
+            tip: s.tip,
+          }));
           const step = HELP_STEPS.find(s => s.id === activeHelpStep)!;
           const StepIcon = step.icon;
           return (
@@ -3067,10 +3163,10 @@ export default function Dashboard() {
                 <div>
                   <h2 className="font-display text-xl tracking-widest text-white flex items-center gap-2">
                     <Info className="w-5 h-5 text-neutral-400" />
-                    TERMINAL SYSTEM DOCUMENTATION &amp; GUIDE
+                    {t.helpTitle}
                   </h2>
                   <p className="text-xs text-neutral-500 font-sans mt-1">
-                    Learn about the Asset Allocation Modeling platform and how to operate its workflows.
+                    {t.helpSubtitle}
                   </p>
                 </div>
               </div>
@@ -3116,7 +3212,7 @@ export default function Dashboard() {
                       <StepIcon className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                      <span className="font-mono text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Operational Phase 0{step.id}</span>
+                      <span className="font-mono text-[9px] text-neutral-500 font-bold uppercase tracking-wider">{t.helpOpPhase} 0{step.id}</span>
                       <h3 className="font-display text-base tracking-widest text-white font-bold">{step.title}: {step.subtitle.toUpperCase()}</h3>
                     </div>
                   </div>
@@ -3126,7 +3222,7 @@ export default function Dashboard() {
                   </p>
 
                   <div className="flex flex-col gap-2">
-                    <h4 className="font-display text-[9px] tracking-wider text-neutral-500 uppercase font-bold">Standard Operational Procedure</h4>
+                    <h4 className="font-display text-[9px] tracking-wider text-neutral-500 uppercase font-bold">{t.helpSOP}</h4>
                     <ol className="list-decimal list-inside pl-1 flex flex-col gap-2 text-xs text-neutral-400 font-sans">
                       {step.howItWorks.map((item, idx) => (
                         <li key={idx} className="leading-relaxed">
@@ -3139,7 +3235,7 @@ export default function Dashboard() {
                   <div className="border-t border-neutral-950 pt-4 flex gap-3 items-start">
                     <Info className="w-4 h-4 text-neutral-500 flex-shrink-0 mt-0.5" />
                     <p className="text-[10px] text-neutral-500 font-sans leading-relaxed">
-                      <strong className="text-neutral-400 font-display">OPERATIONAL PRO-TIP:</strong> {step.tip}
+                      <strong className="text-neutral-400 font-display">{t.helpProTip}</strong> {step.tip}
                     </p>
                   </div>
                 </div>
@@ -3296,16 +3392,16 @@ export default function Dashboard() {
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-display text-[9px] tracking-widest text-neutral-400 font-bold uppercase">
-                  ACTIVE SIMULATION BASKET
+                  {t.activeBasket}
                 </span>
                 <span className="text-[9px] font-mono bg-neutral-900 text-neutral-400 px-1.5 py-0.2 border border-neutral-850 rounded-full">
-                  {selectedTheses.length} SOURCES ACTIVE
+                  {selectedTheses.length} {t.sourcesActive}
                 </span>
               </div>
               
               {selectedTheses.length === 0 ? (
                 <div className="text-neutral-500 font-sans text-[10px] pl-4">
-                  DRAG &amp; DROP MARKET INTEL CARDS HERE TO ADD THEM TO THE ACTIVE SIMULATION
+                  {t.dragDropHint}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto pr-1 pointer-events-auto">
@@ -3340,7 +3436,7 @@ export default function Dashboard() {
                 disabled={selectedTheses.length === 0}
                 className="button-ghost-dark text-[9px] px-3 py-1.5 rounded-full disabled:opacity-50 disabled:cursor-not-allowed uppercase font-mono tracking-wider"
               >
-                CLEAR
+                {t.clear}
               </button>
               <button 
                 onClick={() => setShowRunConfirmModal(true)}
@@ -3362,20 +3458,20 @@ export default function Dashboard() {
             <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
               <h3 className="font-display text-xs tracking-wider text-neutral-300 font-bold uppercase flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-white" />
-                CONFIRM SIMULATION RUN
+                {t.confirmSimulation}
               </h3>
               <button 
                 onClick={() => setShowRunConfirmModal(false)}
                 className="text-neutral-500 hover:text-white font-mono text-xs hover:bg-neutral-900 rounded px-1.5 py-0.5"
               >
-                ✕ CLOSE
+                {t.closeModal}
               </button>
             </div>
 
             {/* Included Sources List */}
             <div className="flex flex-col gap-1.5">
               <span className="text-[9px] font-display tracking-widest text-neutral-500 uppercase font-bold">
-                INCLUDED SOURCES ({selectedTheses.length})
+                {t.includedSources} ({selectedTheses.length})
               </span>
               <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto bg-black border border-neutral-900 p-3 rounded-lg">
                 {selectedTheses.map(id => {
@@ -3389,7 +3485,7 @@ export default function Dashboard() {
                         cat === "NEWS" ? "bg-blue-950/20 text-blue-400 border-blue-900/40" : 
                         "bg-purple-950/20 text-purple-400 border-purple-900/40"
                       }`}>
-                        {cat === "RESEARCH" ? "Research" : cat === "NEWS" ? "News" : "User Asset"}
+                        {cat === "RESEARCH" ? t.npsHouseView : cat === "NEWS" ? t.marketNews : t.userAssetLabel}
                       </span>
                       <span className="truncate flex-grow font-sans font-medium">{thesis.title}</span>
                     </div>
@@ -3401,7 +3497,7 @@ export default function Dashboard() {
             {/* Max Deviation Limits Slider (δ) */}
             <div className="flex flex-col gap-2 border-t border-neutral-950 pt-3">
               <div className="flex justify-between items-center text-[10px] font-display tracking-widest text-neutral-400 font-bold">
-                <span>MAX BENCHMARK DEVIATION (δ)</span>
+                <span>{t.maxDeviation}</span>
                 <span className="text-white font-mono bg-neutral-900 px-2 py-0.5 border border-neutral-800 rounded">{(maxDeviation * 100).toFixed(0)}%</span>
               </div>
               <input 
@@ -3414,30 +3510,30 @@ export default function Dashboard() {
                 className="w-full accent-white bg-neutral-900 h-1 cursor-pointer mt-1"
               />
               <p className="text-[9px] text-neutral-600 leading-normal font-sans">
-                Defines the maximum allowed underweight/overweight bounds relative to the NPS strategic benchmark weights.
+                {t.maxDeviationHint}
               </p>
             </div>
 
             {/* Optimizer Selection */}
             <div className="flex flex-col gap-2 border-t border-neutral-950 pt-3">
-              <label className="text-[10px] font-display tracking-widest text-neutral-400 font-bold uppercase">OPTIMIZATION ENGINE</label>
+              <label className="text-[10px] font-display tracking-widest text-neutral-400 font-bold uppercase">{t.optimizationEngine}</label>
               <select
                 value={optimizer}
                 onChange={(e) => setOptimizer(e.target.value)}
                 className="w-full bg-black border border-neutral-900 p-2.5 rounded text-xs outline-none text-white focus:border-white cursor-pointer font-sans"
               >
-                <option value="ensemble">ENSEMBLE (Recommended - Averages MVO + Risk Parity + HRP)</option>
-                <option value="risk_parity">RISK PARITY (Balanced Risk Allocation)</option>
-                <option value="markowitz">MARKOWITZ MVO (Sharpe Maximization)</option>
-                <option value="hrp">HIERARCHICAL RISK PARITY (HRP)</option>
-                <option value="resampled">RESAMPLED MVO (Michaud - Bootstrap Robust)</option>
+                <option value="ensemble">{t.optEnsembleDesc}</option>
+                <option value="risk_parity">{t.optRpDesc}</option>
+                <option value="markowitz">{t.optMvoDesc}</option>
+                <option value="hrp">{t.optHrpDesc}</option>
+                <option value="resampled">{t.optResampledDesc}</option>
               </select>
               <p className="text-[9px] text-neutral-600 leading-normal font-sans text-neutral-400">
-                {optimizer === "ensemble" && "✓ Recommended: Averages Markowitz, Risk Parity, and HRP — reduces single-model sensitivity and prevents extreme concentrations."}
-                {optimizer === "risk_parity" && "✓ Allocates weights to equalize risk contributions, preventing concentration spikes."}
-                {optimizer === "markowitz" && "⚠ Maximizes Sharpe Ratio; most sensitive to expected return inputs — can produce concentrated portfolios."}
-                {optimizer === "hrp" && "💡 Hierarchical clustering-based allocation — stable out-of-sample, ignores expected returns."}
-                {optimizer === "resampled" && "💡 Bootstraps 50 MVO runs and averages — reduces estimation error vs standard Markowitz."}
+                {optimizer === "ensemble" && t.optEnsembleHint}
+                {optimizer === "risk_parity" && t.optRpHint}
+                {optimizer === "markowitz" && t.optMvoHint}
+                {optimizer === "hrp" && t.optHrpHint}
+                {optimizer === "resampled" && t.optResampledHint}
               </p>
             </div>
 
@@ -3447,7 +3543,7 @@ export default function Dashboard() {
                 onClick={() => setShowRunConfirmModal(false)}
                 className="button-ghost-dark text-[9px] px-4 py-2 font-mono"
               >
-                CANCEL
+                {t.cancelBtn}
               </button>
               <button 
                 onClick={() => {
@@ -3457,7 +3553,7 @@ export default function Dashboard() {
                 className="bg-white hover:bg-neutral-200 text-black font-display font-bold text-[9px] tracking-widest px-5 py-2 border border-white transition-all uppercase flex items-center gap-1.5 rounded-sm"
               >
                 <Play className="w-3.5 h-3.5 fill-black" />
-                EXECUTE SIMULATION
+                {t.executeSimulation}
               </button>
             </div>
           </div>
@@ -3471,15 +3567,15 @@ export default function Dashboard() {
           <div className="border-b-2 border-black pb-4 mb-6">
             <div className="flex justify-between items-start">
               <div>
-                <h1 className="text-xl font-bold tracking-tight text-black">NATIONAL PENSION SERVICE (NPS)</h1>
-                <h2 className="text-base font-semibold text-neutral-800">GLOBAL PORTFOLIO ALLOCATION REPORT</h2>
-                <p className="text-[10px] text-neutral-500 mt-1">Black-Litterman Optimization Engine Output</p>
+                <h1 className="text-xl font-bold tracking-tight text-black">{t.pdfOrgTitle}</h1>
+                <h2 className="text-base font-semibold text-neutral-800">{t.pdfReportTitle}</h2>
+                <p className="text-[10px] text-neutral-500 mt-1">{t.pdfEngineOutput}</p>
               </div>
               <div className="text-right text-[10px] font-mono text-neutral-600">
-                <div>RUN ID: #{data.simulation_id}</div>
-                <div>DATE: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
-                <div>ENGINE: {optimizer === "risk_parity" ? "Risk Parity (Recommended)" : optimizer === "markowitz" ? "Markowitz Sharpe Max" : "Hierarchical Risk Parity (HRP)"}</div>
-                <div>DEV LIMIT (δ): {(maxDeviation * 100).toFixed(0)}%</div>
+                <div>{t.pdfRunId}{data.simulation_id}</div>
+                <div>{t.pdfDate} {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
+                <div>{t.pdfEngine} {optimizer === "risk_parity" ? "Risk Parity (Recommended)" : optimizer === "markowitz" ? "Markowitz Sharpe Max" : "Hierarchical Risk Parity (HRP)"}</div>
+                <div>{t.pdfDevLimit} {(maxDeviation * 100).toFixed(0)}%</div>
               </div>
             </div>
           </div>
@@ -3487,20 +3583,20 @@ export default function Dashboard() {
           {/* Section 1: Executive Metrics Summary */}
           <div className="mb-6">
             <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
-              I. Portfolio Risk & Return Analysis
+              {t.pdfSection1}
             </h3>
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-black">
-                  <th className="py-1 font-semibold">Metric</th>
-                  <th className="py-1 text-right font-semibold">Strategic Benchmark</th>
-                  <th className="py-1 text-right font-semibold">Optimized Portfolio</th>
-                  <th className="py-1 text-right font-semibold">Active Variance</th>
+                  <th className="py-1 font-semibold">{t.pdfMetric}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfStrategicBenchmark}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfOptimizedPortfolio}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfActiveVariance}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200">
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">Expected Annual Return</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfExpReturn}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? formatPercent(data.benchmark_portfolio.return / 100) : "N/A"}</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.expected_return)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">
@@ -3508,7 +3604,7 @@ export default function Dashboard() {
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">Annual Volatility</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfAnnualVol}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? formatPercent(data.benchmark_portfolio.volatility / 100) : "N/A"}</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.volatility)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">
@@ -3516,7 +3612,7 @@ export default function Dashboard() {
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">Expected Sharpe Ratio</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfExpSharpe}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">{data.benchmark_portfolio ? data.benchmark_portfolio.sharpe.toFixed(2) : "N/A"}</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{metrics.sharpe.toFixed(2)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">
@@ -3524,19 +3620,19 @@ export default function Dashboard() {
                   </td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">95% Value-at-Risk (1Y)</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfVar95}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.var_95)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">95% Conditional VaR (1Y)</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfCvar95}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.cvar_95)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
                 </tr>
                 <tr>
-                  <td className="py-1.5 font-medium text-neutral-800">Projected Max Drawdown</td>
+                  <td className="py-1.5 font-medium text-neutral-800">{t.pdfMaxDd}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
                   <td className="py-1.5 text-right font-mono font-bold text-black">{formatPercent(data.risk_metrics.max_drawdown_estimate)}</td>
                   <td className="py-1.5 text-right font-mono text-neutral-700">-</td>
@@ -3548,17 +3644,17 @@ export default function Dashboard() {
           {/* Section 2: Portfolio Allocations & Views */}
           <div className="mb-6">
             <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
-              II. Asset Allocations & Expected Returns
+              {t.pdfSection2}
             </h3>
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-black">
-                  <th className="py-1 font-semibold">Asset Class</th>
-                  <th className="py-1 text-right font-semibold">Strategic Benchmark</th>
-                  <th className="py-1 text-right font-semibold">Optimized Weight</th>
-                  <th className="py-1 text-right font-semibold">Active Weight</th>
-                  <th className="py-1 text-right font-semibold">Prior Return</th>
-                  <th className="py-1 text-right font-semibold">Posterior Return</th>
+                  <th className="py-1 font-semibold">{t.pdfAssetClass}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfStrategicBenchmark}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfOptimizedWeight}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfActiveWeight}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfPriorReturn}</th>
+                  <th className="py-1 text-right font-semibold">{t.pdfPosteriorReturn}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200">
@@ -3589,16 +3685,16 @@ export default function Dashboard() {
           {data.historical_stress_tests && (
             <div className="mb-6">
               <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-3">
-                III. Historical Crisis Scenario Analysis
+                {t.pdfSection3}
               </h3>
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-black">
-                    <th className="py-1 font-semibold">Crisis Scenario Name</th>
-                    <th className="py-1 text-right font-semibold">Portfolio Return</th>
-                    <th className="py-1 text-right font-semibold">KR Stock Impact</th>
-                    <th className="py-1 text-right font-semibold">Global Stock Impact</th>
-                    <th className="py-1 text-right font-semibold">Alternatives Impact</th>
+                    <th className="py-1 font-semibold">{t.pdfCrisisScenario}</th>
+                    <th className="py-1 text-right font-semibold">{t.pdfPortfolioReturn}</th>
+                    <th className="py-1 text-right font-semibold">{t.pdfKrStockImpact}</th>
+                    <th className="py-1 text-right font-semibold">{t.pdfGlobalStockImpact}</th>
+                    <th className="py-1 text-right font-semibold">{t.pdfAltImpact}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-200">
@@ -3628,7 +3724,7 @@ export default function Dashboard() {
           {data.ai_commentary && (
             <div className="mb-6">
               <h3 className="text-xs font-bold uppercase tracking-wider text-black border-b border-neutral-300 pb-1 mb-2">
-                IV. Strategic Commentary & Investment Thesis
+                {t.pdfSection4}
               </h3>
               <p className="text-[10px] text-neutral-700 font-sans leading-relaxed whitespace-pre-line border border-neutral-200 p-3 bg-neutral-50/50 rounded-sm">
                 {data.ai_commentary.split("=============================================================================").pop()?.trim()}
@@ -3638,8 +3734,8 @@ export default function Dashboard() {
 
           {/* Footer */}
           <div className="border-t border-neutral-300 pt-3 mt-8 text-center text-[9px] text-neutral-500">
-            <div>CONFIDENTIAL - FOR INVESTMENT COMMITTEE REVIEW ONLY</div>
-            <div className="mt-0.5">National Pension Service (NPS) Quantitative Allocation Platform © 2026</div>
+            <div>{t.pdfFooterConfidential}</div>
+            <div className="mt-0.5">{t.pdfFooterCopyright}</div>
           </div>
         </div>
       )}

@@ -18,6 +18,7 @@ class Simulation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    title = Column(String, nullable=True)
     user_view = Column(String, nullable=False)
     optimizer = Column(String, nullable=False)  # "markowitz" | "risk_parity" | "hrp"
     posterior_returns = Column(JSON, nullable=False)
@@ -107,6 +108,12 @@ def init_db():
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE market_intelligence ADD COLUMN category VARCHAR(50) DEFAULT 'NEWS'"))
                 print("Added category column to market_intelligence table via migration.")
+        if "simulations" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("simulations")]
+            if "title" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE simulations ADD COLUMN title VARCHAR(200)"))
+                print("Added title column to simulations table via migration.")
     except Exception as e:
         print(f"Migration check warning: {e}")
     Base.metadata.create_all(bind=engine)

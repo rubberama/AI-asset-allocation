@@ -6,8 +6,19 @@ load_dotenv(override=True)
 
 # OpenRouter API settings
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# READING tasks: long-context document reading, article-to-thesis extraction,
+# headline selection. owl-alpha excels at these high-context extraction jobs.
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/owl-alpha")
+ARTICLE_DIGESTION_MODEL = os.getenv("ARTICLE_DIGESTION_MODEL", "openrouter/owl-alpha")
+
+# REASONING tasks: view parsing (CoT), PM memo, variance calibration,
+# AI portfolio commentary, thesis consolidation.
+# Nemotron 3 Ultra 550B (MoE, 55B active) — NVIDIA's June 2026 frontier reasoning model,
+# free on OpenRouter, 1M context, streams <think> tokens for chain-of-thought.
+REASONING_MODEL = os.getenv("REASONING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+VIEW_PARSING_MODEL = os.getenv("VIEW_PARSING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
 
 # Marketaux news API settings (market intelligence news source)
 MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")
@@ -16,19 +27,6 @@ MARKETAUX_API_URL = "https://api.marketaux.com/v1/news/all"
 MARKETAUX_LIMIT = int(os.getenv("MARKETAUX_LIMIT", "3"))
 # Comma-separated industries to pull news for (Marketaux taxonomy)
 MARKETAUX_INDUSTRIES = os.getenv("MARKETAUX_INDUSTRIES", "Financial Services,Technology")
-
-# Model used specifically for ARTICLE DIGESTION (turning news/articles into
-# structured investment theses). Nemotron Ultra is a strong long-context
-# reasoning/summarization model. View-parsing and portfolio commentary keep
-# using OPENROUTER_MODEL above.
-ARTICLE_DIGESTION_MODEL = os.getenv("ARTICLE_DIGESTION_MODEL", "openrouter/owl-alpha")
-
-# Model used for views translation and PM memo generation (fast free tier).
-VIEW_PARSING_MODEL = os.getenv("VIEW_PARSING_MODEL", "deepseek/deepseek-chat-v3-0324:free")
-
-# Model used for reasoning-heavy tasks: view parsing and consolidate_claims.
-# DeepSeek R1 is a free CoT reasoning model on OpenRouter; it streams <think> tokens.
-REASONING_MODEL = os.getenv("REASONING_MODEL", "deepseek/deepseek-r1:free")
 
 # FRED (Federal Reserve Economic Data) — free API key from https://fred.stlouisfed.org/docs/api/api_key.html
 # Used to pull hard US macro series (CPI, rates, unemployment, etc.).

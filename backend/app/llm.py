@@ -3,6 +3,7 @@ import json
 import os
 import re
 import httpx
+import numpy as np
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Union, Dict, Any, Optional
 from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL, VIEW_PARSING_MODEL, REASONING_MODEL
@@ -62,19 +63,22 @@ VALID_ASSETS = {"KR_STOCK", "GLOBAL_STOCK", "KR_BOND", "GLOBAL_BOND", "ALTERNATI
 def clean_and_parse_json(text: str) -> Dict[str, Any]:
     """
     Cleans markdown formatting and parses JSON string.
+    Strips <think>…</think> blocks that Nemotron/DeepSeek reasoning models emit.
     """
     cleaned = text.strip()
+    # Strip reasoning think blocks before extracting JSON
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
     # Remove code blocks if present
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned, re.IGNORECASE)
     if match:
         cleaned = match.group(1).strip()
-    
+
     # Try to find the first '{' and last '}'
     start_idx = cleaned.find("{")
     end_idx = cleaned.rfind("}")
     if start_idx != -1 and end_idx != -1:
         cleaned = cleaned[start_idx:end_idx+1]
-        
+
     return json.loads(cleaned)
 
 def parse_with_heuristics(view_text: str) -> List[Dict[str, Any]]:
@@ -233,6 +237,94 @@ def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
 
 
 
+async def _multi_call_confidence_calibration(
+    view_text: str,
+    initial_views: List[Dict[str, Any]],
+    macro_context_str: str,
+    n_calls: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Fires n_calls independent view-parsing calls using the cheap VIEW_PARSING_MODEL
+    at temperature=0.7 to sample Q prediction variance.
+
+    Logic (from He-Litterman / LLM-BLM research):
+      - High variance across samples → model is uncertain → penalise confidence
+      - std of ±2pp (0.02) in Q → no penalty
+      - std of ±6pp (0.06) → max penalty (-0.20 off confidence)
+      - Final confidence = 0.60 × self_reported + 0.40 × empirical, clamped [0.30, 0.70]
+    """
+    import asyncio
+
+    if not OPENROUTER_API_KEY or not initial_views:
+        return initial_views
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    system_prompt = _build_views_system_prompt(macro_context_str)
+
+    async def _single_sample() -> List[Dict]:
+        payload = {
+            "model": VIEW_PARSING_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": f'User View: "{view_text}"'},
+            ],
+            "temperature": 0.7,
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    OPENROUTER_API_URL, headers=headers, json=payload, timeout=600.0
+                )
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"]
+                parsed = clean_and_parse_json(content)
+                validated = InvestmentViews.model_validate(parsed)
+                return [v.model_dump() for v in validated.views]
+        except Exception as e:
+            logger.debug(f"Calibration sample failed: {e}")
+        return []
+
+    results = await asyncio.gather(*[_single_sample() for _ in range(n_calls)], return_exceptions=True)
+
+    # Collect Q samples keyed by asset signature
+    q_samples: Dict[str, List[float]] = {}
+    for res in results:
+        if isinstance(res, Exception) or not res:
+            continue
+        for v in res:
+            if v["view_type"] == "absolute" and v.get("asset") in VALID_ASSETS:
+                key = f"abs:{v['asset']}"
+                q_samples.setdefault(key, []).append(float(v.get("expected_return", 0)))
+            elif v["view_type"] == "relative" and v.get("asset1") in VALID_ASSETS and v.get("asset2") in VALID_ASSETS:
+                key = f"rel:{v['asset1']}:{v['asset2']}"
+                q_samples.setdefault(key, []).append(float(v.get("outperformance", 0)))
+
+    calibrated = []
+    for v in initial_views:
+        v = v.copy()
+        key = (f"abs:{v['asset']}" if v["view_type"] == "absolute"
+               else f"rel:{v.get('asset1')}:{v.get('asset2')}")
+        samples = q_samples.get(key, [])
+
+        if len(samples) >= 2:
+            std = float(np.std(samples))
+            # Penalty: each 0.02 of std subtracts 0.10 from empirical confidence
+            empirical_conf = float(np.clip(0.70 - (std / 0.02) * 0.10, 0.30, 0.70))
+            self_conf = float(v.get("confidence", 0.50))
+            blended = float(np.clip(0.60 * self_conf + 0.40 * empirical_conf, 0.30, 0.70))
+            v["confidence"] = round(blended, 3)
+            logger.info(
+                f"Variance calibration [{key}]: self={self_conf:.2f} "
+                f"std={std:.4f} empirical={empirical_conf:.2f} → blended={blended:.2f}"
+            )
+        calibrated.append(v)
+
+    return calibrated
+
+
 async def parse_views_with_llm_stream(view_text: str):
     """
     Async generator using DeepSeek R1 (free reasoning model) with streaming.
@@ -280,7 +372,7 @@ async def parse_views_with_llm_stream(view_text: str):
     try:
         async with httpx.AsyncClient() as client:
             async with client.stream(
-                "POST", OPENROUTER_API_URL, headers=headers, json=payload, timeout=180.0
+                "POST", OPENROUTER_API_URL, headers=headers, json=payload, timeout=600.0
             ) as response:
                 if response.status_code != 200:
                     body = await response.aread()
@@ -299,36 +391,40 @@ async def parse_views_with_llm_stream(view_text: str):
                         choices = chunk_data.get("choices", [])
                         if not choices:
                             continue
-                        token = choices[0].get("delta", {}).get("content") or ""
+                        delta = choices[0].get("delta", {})
+
+                        # Nemotron 3 Ultra sends reasoning in delta.reasoning (not <think> tags)
+                        reasoning_tok = delta.get("reasoning") or ""
+                        if reasoning_tok:
+                            yield {"type": "thinking", "chunk": reasoning_tok}
+
+                        token = delta.get("content") or ""
                         if not token:
                             continue
                         full_content += token
 
-                        # State machine: emit thinking chunks as they stream in
+                        # Fallback: <think> tag state machine for models that embed CoT in content
                         while True:
                             if not in_think:
                                 idx = full_content.find("<think>", last_emitted)
                                 if idx == -1:
                                     break
                                 in_think = True
-                                last_emitted = idx + 7  # skip past "<think>"
+                                last_emitted = idx + 7
                             else:
                                 end_idx = full_content.find("</think>", last_emitted)
                                 if end_idx == -1:
-                                    # Still inside — emit everything except a 10-char safety buffer
                                     safe_end = max(last_emitted, len(full_content) - 10)
                                     if safe_end > last_emitted:
                                         yield {"type": "thinking", "chunk": full_content[last_emitted:safe_end]}
                                         last_emitted = safe_end
                                     break
                                 else:
-                                    # Closing tag found — flush remaining thinking content
                                     chunk_text = full_content[last_emitted:end_idx]
                                     if chunk_text:
                                         yield {"type": "thinking", "chunk": chunk_text}
-                                    last_emitted = end_idx + 9  # skip past "</think>"
+                                    last_emitted = end_idx + 9
                                     in_think = False
-                                    # loop again in case model has multiple think blocks
 
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
@@ -342,7 +438,22 @@ async def parse_views_with_llm_stream(view_text: str):
     answer = re.sub(r"<think>.*?</think>", "", full_content, flags=re.DOTALL).strip()
     if not answer:
         answer = full_content.strip()
-    yield {"type": "result", "views": _parse_and_clamp_views(answer, view_text)}
+
+    initial_views = _parse_and_clamp_views(answer, view_text)
+
+    # --- Variance-based confidence calibration ---
+    # Fire 3 independent VIEW_PARSING_MODEL calls and use Q variance to
+    # empirically validate/penalise self-reported confidence scores.
+    yield {"type": "thinking", "chunk": "\n\n[Variance calibration: sampling 3× with VIEW_PARSING_MODEL to validate confidence...]"}
+    try:
+        calibrated_views = await _multi_call_confidence_calibration(
+            view_text, initial_views, macro_context_str, n_calls=3
+        )
+    except Exception as e:
+        logger.warning(f"Variance calibration failed ({e}), using initial views.")
+        calibrated_views = initial_views
+
+    yield {"type": "result", "views": calibrated_views}
 
 
 async def parse_views_with_llm(view_text: str) -> List[Dict[str, Any]]:
@@ -441,27 +552,29 @@ guide's formatting rules — no JSON, no Markdown syntax, no preamble or sign-of
     }
     
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": REASONING_MODEL,
         "messages": [
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.3
     }
-    
+
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=20.0)
-        
+            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=600.0)
+
         if response.status_code == 200:
             res_json = response.json()
             choices = res_json.get("choices", [])
             if choices:
-                commentary = choices[0]["message"]["content"].strip()
+                raw = choices[0]["message"]["content"].strip()
+                # Strip <think>…</think> reasoning blocks that Nemotron/DeepSeek emit
+                commentary = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
                 logger.info("Successfully generated AI portfolio commentary.")
                 return commentary
     except Exception as e:
         logger.warning(f"AI commentary generation failed: {e}")
-    
+
     return _generate_fallback_commentary(optimized_weights, market_weights, risk_metrics)
 
 
@@ -577,7 +690,7 @@ Provide your Portfolio Manager (Jerry's) internal memo analyzing these views aga
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=20.0)
+            response = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=600.0)
 
         if response.status_code == 200:
             res_json = response.json()
