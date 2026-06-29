@@ -1,6 +1,8 @@
-import { Workspace } from "./Workspace";
-
-// Demo: lands pre-populated with a sample optimization (auto-runs on mount).
 export default function Page() {
-  return <Workspace mode="demo" />;
+  return (
+    <div style={{ background: "#000", color: "#fff", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif" }}>
+      <h1>Etacolla Landing Page Placeholder</h1>
+    </div>
+  );
 }
+
