@@ -59,6 +59,7 @@ const TICKER = [
 const TAB_GROUPS: { label: string; tabs: string[] }[] = [
   { label: "입력", tabs: ["매크로", "인텔리전스", "리서치"] },
   { label: "결과", tabs: ["배분", "리스크", "프론티어", "리포트"] },
+  { label: "시스템", tabs: ["가이드"] },
 ];
 
 const REASONING =
@@ -177,6 +178,30 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const r = await fetch(API_BASE + "/market-intelligence/" + encodeURIComponent(id), { method: "DELETE" });
       if (!r.ok) throw new Error("delete failed");
     } catch { setIntel(prev); }
+  };
+
+  // Delete an individual house thesis
+  const deleteThesis = async (id: string) => {
+    if (!id) return;
+    const prev = houseTheses;
+    setHouseTheses((p) => p.filter((x: any) => x.id !== id));
+    try {
+      const r = await fetch(API_BASE + "/theses/" + encodeURIComponent(id), { method: "DELETE" });
+      if (!r.ok) throw new Error("delete failed");
+    } catch { setHouseTheses(prev); }
+  };
+
+  // Reset/delete all house theses
+  const resetTheses = async () => {
+    if (houseTheses.length === 0) return;
+    if (!window.confirm(`${houseTheses.length}개의 하우스 뷰를 모두 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`)) return;
+    const prev = houseTheses;
+    setHouseTheses([]);
+    try {
+      const r = await fetch(API_BASE + "/theses", { method: "DELETE" });
+      if (!r.ok) throw new Error("reset failed");
+      setResearchMsg("하우스 뷰 보드를 초기화했습니다.");
+    } catch { setHouseTheses(prev); }
   };
 
   // Streaming refresh — live log (reading → selecting → analyzing) instead of blanking.
@@ -622,8 +647,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "프론티어" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <FrontierTab sim={sim} />)}
             {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={setIntelOpen} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
             {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
-            {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} />}
+            {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
             {tab === "리포트" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <ReportTab sim={sim} />)}
+            {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
           </div>
         </div>
       </div>
@@ -1310,9 +1336,10 @@ const D_MOCK: any[] = [
   ["JERRY", C.amber, "근거 폭은 Bull 우세 — 해외주식 확대, 단 강도 절제하고 채권 소폭 확대로 헤지.", C.t2, true],
 ];
 
-function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectProgress, onBuild, building, msg, onAttachThesis }: {
+function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectProgress, onBuild, building, msg, onAttachThesis, onDeleteThesis, onResetTheses }: {
   queue: any[]; theses: any[]; onCollect: () => void; collecting: boolean; collectProgress: { phase: string; items: string[] } | null;
   onBuild: () => void; building: boolean; msg: string; onAttachThesis: (t: any) => void;
+  onDeleteThesis: (id: string) => void; onResetTheses: () => void;
 }) {
   const queueRows = (qIn && qIn.length)
     ? qIn.slice(0, 12).map((d) => {
@@ -1370,7 +1397,26 @@ function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectPr
 
           {/* house theses — draggable to chat */}
           <Card style={{ padding: 14, display: "flex", flexDirection: "column", gap: 9, maxHeight: "64vh", overflowY: "auto" }}>
-            <div style={colHdr}>하우스 논거 · 채팅으로 드래그</div>
+            <div style={{ ...colHdr, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>하우스 논거 · 채팅으로 드래그</span>
+              {tIn && tIn.length > 0 && (
+                <button
+                  onClick={onResetTheses}
+                  style={{
+                    fontSize: 9,
+                    fontFamily: FA,
+                    background: "none",
+                    border: "none",
+                    color: C.red,
+                    cursor: "pointer",
+                    padding: 0,
+                    textDecoration: "underline",
+                  }}
+                >
+                  전체 초기화
+                </button>
+              )}
+            </div>
             {tIn && tIn.length ? tIn.slice(0, 8).map((t: any) => {
               const key = t.asset || t.asset1 || "GLOBAL_STOCK";
               const conf = Math.round((t.confidence ?? 0) * 100);
@@ -1389,7 +1435,25 @@ function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectPr
                     <span style={{ marginLeft: "auto", fontSize: 9.5, fontFamily: FM, color: cc, flex: "0 0 auto" }}>{conf}%</span>
                   </div>
                   <div style={{ fontSize: 10.5, lineHeight: 1.55, color: "#8a8a8a", marginBottom: 9 }}>{t.rationale}</div>
-                  <span onClick={() => onAttachThesis(t)} style={{ fontSize: 9.5, fontFamily: FA, letterSpacing: ".5px", color: C.cyan, border: "1px solid rgba(34,211,238,.3)", background: "rgba(34,211,238,.08)", padding: "4px 9px", borderRadius: 4, cursor: "pointer" }}>+ 채팅에 추가</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span onClick={() => onAttachThesis(t)} style={{ fontSize: 9.5, fontFamily: FA, letterSpacing: ".5px", color: C.cyan, border: "1px solid rgba(34,211,238,.3)", background: "rgba(34,211,238,.08)", padding: "4px 9px", borderRadius: 4, cursor: "pointer" }}>+ 채팅에 추가</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteThesis(t.id); }}
+                      style={{
+                        fontFamily: FA,
+                        fontSize: 9,
+                        color: C.red,
+                        background: "rgba(239,68,68,.08)",
+                        border: "1px solid rgba(239,68,68,.3)",
+                        padding: "3px 6px",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                      title="삭제"
+                    >
+                      ✕ 삭제
+                    </button>
+                  </div>
                 </div>
               );
             }) : (
@@ -1593,6 +1657,14 @@ function ReportTab({ sim }: { sim: any }) {
         </div>
         <div style={{ marginTop: 22, padding: "13px 16px", background: C.panel2, border: `1px solid ${C.b1}`, borderRadius: 8, fontSize: 10, lineHeight: 1.7, color: C.t4 }}>면책: 본 보고서는 공급된 데이터에 근거한 내부 검토용 문서이며 투자 권유가 아닙니다. 사후 기대수익률·VaR·낙폭은 확정치가 아니라 블랙-리터만 및 몬테카를로 모델의 추정치이며, 실제 성과는 시장 상황에 따라 달라질 수 있습니다. NEMOTRON 3 SUPER 추론 기반 · RUN {runId}.</div>
       </div>
+    </div>
+  );
+}
+
+function GuideTab({ onNavigate, runSimulation, running }: { onNavigate: (t: string) => void; runSimulation: () => void; running: boolean }) {
+  return (
+    <div style={{ color: "#fff", padding: "10px" }}>
+      <h3>Guide Tab Stub</h3>
     </div>
   );
 }
