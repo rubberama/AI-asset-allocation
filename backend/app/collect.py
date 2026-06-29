@@ -159,6 +159,71 @@ async def collect_documents(db: Session) -> Dict[str, Any]:
     }
 
 
+async def collect_documents_with_progress(db: Session):
+    """Streaming variant of collect_documents — yields a progress event as each collector
+    finishes, then scores/persists the union and yields a final summary."""
+    yield {"type": "phase", "msg": "매크로 소스 연결 중…"}
+
+    prior_etf_shares: Dict[str, float] = {}
+    for row in db.query(Document).filter(Document.source == "ETF_FLOWS").all():
+        payload = row.payload or {}
+        ticker = payload.get("ticker"); shares = payload.get("shares")
+        if ticker and shares:
+            prior_etf_shares[ticker] = float(shares)
+
+    async def _named(name: str, coro):
+        try:
+            res = await coro
+            return name, (res if isinstance(res, list) else [])
+        except Exception as e:
+            logger.warning(f"Collector {name} failed: {e}")
+            return name, []
+
+    collectors = [
+        ("FRED", fetch_fred_series()),
+        ("GDELT", fetch_gdelt_articles()),
+        ("Marketaux", _fetch_marketaux_as_docs()),
+        ("ECOS", fetch_ecos_series()),
+        ("CFTC", fetch_cftc_cot()),
+        ("ETF Flows", fetch_etf_flows(prior_shares=prior_etf_shares)),
+        ("Central Banks", fetch_central_bank_docs()),
+        ("Bank Research", fetch_bank_research_docs()),
+        ("News Feeds", fetch_news_feeds()),
+    ]
+    yield {"type": "phase", "msg": f"{len(collectors)}개 소스에서 문서 수집 중…"}
+
+    tasks = [asyncio.ensure_future(_named(n, c)) for n, c in collectors]
+    collected: List[Dict[str, Any]] = []
+    summary: Dict[str, int] = {}
+    for fut in asyncio.as_completed(tasks):
+        name, docs = await fut
+        summary[name] = len(docs)
+        collected.extend(docs)
+        yield {"type": "source", "name": name, "count": len(docs)}
+
+    yield {"type": "phase", "msg": "관련도 점수화 · 중복 제거 중…"}
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for d in collected:
+        by_id[d["id"]] = d
+    for row in db.query(Document).all():
+        by_id.setdefault(row.id, _doc_row_to_dict(row))
+    union = list(by_id.values())
+    score_documents(union)
+    for d in union:
+        _upsert(db, d)
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to persist documents (stream): {e}")
+        yield {"type": "error", "msg": str(e)}
+        return
+
+    summary["collected_now"] = len(collected)
+    summary["total_in_store"] = len(union)
+    yield {"type": "done", "summary": summary}
+
+
 def get_research_queue(db: Session, asset_filter: Optional[str] = None, limit: int = 40) -> List[Dict[str, Any]]:
     """Returns the ranked, de-duplicated research queue from stored documents."""
     docs = [_doc_row_to_dict(r) for r in db.query(Document).all()]

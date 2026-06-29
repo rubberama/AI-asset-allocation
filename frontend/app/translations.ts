@@ -24,7 +24,7 @@ export const translations = {
     pipelineDesc:
       "FastAPI 백엔드에서 실시간 베이지안 업데이트 연산 및 10,000회 몬테카를로 경로 시뮬레이션을 진행하고 있습니다.",
     stepRunning: "실행 중",
-    deepseekLabel: "DEEPSEEK R1 · AI 추론 트레이스",
+    deepseekLabel: "NEMOTRON 3 SUPER · AI 추론 트레이스",
     collapse: "▲ 접기",
     expand: "▼ 펼치기",
     steps: [
@@ -248,7 +248,7 @@ export const translations = {
     // Research Pipeline tab
     researchTitle: "매크로 리서치 파이프라인",
     researchSubtitle:
-      "매크로 정보 수집 및 선택 → 보정된 논거 구축 (Nemotron Ultra) → 자산배분 계산 (Idzorek BL).",
+      "매크로 정보 수집 및 선택 → 보정된 논거 구축 (Nemotron Super) → 자산배분 계산 (Idzorek BL).",
     btnCollect: "1 · 수집",
     btnBuildTheses: "2 · 논거 구축",
     researchQueueLabel: "리서치 큐",
@@ -437,7 +437,7 @@ export const translations = {
     pipelineDesc:
       "Running real-time Bayesian update computations and 10,000-trial Monte Carlo path simulations on the FastAPI backend.",
     stepRunning: "RUNNING",
-    deepseekLabel: "DEEPSEEK R1 · AI REASONING TRACE",
+    deepseekLabel: "NEMOTRON 3 SUPER · AI REASONING TRACE",
     collapse: "▲ COLLAPSE",
     expand: "▼ EXPAND",
     steps: [
@@ -660,7 +660,7 @@ export const translations = {
     // Research Pipeline tab
     researchTitle: "MACRO RESEARCH PIPELINE",
     researchSubtitle:
-      "Search & select macro info → build calibrated theses (Nemotron Ultra) → compute allocation (Idzorek BL).",
+      "Search & select macro info → build calibrated theses (Nemotron Super) → compute allocation (Idzorek BL).",
     btnCollect: "1 · COLLECT",
     btnBuildTheses: "2 · BUILD THESES",
     researchQueueLabel: "RESEARCH QUEUE",

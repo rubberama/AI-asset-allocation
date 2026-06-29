@@ -124,6 +124,38 @@ def run_monte_carlo_simulation(
         "histogram_data": histogram_data
     }
 
+# Historical drawdown vectors (approximate peak-to-trough for each asset class).
+# Reused by market_data.regime_blended_covariance to estimate the crisis correlation
+# structure assets exhibit when markets break down (they co-move toward 1).
+HISTORICAL_STRESS_SCENARIOS = [
+    {
+        "name": "COVID-19 Crash (2020.03)",
+        "name_kr": "코로나19 팬데믹 폭락 (2020.03)",
+        "shocks": {"KR_STOCK": -0.35, "GLOBAL_STOCK": -0.34, "KR_BOND": 0.02, "GLOBAL_BOND": 0.03, "ALTERNATIVE": -0.28}
+    },
+    {
+        "name": "Global Financial Crisis (2008)",
+        "name_kr": "글로벌 금융위기 (2008)",
+        "shocks": {"KR_STOCK": -0.55, "GLOBAL_STOCK": -0.50, "KR_BOND": 0.08, "GLOBAL_BOND": 0.10, "ALTERNATIVE": -0.40}
+    },
+    {
+        "name": "Rate Hike Cycle (2022)",
+        "name_kr": "급격한 금리인상 사이클 (2022)",
+        "shocks": {"KR_STOCK": -0.25, "GLOBAL_STOCK": -0.20, "KR_BOND": -0.10, "GLOBAL_BOND": -0.15, "ALTERNATIVE": -0.30}
+    },
+    {
+        "name": "Taper Tantrum (2013)",
+        "name_kr": "테이퍼 탠트럼 (2013)",
+        "shocks": {"KR_STOCK": -0.08, "GLOBAL_STOCK": -0.05, "KR_BOND": -0.06, "GLOBAL_BOND": -0.08, "ALTERNATIVE": -0.12}
+    },
+    {
+        "name": "Eurozone Debt Crisis (2011)",
+        "name_kr": "유럽 재정위기 (2011)",
+        "shocks": {"KR_STOCK": -0.18, "GLOBAL_STOCK": -0.20, "KR_BOND": 0.03, "GLOBAL_BOND": 0.05, "ALTERNATIVE": -0.15}
+    }
+]
+
+
 def run_historical_stress_test(
     weights: Dict[str, float]
 ) -> List[Dict[str, Any]]:
@@ -133,38 +165,9 @@ def run_historical_stress_test(
     """
     assets = list(weights.keys())
     w = np.array([weights[a] for a in assets])
-    
-    # Historical drawdown vectors (approximate peak-to-trough for each asset class)
-    scenarios = [
-        {
-            "name": "COVID-19 Crash (2020.03)",
-            "name_kr": "코로나19 팬데믹 폭락 (2020.03)",
-            "shocks": {"KR_STOCK": -0.35, "GLOBAL_STOCK": -0.34, "KR_BOND": 0.02, "GLOBAL_BOND": 0.03, "ALTERNATIVE": -0.28}
-        },
-        {
-            "name": "Global Financial Crisis (2008)",
-            "name_kr": "글로벌 금융위기 (2008)",
-            "shocks": {"KR_STOCK": -0.55, "GLOBAL_STOCK": -0.50, "KR_BOND": 0.08, "GLOBAL_BOND": 0.10, "ALTERNATIVE": -0.40}
-        },
-        {
-            "name": "Rate Hike Cycle (2022)",
-            "name_kr": "급격한 금리인상 사이클 (2022)",
-            "shocks": {"KR_STOCK": -0.25, "GLOBAL_STOCK": -0.20, "KR_BOND": -0.10, "GLOBAL_BOND": -0.15, "ALTERNATIVE": -0.30}
-        },
-        {
-            "name": "Taper Tantrum (2013)",
-            "name_kr": "테이퍼 탠트럼 (2013)",
-            "shocks": {"KR_STOCK": -0.08, "GLOBAL_STOCK": -0.05, "KR_BOND": -0.06, "GLOBAL_BOND": -0.08, "ALTERNATIVE": -0.12}
-        },
-        {
-            "name": "Eurozone Debt Crisis (2011)",
-            "name_kr": "유럽 재정위기 (2011)",
-            "shocks": {"KR_STOCK": -0.18, "GLOBAL_STOCK": -0.20, "KR_BOND": 0.03, "GLOBAL_BOND": 0.05, "ALTERNATIVE": -0.15}
-        }
-    ]
-    
+
     results = []
-    for scenario in scenarios:
+    for scenario in HISTORICAL_STRESS_SCENARIOS:
         shock_vec = np.array([scenario["shocks"].get(a, 0.0) for a in assets])
         portfolio_impact = float(np.dot(w, shock_vec))
         results.append({

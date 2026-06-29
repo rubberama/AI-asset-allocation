@@ -199,11 +199,14 @@ IMPORTANT: Use the real-time market data above to CALIBRATE your expected return
 - If a market has rallied significantly (6M return > 15%), consider mean reversion risk.
 - If yields are dropping, bond expected returns should be higher (price appreciation).
 
+SOURCE CITATION RULES (CRITICAL):
+- If the user's input contains structured article references in the format "[Author - Title]: content" or starts with "--- [Selected Market Intelligence] ---", you MUST cite those EXACT author names and article titles in your "sources" array for each relevant view. For example: if the input contains "[Goldman Sachs - Global Equity Outlook]: ...", your sources should include "Goldman Sachs - Global Equity Outlook". Do NOT substitute generic index names (e.g. "S&P 500", "FRED CPI") when specific research articles are provided.
+- If no structured articles are provided, list 1-3 realistic supporting data sources or indices.
+
 Rules:
 - Annualized expected returns MUST be realistic: absolute views in [-0.10, +0.14], relative outperformance in [-0.08, +0.08].
 - Confidence strictly between 0.30 and 0.70. Do NOT output confidence above 0.70 — calibrate carefully.
-- Provide a professional "thesis" explaining the economic mechanism.
-- List 1-3 realistic data sources under "sources".
+- Provide a professional "thesis" explaining the economic mechanism, referencing the specific articles or research provided in the input.
 - Only reference the allowed asset keys.
 - Output ONLY valid, parseable JSON. No explanations outside the JSON."""
 
@@ -327,7 +330,7 @@ async def _multi_call_confidence_calibration(
 
 async def parse_views_with_llm_stream(view_text: str):
     """
-    Async generator using DeepSeek R1 (free reasoning model) with streaming.
+    Async generator using the REASONING_MODEL (Nemotron 3 Super, free) with streaming.
     Yields:
       {"type": "thinking", "chunk": "..."}  — live CoT tokens from <think> block
       {"type": "result",   "views": [...]}  — final parsed BL views (always last)
@@ -393,7 +396,7 @@ async def parse_views_with_llm_stream(view_text: str):
                             continue
                         delta = choices[0].get("delta", {})
 
-                        # Nemotron 3 Ultra sends reasoning in delta.reasoning (not <think> tags)
+                        # Nemotron 3 Super sends reasoning in delta.reasoning (not <think> tags)
                         reasoning_tok = delta.get("reasoning") or ""
                         if reasoning_tok:
                             yield {"type": "thinking", "chunk": reasoning_tok}

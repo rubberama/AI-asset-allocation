@@ -1,6 +1,6 @@
 """Thesis Engine — Stage 2.
 
-Two passes over the ranked research queue, powered by Nemotron Ultra:
+Two passes over the ranked research queue, powered by Nemotron Super:
   Pass A  — extract atomic macro claims from each document.
   Pass B  — consolidate claims into one calibrated house view per asset / pair,
             resolving bull-vs-bear conflicts.
@@ -87,7 +87,7 @@ async def _call_llm(system_prompt: str, user_content: str, timeout: float = 600.
 
 async def _call_reasoning_llm(system_prompt: str, user_content: str, timeout: float = 600.0) -> Optional[Dict[str, Any]]:
     """
-    OpenRouter call using REASONING_MODEL (DeepSeek R1 free).
+    OpenRouter call using REASONING_MODEL (Nemotron 3 Super, free).
     Strips <think>…</think> CoT blocks before JSON parsing.
     Timeout is long because free R1 can take 60-120 s.
     """
@@ -197,10 +197,10 @@ async def consolidate_claims(bull_claims: List[Dict[str, Any]], bear_claims: Lis
     persona = load_persona("thesis_persona.md")
     system_prompt = f"{persona}\n\n{_PASS_B_TASK}" if persona else _PASS_B_TASK
     content = f"Bull Claims:\n{json.dumps(bull_claims, ensure_ascii=False)}\n\nBear Claims:\n{json.dumps(bear_claims, ensure_ascii=False)}"
-    # Pass B uses DeepSeek R1 reasoning model — it weighs conflicting macro evidence
+    # Pass B uses the Nemotron 3 Super reasoning model — it weighs conflicting macro evidence
     parsed = await _call_reasoning_llm(system_prompt, content)
     views = (parsed or {}).get("views", [])
-    logger.info(f"Jerry Pass B (DeepSeek R1) consolidated {len(bull_claims)} bull + {len(bear_claims)} bear claims → {len(views)} house views.")
+    logger.info(f"Jerry Pass B (Nemotron 3 Super) consolidated {len(bull_claims)} bull + {len(bear_claims)} bear claims → {len(views)} house views.")
     return views
 
 
@@ -277,6 +277,7 @@ async def build_theses(db: Session, top_n: int = 12) -> List[Dict[str, Any]]:
             status="draft",
         )
         db.add(row)
+        db.flush()  # populate server-side defaults (created_at) before serializing
         stored.append(_thesis_to_dict(row))
     db.commit()
     logger.info(f"Built and stored {len(stored)} calibrated theses.")

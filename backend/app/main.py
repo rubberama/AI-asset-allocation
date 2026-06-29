@@ -2,7 +2,7 @@ import logging
 import numpy as np
 import json
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -12,7 +12,9 @@ from typing import Dict, List, Any, Optional
 from app.db import init_db, get_db, Simulation, NpsSnapshot
 from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU, DEFAULT_RISK_FREE_RATE
 from app.crawler import fetch_and_sync_nps_data
-from app.market_data import fetch_market_data, fetch_risk_free_rate
+from app.market_data import (
+    fetch_market_data, fetch_risk_free_rate, regime_blended_covariance, _REGIME_STRESS_ALPHA,
+)
 from app.llm import (
     parse_views_with_llm, parse_views_with_llm_stream, parse_heuristics_and_validate,
     get_last_macro_context, generate_portfolio_commentary, generate_pm_memo,
@@ -64,6 +66,7 @@ class StressTestRequest(BaseModel):
 class IngestUrlRequest(BaseModel):
     url: Optional[str] = Field(None, description="Article URL to fetch, read, and analyze into a thesis")
     content: Optional[str] = Field(None, description="Pasted article text (used when the URL is not fetchable)")
+    confirm: bool = Field(False, description="Skip the asset-allocation relevance gate (user confirmed after a warning)")
 
 class PromoteThesisRequest(BaseModel):
     thesis_id: str = Field(..., description="ID of the thesis to promote to market intelligence category RESEARCH")
@@ -194,10 +197,10 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             covariance = market_data["covariance"]
             risk_free_rate = await asyncio.to_thread(fetch_risk_free_rate)
             
-            # 3. Parse user views with DeepSeek R1 (streaming CoT reasoning)
+            # 3. Parse user views with Nemotron 3 Super (streaming CoT reasoning)
             yield json.dumps({
                 "step": 3,
-                "message": "DeepSeek R1 추론 모델이 투자 의견을 분석하고 있습니다. 최대 2분 소요될 수 있습니다..."
+                "message": "Nemotron 3 Super 추론 모델이 투자 의견을 분석하고 있습니다. 최대 2분 소요될 수 있습니다..."
             }) + "\n"
             await asyncio.sleep(0.02)
 
@@ -244,6 +247,13 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             tau = request.tau
             if tau is None:
                 tau = DEFAULT_TAU
+
+            # Regime-conditional covariance: blend the long-run Σ toward a crisis Σ by an
+            # amount set by the detected regime, so the prior, posterior, optimizer and
+            # risk metrics all reflect the regime the platform detects (λ stays estimated
+            # from the long-run Σ above, on purpose).
+            regime = (macro_context or {}).get("market_regime", "NORMAL")
+            covariance = regime_blended_covariance(covariance, regime)
 
             prior_returns, post_returns, post_covariance = run_black_litterman(
                 market_weights=market_weights,
@@ -411,7 +421,11 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                 "ai_commentary": ai_commentary,
                 "historical_stress_tests": historical_stress_tests,
                 "pm_memo": pm_memo,
-                "min_variance_fallback": min_variance_fallback
+                "min_variance_fallback": min_variance_fallback,
+                "covariance_regime": {
+                    "regime": regime,
+                    "stress_alpha": _REGIME_STRESS_ALPHA.get((regime or "NORMAL").upper(), 0.15),
+                }
             }
             yield json.dumps({"step": 9, "message": "자산배분 시뮬레이션이 성공적으로 완료되었습니다.", "data": result_data}) + "\n"
             
@@ -512,7 +526,7 @@ async def ingest_market_intelligence_from_url(request: IngestUrlRequest, db: Ses
     """
     try:
         from app.market_intelligence import ingest_article
-        result = await ingest_article(db, url=request.url, content=request.content)
+        result = await ingest_article(db, url=request.url, content=request.content, confirm=request.confirm)
         if result.get("status") == "error":
             raise HTTPException(status_code=400, detail=result.get("message", "Ingestion failed"))
         return result
@@ -558,6 +572,18 @@ async def promote_theses_batch(request: PromoteMultipleThesesRequest, db: Sessio
         logger.error(f"Failed to batch-promote theses: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.delete("/market-intelligence/{intel_id}")
+def delete_market_intelligence(intel_id: str, db: Session = Depends(get_db)):
+    """Delete a single market-intelligence item from the feed."""
+    from app.db import MarketIntelligence
+    item = db.query(MarketIntelligence).filter(MarketIntelligence.id == intel_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Market intelligence item not found")
+    db.delete(item)
+    db.commit()
+    return {"status": "ok", "deleted": intel_id}
+
 @app.post("/research/collect")
 async def collect_research(db: Session = Depends(get_db)):
     """Runs the macro collectors (FRED, GDELT, Marketaux), scores and de-dupes the
@@ -569,6 +595,23 @@ async def collect_research(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Research collection failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/research/collect-stream")
+async def research_collect_stream(db: Session = Depends(get_db)):
+    """SSE: streams live progress while the macro collectors run, so the UI can show a
+    per-source log (FRED → GDELT → … → scored & stored)."""
+    from app.collect import collect_documents_with_progress
+
+    async def event_generator():
+        async for event in collect_documents_with_progress(db):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/research/queue")
@@ -584,7 +627,7 @@ def research_queue(asset: Optional[str] = None, limit: int = 40, db: Session = D
 
 @app.post("/thesis/build")
 async def build_thesis(db: Session = Depends(get_db)):
-    """Stage 2: digest the research queue into calibrated house-view theses (Nemotron Ultra, 2-pass)."""
+    """Stage 2: digest the research queue into calibrated house-view theses (Nemotron Super, 2-pass)."""
     try:
         from app.thesis_engine import build_theses
         from app.collect import get_research_queue
@@ -641,6 +684,27 @@ def set_thesis_status(thesis_id: str, status: str, db: Session = Depends(get_db)
     return {"status": "ok", "id": thesis_id, "new_status": status}
 
 
+@app.delete("/theses/{thesis_id}")
+def delete_thesis(thesis_id: str, db: Session = Depends(get_db)):
+    """Delete a single house thesis."""
+    from app.db import Thesis
+    t = db.query(Thesis).filter(Thesis.id == thesis_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Thesis not found")
+    db.delete(t)
+    db.commit()
+    return {"status": "ok", "deleted": thesis_id}
+
+
+@app.delete("/theses")
+def reset_theses(db: Session = Depends(get_db)):
+    """Reset the house thesis board — deletes all stored theses."""
+    from app.db import Thesis
+    deleted = db.query(Thesis).delete()
+    db.commit()
+    return {"status": "ok", "deleted_count": deleted}
+
+
 @app.post("/allocate")
 def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)):
     """Stage 3: turn APPROVED theses into an allocation decision package.
@@ -662,6 +726,10 @@ def allocate_from_theses(request: AllocateRequest, db: Session = Depends(get_db)
         base_lambda = _estimate_risk_aversion(market_weights, covariance)
         risk_aversion = base_lambda * _regime_lambda_multiplier(macro_context)
         tau = DEFAULT_TAU  # He-Litterman (1999): 0.05 standard
+
+        # Regime-conditional covariance (λ estimated from long-run Σ above, then blend).
+        regime = (macro_context or {}).get("market_regime", "NORMAL")
+        covariance = regime_blended_covariance(covariance, regime)
 
         prior_returns, post_returns, post_covariance = run_black_litterman(
             market_weights=market_weights, covariance_dict=covariance, views=views,
@@ -718,7 +786,7 @@ async def backtest(db: Session = Depends(get_db)):
 
 
 @app.post("/market-intelligence/from-pdf")
-async def ingest_market_intelligence_from_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def ingest_market_intelligence_from_pdf(file: UploadFile = File(...), confirm: bool = Form(False), db: Session = Depends(get_db)):
     """Accepts a PDF upload (research report, policy paper, etc.), extracts its text,
     and analyzes it into a structured thesis added to the feed."""
     try:
@@ -731,7 +799,7 @@ async def ingest_market_intelligence_from_pdf(file: UploadFile = File(...), db: 
                 "message": "PDF에서 텍스트를 추출하지 못했습니다 (스캔 이미지 PDF일 수 있습니다). "
                            "기사/리포트 본문을 복사하여 붙여넣어 주세요.",
             }
-        result = await ingest_article(db, content=text, source_label=f"PDF: {file.filename}")
+        result = await ingest_article(db, content=text, source_label=f"PDF: {file.filename}", confirm=confirm)
         if result.get("status") == "error":
             raise HTTPException(status_code=400, detail=result.get("message", "Ingestion failed"))
         return result

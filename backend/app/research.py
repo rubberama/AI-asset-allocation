@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 # Macro taxonomy: keywords that, when present, raise a document's relevance to a sleeve.
 ASSET_KEYWORDS: Dict[str, List[str]] = {
     "KR_STOCK": ["korea", "korean", "kospi", "won", "samsung", "seoul", "bank of korea", "kr equity",
-                 "ewy", "korean trade", "household credit", "ecos"],
+                 "ewy", "korean trade", "household credit", "ecos",
+                 "semiconductor", "chip", "dram", "memory chip", "hbm", "sk hynix", "export"],
     "GLOBAL_STOCK": ["equity", "equities", "stock", "s&p", "nasdaq", "earnings", "tech", "ai",
-                     "global growth", "msci", "wall street", "e-mini s&p"],
+                     "global growth", "msci", "wall street", "e-mini s&p",
+                     "semiconductor", "chip", "nvidia", "memory chip"],
     "KR_BOND": ["korea", "korean", "bank of korea", "won", "kr bond", "korea bond", "ktb",
                 "mpb", "bok rate", "monetary policy board", "bank of korea minutes"],
     "GLOBAL_BOND": ["treasury", "yield", "bond", "duration", "fed funds", "interest rate", "rate cut",
@@ -173,14 +175,49 @@ def score_documents(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return docs
 
 
+# Report-grade sources that use the NEWS source_type but are institutional research,
+# not consumer headlines — always kept in the research queue.
+RESEARCH_GRADE_SOURCES = {
+    "GoldmanSachs", "MorganStanley", "JPMorgan", "Brookings", "PIIE",
+    "NBER", "WorldBank", "IMF", "BIS",
+}
+# A NEWS doc needs at least this relevance to one sleeve to count as "carrying a macro signal".
+MACRO_SIGNAL_THRESHOLD = 0.33
+
+
+def is_macro_relevant(doc: Dict[str, Any]) -> bool:
+    """Decides whether a document belongs in the macro RESEARCH queue.
+
+    Official data and reports (MACRO_DATA, CB_PUBLICATION, POSITIONING, EVENT) and
+    institutional research sources always qualify. Generic NEWS qualifies only if it
+    carries a real macro signal — tagged sleeve_hint=MACRO, or relevant to some sleeve
+    via the keyword taxonomy. Pure company/markets noise is dropped (it remains available
+    in the Market Intelligence feed)."""
+    source_type = doc.get("source_type", "")
+    if source_type != "NEWS":
+        return True  # official data / reports / events
+    if (doc.get("source") or "") in RESEARCH_GRADE_SOURCES:
+        return True  # institutional research using the NEWS type
+    if ((doc.get("payload") or {}).get("sleeve_hint") or "") == "MACRO":
+        return True
+    rel = doc.get("relevance") or {}
+    return bool(rel) and max(rel.values()) >= MACRO_SIGNAL_THRESHOLD
+
+
 def rank_queue(
     docs: List[Dict[str, Any]],
     asset_filter: str = None,
     collapse_duplicates: bool = True,
+    macro_only: bool = True,
 ) -> List[Dict[str, Any]]:
     """Returns documents ranked by composite score, optionally filtered to one sleeve
-    and collapsed to one representative per dedup cluster (highest score wins)."""
+    and collapsed to one representative per dedup cluster (highest score wins).
+
+    When macro_only is True (default), generic company/markets news with no macro signal
+    is excluded so the research queue stays focused on macro data, reports, and macro news."""
     result = docs
+    if macro_only:
+        result = [d for d in result if is_macro_relevant(d)]
     if asset_filter and asset_filter in ASSET_CLASSES:
         result = [d for d in result if (d.get("relevance") or {}).get(asset_filter, 0) > 0]
 

@@ -15,10 +15,10 @@ ARTICLE_DIGESTION_MODEL = os.getenv("ARTICLE_DIGESTION_MODEL", "openrouter/owl-a
 
 # REASONING tasks: view parsing (CoT), PM memo, variance calibration,
 # AI portfolio commentary, thesis consolidation.
-# Nemotron 3 Ultra 550B (MoE, 55B active) — NVIDIA's June 2026 frontier reasoning model,
-# free on OpenRouter, 1M context, streams <think> tokens for chain-of-thought.
-REASONING_MODEL = os.getenv("REASONING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
-VIEW_PARSING_MODEL = os.getenv("VIEW_PARSING_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+# Nemotron 3 Super 120B (MoE, 12B active) — NVIDIA's June 2026 reasoning model,
+# free on OpenRouter, streams reasoning tokens for chain-of-thought. Smaller/faster than Ultra.
+REASONING_MODEL = os.getenv("REASONING_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+VIEW_PARSING_MODEL = os.getenv("VIEW_PARSING_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 
 # Marketaux news API settings (market intelligence news source)
 MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "")

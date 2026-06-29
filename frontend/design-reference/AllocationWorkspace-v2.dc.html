@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+@keyframes pulseDot { 0%,100%{opacity:.35} 50%{opacity:1} }
+@keyframes growBar { from{ transform:scaleX(0) } to{ transform:scaleX(1) } }
+@keyframes growUp { from{ transform:scaleY(0) } to{ transform:scaleY(1) } }
+@keyframes donutDraw { from{ stroke-dasharray:0 100 } }
+@keyframes donutIn { from{ opacity:0; transform:rotate(-90deg) scale(.72) } to{ opacity:1; transform:rotate(-90deg) scale(1) } }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes fadeUp { from{ opacity:0; transform:translateY(7px) } to{ opacity:1; transform:none } }
+@keyframes ticker { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
+html,body { margin:0; background:#000; }
+[data-barcol]{ position:relative; }
+[data-bartip]{ opacity:0; transition:opacity .12s ease; pointer-events:none; }
+[data-barcol]:hover [data-bartip]{ opacity:1; }
+[data-barcol]:hover [data-barfill]{ filter:brightness(1.25); }
+* { box-sizing:border-box; }
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-thumb{ background:#1e1e1e; border-radius:4px; }
+::-webkit-scrollbar-track{ background:transparent; }
+</style>
+</helmet>
+
+<div style="width:100%; height:100vh; min-height:840px; background:#000; color:#fff; font-family:'Pretendard',sans-serif; display:flex; flex-direction:column; overflow:hidden;">
+
+  <!-- ============ TOP NAV ============ -->
+  <div style="height:54px; flex:0 0 54px; border-bottom:1px solid #161616; display:flex; align-items:center; justify-content:space-between; padding:0 22px;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span style="font-family:'Archivo',sans-serif; font-weight:800; font-size:16px; letter-spacing:.5px;">Etacolla</span>
+      <span style="width:1px; height:18px; background:#222;"></span>
+      <span style="font-size:10.5px; color:#6a6a6a; letter-spacing:.2px;">your personal macro asset allocation analyst</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:11px;">
+      <div style="display:flex; align-items:center; gap:8px; border:1px solid #1e1e1e; padding:5px 11px; border-radius:4px;">
+        <span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#6b6b6b;">MARKET REGIME</span>
+        <span style="font-size:9px; font-family:'IBM Plex Mono',monospace; font-weight:600; letter-spacing:1px; color:#FBBF24; background:rgba(251,191,36,.1); border:1px solid rgba(251,191,36,.25); padding:2px 7px; border-radius:3px;">위험 고조</span>
+      </div>
+      <span style="font-size:10px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; border:1px solid #2a2a2a; padding:5px 10px; border-radius:4px; color:#999;">KO</span>
+    </div>
+  </div>
+
+  <!-- ============ LIVE TICKER ============ -->
+  <div style="flex:0 0 auto; height:30px; border-bottom:1px solid #161616; background:#070707; overflow:hidden; display:flex; align-items:center;">
+    <span style="flex:0 0 auto; display:inline-flex; align-items:center; gap:5px; font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#000; background:#34D399; padding:3px 8px; margin:0 12px; border-radius:3px; font-weight:700;"><span style="width:5px; height:5px; border-radius:50%; background:#000; animation:pulseDot 1.4s infinite;"></span>LIVE</span>
+    <div style="flex:1; overflow:hidden; position:relative; height:100%;">
+      <div style="position:absolute; top:0; left:0; height:100%; display:flex; align-items:center; white-space:nowrap; animation:ticker 64s linear infinite; will-change:transform;">
+        <span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">KOSPI</span>2,610<span style="color:#EF4444;">▼0.8%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">S&amp;P 500</span>5,420<span style="color:#22C55E;">▲0.4%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">NASDAQ</span>17,330<span style="color:#22C55E;">▲0.6%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">다우</span>38,900<span style="color:#22C55E;">▲0.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">닛케이</span>39,100<span style="color:#EF4444;">▼0.3%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">US 10Y</span>4.18%<span style="color:#22C55E;">▼0.03</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">KR 3Y</span>3.02%<span style="color:#22C55E;">▼0.02</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">VIX</span>23.4<span style="color:#EF4444;">▲5.1%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">공포·탐욕</span>42<span style="color:#FBBF24;">공포</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">DXY</span>104.2<span style="color:#22C55E;">▲0.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">USD/KRW</span>₩1,382<span style="color:#EF4444;">▲0.3%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">EUR/USD</span>1.071<span style="color:#EF4444;">▼0.1%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">USD/JPY</span>156.2<span style="color:#22C55E;">▲0.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">WTI</span>$71.3<span style="color:#EF4444;">▼1.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">금</span>$2,340<span style="color:#22C55E;">▲0.5%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">은</span>$29.8<span style="color:#22C55E;">▲0.9%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">비트코인</span>$63,400<span style="color:#22C55E;">▲2.1%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">이더리움</span>$3,420<span style="color:#22C55E;">▲1.4%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">구리</span>$4.21<span style="color:#EF4444;">▼0.4%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">천연가스</span>$2.84<span style="color:#22C55E;">▲1.1%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">KOSPI</span>2,610<span style="color:#EF4444;">▼0.8%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">S&amp;P 500</span>5,420<span style="color:#22C55E;">▲0.4%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">NASDAQ</span>17,330<span style="color:#22C55E;">▲0.6%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">다우</span>38,900<span style="color:#22C55E;">▲0.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">닛케이</span>39,100<span style="color:#EF4444;">▼0.3%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">US 10Y</span>4.18%<span style="color:#22C55E;">▼0.03</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">KR 3Y</span>3.02%<span style="color:#22C55E;">▼0.02</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">VIX</span>23.4<span style="color:#EF4444;">▲5.1%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">공포·탐욕</span>42<span style="color:#FBBF24;">공포</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">DXY</span>104.2<span style="color:#22C55E;">▲0.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">USD/KRW</span>₩1,382<span style="color:#EF4444;">▲0.3%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">WTI</span>$71.3<span style="color:#EF4444;">▼1.2%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">금</span>$2,340<span style="color:#22C55E;">▲0.5%</span></span><span style="display:inline-flex;align-items:center;gap:7px;padding:0 15px;border-right:1px solid #1a1a1a;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#d4d4d4;"><span style="color:#6a6a6a;">비트코인</span>$63,400<span style="color:#22C55E;">▲2.1%</span></span></div>
+    </div>
+  </div>
+
+  <!-- ============ VIEW BUILDER BAR ============ -->
+  <div style="flex:0 0 auto; border-bottom:1px solid #161616; background:#050505; padding:12px 22px; display:flex; align-items:center; gap:13px; flex-wrap:wrap;">
+    <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:2px;">
+      <span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a;">YOUR VIEW</span>
+      <span style="font-size:13px; font-weight:600; color:#fff;">내 투자 의견</span>
+    </div>
+    <div style="width:1px; height:32px; background:#1c1c1c;"></div>
+    <div style="display:flex; align-items:center; gap:9px; background:#0c0c0c; border:1px solid #242424; border-radius:8px; padding:7px 11px;">
+      <span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#000; background:#A78BFA; padding:2px 5px; border-radius:3px; font-weight:700;">REL</span>
+      <span style="font-size:12px; color:#eee;">해외주식 ▸ 국내주식</span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#fff;">+5.0%</span>
+      <span style="font-size:10px; color:#777; font-family:'IBM Plex Mono',monospace;">·68%</span>
+      <span style="color:#555; font-size:12px; cursor:pointer;">✎</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:9px; background:#0c0c0c; border:1px solid #242424; border-radius:8px; padding:7px 11px;">
+      <span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#000; background:#34D399; padding:2px 5px; border-radius:3px; font-weight:700;">ABS</span>
+      <span style="font-size:12px; color:#eee;">채권 강세 (금리↓)</span>
+      <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#fff;">+2.2%</span>
+      <span style="font-size:10px; color:#777; font-family:'IBM Plex Mono',monospace;">·55%</span>
+      <span style="color:#555; font-size:12px; cursor:pointer;">✎</span>
+    </div>
+    <span style="font-size:11.5px; color:#666; border:1px dashed #2a2a2a; border-radius:8px; padding:7px 11px; cursor:pointer;">+ 신호 추가</span>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+      <span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#4a4a4a;">δ 5% · ENSEMBLE</span>
+      <button style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:1.5px; background:#fff; color:#000; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:7px;">▶ 다시 최적화</button>
+    </div>
+  </div>
+
+  <!-- ============ SPLIT BODY ============ -->
+  <div style="flex:1; display:flex; min-height:0;">
+
+    <!-- ===== LEFT : CONVERSATION (3-role workflow) ===== -->
+    <div style="width:466px; flex:0 0 466px; border-right:1px solid #161616; background:#040404; display:flex; flex-direction:column; min-height:0;">
+      <div style="flex:0 0 auto; padding:12px 20px; border-bottom:1px solid #141414; display:flex; align-items:center; gap:9px;">
+        <span style="position:relative; width:8px; height:8px;"><span style="position:absolute; inset:0; border-radius:50%; background:#34D399; animation:pulseDot 1.6s infinite;"></span></span>
+        <span style="font-family:'Archivo',sans-serif; font-size:9.5px; letter-spacing:2px; color:#888;">투자 데스크 · 대화</span>
+        <span style="margin-left:auto; font-size:9px; font-family:'IBM Plex Mono',monospace; color:#4a4a4a;">RUN #248</span>
+      </div>
+
+      <!-- thread -->
+      <div style="flex:1; overflow-y:auto; padding:20px 18px; display:flex; flex-direction:column; gap:17px;">
+
+        <!-- Chris greeting -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; color:#fff;">C</div>
+          <div style="flex:1;">
+            <div style="display:flex; align-items:baseline; gap:7px; margin-bottom:4px;"><span style="font-size:12px; font-weight:700; color:#fff;">Chris</span><span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#5a5a5a;">PM · 최고투자전략가</span></div>
+            <div style="font-size:13px; line-height:1.65; color:#d2d2d2;">안녕하세요. 오늘 시장을 어떻게 보고 계신가요? 편하게 말씀해 주시면 Ben(마켓)과 매크로 데스크가 근거를 모으고, 제가 최종 검토해 배분으로 옮겨드리겠습니다.</div>
+          </div>
+        </div>
+
+        <!-- User -->
+        <div style="display:flex; justify-content:flex-end;">
+          <div style="max-width:330px; background:#fff; color:#000; font-size:13px; line-height:1.6; padding:11px 14px; border-radius:14px 14px 4px 14px;">해외주식이 국내주식보다 연 5% 우세할 것 같아요. 금리는 하락할 것 같고요.</div>
+        </div>
+
+        <!-- Ben — Market Analyst -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:rgba(34,211,238,.12); border:1px solid rgba(34,211,238,.35); display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; color:#22D3EE;">B</div>
+          <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:7px;"><span style="font-size:12px; font-weight:700; color:#fff;">Ben</span><span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#5a5a5a;">마켓 인텔리전스 애널리스트</span></div>
+            <div style="font-size:13px; line-height:1.65; color:#d2d2d2;">뉴스 <b style="color:#fff;">12</b>건 · 리서치 <b style="color:#fff;">5</b>건 · 회원님 업로드 <b style="color:#fff;">2</b>건을 검토했습니다. 해외주식 우위 의견을 <b style="color:#22D3EE;">뒷받침하는 근거</b>가 우세합니다.</div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <div style="display:flex; align-items:center; gap:8px; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:7px; padding:8px 10px;">
+                <span style="font-size:7.5px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#9a9a9a; border:1px solid #2a2a2a; padding:2px 5px; border-radius:3px;">뉴스</span>
+                <span style="flex:1; font-size:11.5px; color:#cfcfcf;">엔비디아 실적 서프라이즈 — AI 설비투자 지속</span>
+                <span style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+0.71</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:7px; padding:8px 10px;">
+                <span style="font-size:7.5px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#9a9a9a; border:1px solid #2a2a2a; padding:2px 5px; border-radius:3px;">리서치</span>
+                <span style="flex:1; font-size:11.5px; color:#cfcfcf;">미 연준 2026 금리 인하 사이클 진입 전망</span>
+                <span style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+0.74</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:7px; padding:8px 10px;">
+                <span style="font-size:7.5px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#000; background:#22D3EE; padding:2px 5px; border-radius:3px;">내 자산</span>
+                <span style="flex:1; font-size:11.5px; color:#cfcfcf;">KB증권 2026 자산시장 전망.pdf</span>
+                <span style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:#888;">중립</span>
+              </div>
+            </div>
+            <button style="align-self:flex-start; font-family:'Archivo',sans-serif; font-weight:600; font-size:10px; letter-spacing:1px; background:transparent; color:#bbb; border:1px solid #2a2a2a; padding:7px 12px; border-radius:6px; cursor:pointer;" onClick="{{ selIntel }}">마켓 인텔리전스 열기 →</button>
+          </div>
+        </div>
+
+        <!-- Macro desk: Bull / Bear → Jerry -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; color:#FBBF24;">J</div>
+          <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:7px;"><span style="font-size:12px; font-weight:700; color:#fff;">Jerry</span><span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#5a5a5a;">선임 PM · 매크로 데스크</span></div>
+            <div style="font-size:13px; line-height:1.65; color:#d2d2d2;">매크로 데스크의 강세·약세 논쟁을 종합했습니다.</div>
+            <!-- bull vs bear -->
+            <div style="display:flex; flex-direction:column; gap:7px;">
+              <div style="display:flex; gap:8px; align-items:flex-start; background:rgba(34,197,94,.05); border:1px solid rgba(34,197,94,.18); border-radius:7px; padding:8px 10px;">
+                <span style="flex:0 0 auto; font-size:8px; font-family:'Archivo',sans-serif; font-weight:700; letter-spacing:.5px; color:#22C55E; margin-top:1px;">BULL</span>
+                <span style="font-size:11.5px; line-height:1.5; color:#cfcfcf;">금리 인하 + 글로벌 이익 모멘텀 → 위험자산, 특히 해외주식에 우호적.</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:flex-start; background:rgba(239,68,68,.05); border:1px solid rgba(239,68,68,.18); border-radius:7px; padding:8px 10px;">
+                <span style="flex:0 0 auto; font-size:8px; font-family:'Archivo',sans-serif; font-weight:700; letter-spacing:.5px; color:#EF4444; margin-top:1px;">BEAR</span>
+                <span style="font-size:11.5px; line-height:1.5; color:#cfcfcf;">VIX 23.4 · 원화 약세 지속 → 변동성·환헤지 비용이 상단을 제한.</span>
+              </div>
+            </div>
+            <div style="font-size:12.5px; line-height:1.6; color:#d2d2d2; border-left:2px solid #FBBF24; padding-left:11px;"><b style="color:#fff;">하우스 뷰:</b> 금리 하락 우세 — 채권 비중 소폭 확대, 단 위험 고조 레짐을 반영해 강도는 절제.</div>
+            <button style="align-self:flex-start; font-family:'Archivo',sans-serif; font-weight:600; font-size:10px; letter-spacing:1px; background:transparent; color:#bbb; border:1px solid #2a2a2a; padding:7px 12px; border-radius:6px; cursor:pointer;" onClick="{{ selMacro }}">매크로 대시보드 열기 →</button>
+          </div>
+        </div>
+
+        <!-- Chris synthesis → signal chips -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; color:#fff;">C</div>
+          <div style="flex:1; display:flex; flex-direction:column; gap:11px;">
+            <div style="display:flex; align-items:baseline; gap:7px;"><span style="font-size:12px; font-weight:700; color:#fff;">Chris</span><span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#5a5a5a;">PM · 검토</span></div>
+            <div style="font-size:13px; line-height:1.65; color:#d2d2d2;">Ben의 근거와 매크로 하우스 뷰를 종합해 <b style="color:#fff;">두 가지 신호</b>로 확정했어요. 위 빌더에서 직접 보정하실 수 있습니다.</div>
+
+            <!-- signal 1 -->
+            <div style="background:#0b0b0b; border:1px solid #222; border-radius:9px; padding:13px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#A78BFA; padding:2px 6px; border-radius:3px; font-weight:700;">REL</span><span style="font-size:12px; color:#eaeaea; font-weight:600;">상대 우위 뷰</span></div>
+                <span style="font-size:9.5px; font-family:'IBM Plex Mono',monospace; color:#555;">신호 01</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:9px; margin-bottom:12px;">
+                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#fff;"><span style="width:8px;height:8px;border-radius:50%;background:#A78BFA;"></span>해외주식</span>
+                <span style="color:#FBBF24; font-size:12px;">▸</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#9a9a9a;"><span style="width:8px;height:8px;border-radius:50%;background:#3B82F6;"></span>국내주식</span>
+                <div style="margin-left:auto; display:flex; border:1px solid #262626; border-radius:6px; overflow:hidden;"><span style="font-size:10px; padding:4px 8px; background:#fff; color:#000; font-weight:600;">우위</span><span style="font-size:10px; padding:4px 8px; color:#666;">열위</span></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="display:flex; align-items:center; gap:7px; border:1px solid #262626; border-radius:6px; padding:3px 4px;"><span style="width:16px;height:16px; display:flex; align-items:center; justify-content:center; color:#888; font-size:12px; cursor:pointer;">−</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#fff; min-width:44px; text-align:center;">+5.0%</span><span style="width:16px;height:16px; display:flex; align-items:center; justify-content:center; color:#888; font-size:12px; cursor:pointer;">+</span></div>
+                <div style="flex:1; display:flex; flex-direction:column; gap:4px;"><div style="display:flex; justify-content:space-between; font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;"><span>신뢰도</span><span style="color:#fff; font-family:'IBM Plex Mono',monospace;">68%</span></div><div style="height:4px; background:#1e1e1e; border-radius:2px; position:relative;"><div style="position:absolute; left:0; top:0; height:4px; width:68%; background:#A78BFA; border-radius:2px;"></div><div style="position:absolute; left:68%; top:50%; transform:translate(-50%,-50%); width:11px; height:11px; border-radius:50%; background:#fff; border:2px solid #A78BFA;"></div></div></div>
+              </div>
+            </div>
+
+            <!-- signal 2 -->
+            <div style="background:#0b0b0b; border:1px solid #222; border-radius:9px; padding:13px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                <div style="display:flex; align-items:center; gap:8px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#34D399; padding:2px 6px; border-radius:3px; font-weight:700;">ABS</span><span style="font-size:12px; color:#eaeaea; font-weight:600;">금리 하락 → 채권 강세</span></div>
+                <span style="font-size:9.5px; font-family:'IBM Plex Mono',monospace; color:#555;">신호 02</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:9px; margin-bottom:12px;">
+                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#fff;"><span style="width:8px;height:8px;border-radius:50%;background:#6EE7B7;"></span>해외채권</span>
+                <span style="font-size:11px; color:#666;">·</span>
+                <span style="display:flex; align-items:center; gap:6px; font-size:12px; color:#fff;"><span style="width:8px;height:8px;border-radius:50%;background:#34D399;"></span>국내채권</span>
+                <div style="margin-left:auto; display:flex; border:1px solid #262626; border-radius:6px; overflow:hidden;"><span style="font-size:10px; padding:4px 8px; background:#fff; color:#000; font-weight:600;">강세</span><span style="font-size:10px; padding:4px 8px; color:#666;">약세</span></div>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="display:flex; align-items:center; gap:7px; border:1px solid #262626; border-radius:6px; padding:3px 4px;"><span style="width:16px;height:16px; display:flex; align-items:center; justify-content:center; color:#888; font-size:12px; cursor:pointer;">−</span><span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#fff; min-width:44px; text-align:center;">+2.2%</span><span style="width:16px;height:16px; display:flex; align-items:center; justify-content:center; color:#888; font-size:12px; cursor:pointer;">+</span></div>
+                <div style="flex:1; display:flex; flex-direction:column; gap:4px;"><div style="display:flex; justify-content:space-between; font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;"><span>신뢰도</span><span style="color:#fff; font-family:'IBM Plex Mono',monospace;">55%</span></div><div style="height:4px; background:#1e1e1e; border-radius:2px; position:relative;"><div style="position:absolute; left:0; top:0; height:4px; width:55%; background:#34D399; border-radius:2px;"></div><div style="position:absolute; left:55%; top:50%; transform:translate(-50%,-50%); width:11px; height:11px; border-radius:50%; background:#fff; border:2px solid #34D399;"></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- reasoning trace -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:9px; color:#A78BFA;">∑</div>
+          <div style="flex:1;" data-comment-anchor="1d39643e00-div">
+            <dc-import name="ReasoningTrace" hint-size="100%,260px"></dc-import>
+          </div>
+        </div>
+
+        <!-- Chris final review -->
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="flex:0 0 30px; width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; color:#fff;">C</div>
+          <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:baseline; gap:7px;"><span style="font-size:12px; font-weight:700; color:#fff;">Chris</span><span style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#5a5a5a;">PM · 최종 검토</span></div>
+            <div style="font-size:13px; line-height:1.65; color:#d2d2d2;"><b style="color:#fff;">해외주식 +4.8%p</b> 확대, 변동성이 큰 <b style="color:#fff;">대체투자 −4.3%p</b> 축소로 마무리했습니다. 위험 고조 레짐을 감안해 강도는 δ 한도 내로 절제했어요. 전체 결과와 제 IC 메모는 오른쪽에서 확인하세요.</div>
+            <button style="align-self:flex-start; font-family:'Archivo',sans-serif; font-weight:700; font-size:10px; letter-spacing:1px; background:#fff; color:#000; border:none; padding:8px 14px; border-radius:6px; cursor:pointer;" onClick="{{ selReport }}">PM 최종 리포트 →</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- composer -->
+      <div style="flex:0 0 auto; border-top:1px solid #141414; padding:11px 16px 13px;">
+        <div style="display:flex; gap:6px; margin-bottom:9px; flex-wrap:wrap;">
+          <span style="font-size:10px; color:#9a9a9a; border:1px solid #242424; border-radius:13px; padding:4px 10px; cursor:pointer;">이번 주 뉴스 반영</span>
+          <span style="font-size:10px; color:#9a9a9a; border:1px solid #242424; border-radius:13px; padding:4px 10px; cursor:pointer;">리스크 한도 조정</span>
+          <span style="font-size:10px; color:#9a9a9a; border:1px solid #242424; border-radius:13px; padding:4px 10px; cursor:pointer;">자료 업로드</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; background:#0b0b0b; border:1px solid #262626; border-radius:10px; padding:10px 12px;">
+          <span style="flex:1; font-size:12.5px; color:#555;">시장에 대한 생각을 입력하세요…</span>
+          <div style="width:28px; height:28px; border-radius:7px; background:#fff; display:flex; align-items:center; justify-content:center; color:#000; font-size:13px;">↑</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== RIGHT : RESULTS CANVAS ===== -->
+    <div style="flex:1; min-width:0; display:flex; flex-direction:column; min-height:0;">
+
+      <!-- tab bar -->
+      <div style="flex:0 0 auto; padding:0 22px; display:flex; align-items:center; gap:2px; border-bottom:1px solid #161616; overflow-x:auto;">
+        <span style="{{ tAlloc }}" onClick="{{ selAlloc }}">배분</span>
+        <span style="{{ tRisk }}" onClick="{{ selRisk }}">리스크</span>
+        <span style="{{ tFrontier }}" onClick="{{ selFrontier }}">프론티어</span>
+        <span style="{{ tIntel }}" onClick="{{ selIntel }}">인텔리전스</span>
+        <span style="{{ tMacro }}" onClick="{{ selMacro }}">매크로</span>
+        <span style="{{ tResearch }}" onClick="{{ selResearch }}">리서치</span>
+        <span style="{{ tReport }}" onClick="{{ selReport }}">리포트</span>
+      </div>
+
+      <div style="flex:1; overflow-y:auto; overflow-x:hidden; padding:20px 24px;">
+
+        <!-- ============ 배분 ============ -->
+        <sc-if value="{{ isAlloc }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- donut + legend -->
+          <div style="display:flex; gap:22px; align-items:center; border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:20px 24px;" data-comment-anchor="5c5af47fa4-div">
+            <div style="flex:0 0 auto; position:relative; width:166px; height:166px;">
+              <svg viewBox="0 0 42 42" style="width:166px; height:166px; transform:rotate(-90deg); animation:donutIn .7s cubic-bezier(.2,.7,.2,1) both;">
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#111" stroke-width="5.4"/>
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#A78BFA" stroke-width="5.4" stroke-dasharray="39.5 60.5" stroke-dashoffset="0"/>
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#3B82F6" stroke-width="5.4" stroke-dasharray="17.2 82.8" stroke-dashoffset="-39.5"/>
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#34D399" stroke-width="5.4" stroke-dasharray="24.5 75.5" stroke-dashoffset="-56.7"/>
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#6EE7B7" stroke-width="5.4" stroke-dasharray="9.1 90.9" stroke-dashoffset="-81.2"/>
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#FBBF24" stroke-width="5.4" stroke-dasharray="9.7 90.3" stroke-dashoffset="-90.3"/>
+              </svg>
+              <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a;">최적화</span><span style="font-family:'Archivo',sans-serif; font-size:14px; font-weight:700;">5개 자산</span></div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; gap:10px;">
+              <div style="display:flex; align-items:center; gap:12px;"><span style="flex:0 0 86px; display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd;"><span style="width:9px;height:9px;border-radius:2px;background:#A78BFA;"></span>해외주식</span><div style="flex:1; height:6px; background:#161616; border-radius:3px; overflow:hidden;"><div style="height:6px; width:79%; background:#A78BFA; transform-origin:left; animation:growBar .6s ease both; animation-delay:.5s;"></div></div><span style="flex:0 0 90px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px;">39.5% <span style="color:#22C55E; font-size:10px;">▲4.8</span></span></div>
+              <div style="display:flex; align-items:center; gap:12px;"><span style="flex:0 0 86px; display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd;"><span style="width:9px;height:9px;border-radius:2px;background:#3B82F6;"></span>국내주식</span><div style="flex:1; height:6px; background:#161616; border-radius:3px; overflow:hidden;"><div style="height:6px; width:34%; background:#3B82F6; transform-origin:left; animation:growBar .6s ease both; animation-delay:.58s;"></div></div><span style="flex:0 0 90px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px;">17.2% <span style="color:#EF4444; font-size:10px;">▼3.6</span></span></div>
+              <div style="display:flex; align-items:center; gap:12px;"><span style="flex:0 0 86px; display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd;"><span style="width:9px;height:9px;border-radius:2px;background:#34D399;"></span>국내채권</span><div style="flex:1; height:6px; background:#161616; border-radius:3px; overflow:hidden;"><div style="height:6px; width:49%; background:#34D399; transform-origin:left; animation:growBar .6s ease both; animation-delay:.66s;"></div></div><span style="flex:0 0 90px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px;">24.5% <span style="color:#22C55E; font-size:10px;">▲1.4</span></span></div>
+              <div style="display:flex; align-items:center; gap:12px;"><span style="flex:0 0 86px; display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd;"><span style="width:9px;height:9px;border-radius:2px;background:#6EE7B7;"></span>해외채권</span><div style="flex:1; height:6px; background:#161616; border-radius:3px; overflow:hidden;"><div style="height:6px; width:18%; background:#6EE7B7; transform-origin:left; animation:growBar .6s ease both; animation-delay:.74s;"></div></div><span style="flex:0 0 90px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px;">9.1% <span style="color:#22C55E; font-size:10px;">▲1.7</span></span></div>
+              <div style="display:flex; align-items:center; gap:12px;"><span style="flex:0 0 86px; display:flex; align-items:center; gap:8px; font-size:12px; color:#ddd;"><span style="width:9px;height:9px;border-radius:2px;background:#FBBF24;"></span>대체투자</span><div style="flex:1; height:6px; background:#161616; border-radius:3px; overflow:hidden;"><div style="height:6px; width:19%; background:#FBBF24; transform-origin:left; animation:growBar .6s ease both; animation-delay:.82s;"></div></div><span style="flex:0 0 90px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px;">9.7% <span style="color:#EF4444; font-size:10px;">▼4.3</span></span></div>
+            </div>
+          </div>
+
+          <!-- grouped benchmark vs optimized -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #161616;">
+              <span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb;">배분 비교 (벤치마크 vs 최적화)</span>
+              <div style="display:flex; gap:14px; font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#666;"><span style="display:flex; align-items:center; gap:6px;"><span style="width:14px;height:6px;background:#404040;border-radius:1px;"></span>국민연금</span><span style="display:flex; align-items:center; gap:6px;"><span style="width:14px;height:6px;background:#fff;border-radius:1px;"></span>최적화</span></div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <div style="flex:0 0 30px; width:30px; height:150px; position:relative;">
+                <span style="position:absolute; right:3px; top:0; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">50%</span>
+                <span style="position:absolute; right:3px; top:30px; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">40</span>
+                <span style="position:absolute; right:3px; top:60px; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">30</span>
+                <span style="position:absolute; right:3px; top:90px; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">20</span>
+                <span style="position:absolute; right:3px; top:120px; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">10</span>
+                <span style="position:absolute; right:3px; top:150px; transform:translateY(-50%); font-size:8px; font-family:'IBM Plex Mono',monospace; color:#5a5a5a;">0</span>
+              </div>
+              <div style="flex:1; height:150px; position:relative;">
+                <div style="position:absolute; left:0; right:0; top:0; height:1px; background:#141414;"></div>
+                <div style="position:absolute; left:0; right:0; top:30px; height:1px; background:#141414;"></div>
+                <div style="position:absolute; left:0; right:0; top:60px; height:1px; background:#141414;"></div>
+                <div style="position:absolute; left:0; right:0; top:90px; height:1px; background:#141414;"></div>
+                <div style="position:absolute; left:0; right:0; top:120px; height:1px; background:#141414;"></div>
+                <div style="position:absolute; left:0; right:0; top:150px; height:1px; background:#262626;"></div>
+                <div style="position:absolute; inset:0; display:flex; align-items:flex-end; gap:26px; padding:0 6px;">
+                  <div data-barcol style="flex:1; height:150px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div data-bartip style="position:absolute; bottom:130px; left:50%; transform:translateX(-50%); background:#000; border:1px solid #2a2a2a; border-radius:6px; padding:6px 9px; font-size:10px; font-family:'IBM Plex Mono',monospace; white-space:nowrap; z-index:5; box-shadow:0 4px 14px rgba(0,0,0,.5);"><span style="color:#888;">벤치</span> 34.7% <span style="color:#555;">→</span> <span style="color:#fff;">39.5%</span> <span style="color:#22C55E;">▲4.8</span></div>
+                    <div data-barfill data-comment-anchor="a5a785dd54-div" style="width:100%; display:flex; gap:5px; align-items:flex-end; height:150px; transform-origin:bottom; animation:growUp .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:.05s;"><div style="flex:1; background:#404040; height:104px;"></div><div style="flex:1; background:#A78BFA; height:119px;"></div></div>
+                  </div>
+                  <div data-barcol style="flex:1; height:150px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div data-bartip style="position:absolute; bottom:130px; left:50%; transform:translateX(-50%); background:#000; border:1px solid #2a2a2a; border-radius:6px; padding:6px 9px; font-size:10px; font-family:'IBM Plex Mono',monospace; white-space:nowrap; z-index:5; box-shadow:0 4px 14px rgba(0,0,0,.5);"><span style="color:#888;">벤치</span> 20.8% <span style="color:#555;">→</span> <span style="color:#fff;">17.2%</span> <span style="color:#EF4444;">▼3.6</span></div>
+                    <div data-barfill data-comment-anchor="1dc30191e1-div" style="width:100%; display:flex; gap:5px; align-items:flex-end; height:150px; transform-origin:bottom; animation:growUp .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:.13s;"><div style="flex:1; background:#404040; height:62px;"></div><div style="flex:1; background:#3B82F6; height:52px;"></div></div>
+                  </div>
+                  <div data-barcol style="flex:1; height:150px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div data-bartip style="position:absolute; bottom:130px; left:50%; transform:translateX(-50%); background:#000; border:1px solid #2a2a2a; border-radius:6px; padding:6px 9px; font-size:10px; font-family:'IBM Plex Mono',monospace; white-space:nowrap; z-index:5; box-shadow:0 4px 14px rgba(0,0,0,.5);"><span style="color:#888;">벤치</span> 23.1% <span style="color:#555;">→</span> <span style="color:#fff;">24.5%</span> <span style="color:#22C55E;">▲1.4</span></div>
+                    <div data-barfill style="width:100%; display:flex; gap:5px; align-items:flex-end; height:150px; transform-origin:bottom; animation:growUp .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:.21s;"><div style="flex:1; background:#404040; height:69px;"></div><div style="flex:1; background:#34D399; height:74px;"></div></div>
+                  </div>
+                  <div data-barcol style="flex:1; height:150px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div data-bartip style="position:absolute; bottom:130px; left:50%; transform:translateX(-50%); background:#000; border:1px solid #2a2a2a; border-radius:6px; padding:6px 9px; font-size:10px; font-family:'IBM Plex Mono',monospace; white-space:nowrap; z-index:5; box-shadow:0 4px 14px rgba(0,0,0,.5);"><span style="color:#888;">벤치</span> 7.4% <span style="color:#555;">→</span> <span style="color:#fff;">9.1%</span> <span style="color:#22C55E;">▲1.7</span></div>
+                    <div data-barfill style="width:100%; display:flex; gap:5px; align-items:flex-end; height:150px; transform-origin:bottom; animation:growUp .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:.29s;"><div style="flex:1; background:#404040; height:22px;"></div><div style="flex:1; background:#6EE7B7; height:27px;"></div></div>
+                  </div>
+                  <div data-barcol style="flex:1; height:150px; display:flex; align-items:flex-end; justify-content:center;">
+                    <div data-bartip style="position:absolute; bottom:130px; left:50%; transform:translateX(-50%); background:#000; border:1px solid #2a2a2a; border-radius:6px; padding:6px 9px; font-size:10px; font-family:'IBM Plex Mono',monospace; white-space:nowrap; z-index:5; box-shadow:0 4px 14px rgba(0,0,0,.5);"><span style="color:#888;">벤치</span> 14.0% <span style="color:#555;">→</span> <span style="color:#fff;">9.7%</span> <span style="color:#EF4444;">▼4.3</span></div>
+                    <div data-barfill style="width:100%; display:flex; gap:5px; align-items:flex-end; height:150px; transform-origin:bottom; animation:growUp .7s cubic-bezier(.2,.7,.2,1) both; animation-delay:.37s;"><div style="flex:1; background:#404040; height:42px;"></div><div style="flex:1; background:#FBBF24; height:29px;"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex; gap:26px; padding:8px 6px 0; margin-left:38px;">
+              <span style="flex:1; text-align:center; font-size:10px; color:#aaa;">해외주식</span>
+              <span style="flex:1; text-align:center; font-size:10px; color:#aaa;">국내주식</span>
+              <span style="flex:1; text-align:center; font-size:10px; color:#aaa;">국내채권</span>
+              <span style="flex:1; text-align:center; font-size:10px; color:#aaa;">해외채권</span>
+              <span style="flex:1; text-align:center; font-size:10px; color:#aaa;">대체투자</span>
+            </div>
+          </div>
+
+          <!-- BL attribution -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb; margin-bottom:14px;">BL 기대수익률 산출 근거 (Prior → Posterior)</div>
+            <div style="display:grid; grid-template-columns:120px 70px 70px 64px 1fr; gap:0 14px; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a; padding-bottom:9px; border-bottom:1px solid #161616;"><span>자산</span><span style="text-align:right;">PRIOR</span><span style="text-align:right;">POST</span><span style="text-align:right;">Δ</span><span style="padding-left:6px;">뷰 근거</span></div>
+            <div style="display:grid; grid-template-columns:120px 70px 70px 64px 1fr; gap:15px 14px; align-items:start; font-size:11.5px; padding-top:11px;" data-comment-anchor="10d88d7b3d-div">
+              <span style="display:flex; align-items:center; gap:7px; color:#ddd; padding-top:1px;"><span style="width:7px;height:7px;border-radius:50%;background:#A78BFA;flex:0 0 auto;"></span>해외주식</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">7.90%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#fff; padding-top:1px;">9.18%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E; padding-top:1px;">+1.28</span><span style="padding-left:6px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:#9a9a9a;">상대 우위 뷰 · 신뢰도 68%</span><span style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#22D3EE; cursor:pointer;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#fff; border:1px solid #333; padding:1px 4px; border-radius:2px; font-weight:700;">뉴스</span>엔비디아 실적 서프라이즈 · Reuters ↗</span></span>
+              <span style="display:flex; align-items:center; gap:7px; color:#ddd; padding-top:1px;"><span style="width:7px;height:7px;border-radius:50%;background:#3B82F6;flex:0 0 auto;"></span>국내주식</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">6.40%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#fff; padding-top:1px;">5.72%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#EF4444; padding-top:1px;">−0.68</span><span style="padding-left:6px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:#9a9a9a;">상대 열위 (해외주식 반대편)</span><span style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#22D3EE; cursor:pointer;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#fff; border:1px solid #333; padding:1px 4px; border-radius:2px; font-weight:700;">뉴스</span>원/달러 1,380원 돌파 · 연합인포맥스 ↗</span></span>
+              <span style="display:flex; align-items:center; gap:7px; color:#ddd; padding-top:1px;"><span style="width:7px;height:7px;border-radius:50%;background:#34D399;flex:0 0 auto;"></span>국내채권</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">3.30%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#fff; padding-top:1px;">3.71%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E; padding-top:1px;">+0.41</span><span style="padding-left:6px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:#9a9a9a;">금리 하락 → 채권 강세 · 신뢰도 55%</span><span style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#22D3EE; cursor:pointer;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#000; background:#fff; padding:1px 4px; border-radius:2px; font-weight:700;">리서치</span>미 연준 2026 금리 인하 · NPS 하우스뷰 ↗</span></span>
+              <span style="display:flex; align-items:center; gap:7px; color:#ddd; padding-top:1px;"><span style="width:7px;height:7px;border-radius:50%;background:#6EE7B7;flex:0 0 auto;"></span>해외채권</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">3.60%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#fff; padding-top:1px;">3.97%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E; padding-top:1px;">+0.37</span><span style="padding-left:6px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:#9a9a9a;">금리 하락 → 채권 강세 · 신뢰도 55%</span><span style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#22D3EE; cursor:pointer;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#000; background:#fff; padding:1px 4px; border-radius:2px; font-weight:700;">리서치</span>미 연준 2026 금리 인하 · NPS 하우스뷰 ↗</span></span>
+              <span style="display:flex; align-items:center; gap:7px; color:#ddd; padding-top:1px;"><span style="width:7px;height:7px;border-radius:50%;background:#FBBF24;flex:0 0 auto;"></span>대체투자</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">5.10%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#999; padding-top:1px;">5.10%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#525252; padding-top:1px;">—</span><span style="padding-left:6px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:11px; color:#666;">시장 균형 유지 (적용된 뷰 없음)</span><span style="font-size:10px; color:#4a4a4a;">기여 소스 없음</span></span>
+            </div>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ 리스크 ============ -->
+        <sc-if value="{{ isRisk }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- metrics -->
+          <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:1px; background:#161616; border:1px solid #181818; border-radius:8px; overflow:hidden;">
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">기대수익률</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700;">6.84%</span></div>
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">변동성</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700;">9.12%</span></div>
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">샤프 비율</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700;">0.61</span></div>
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">95% VaR</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700; color:#FCA5A5;">-13.7%</span></div>
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">95% CVaR</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700; color:#FCA5A5;">-18.2%</span></div>
+            <div style="background:#0a0a0a; padding:15px 13px; display:flex; flex-direction:column; gap:5px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a;">최대낙폭</span><span style="font-family:'Archivo',sans-serif; font-size:18px; font-weight:700; color:#FCA5A5;">-22.4%</span></div>
+          </div>
+
+          <!-- return distribution + VaR -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb;">누적 수익률 확률 밀도 및 95% VaR</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#555;">1Y · Student-t</span></div>
+            <svg viewBox="0 0 760 200" style="width:100%; height:190px;">
+              <line x1="40" y1="170" x2="740" y2="170" stroke="#1d1d1d" stroke-width="1"/>
+              <path d="M40,170 C200,168 300,150 380,60 C440,150 540,168 740,170 Z" fill="rgba(255,255,255,0.05)" stroke="#fff" stroke-width="1.4"/>
+              <line x1="210" y1="40" x2="210" y2="170" stroke="#ff3b30" stroke-width="1.3" stroke-dasharray="4 3"/>
+              <text x="216" y="48" fill="#ff3b30" font-size="10" font-family="IBM Plex Mono">95% VaR −13.7%</text>
+              <text x="360" y="188" fill="#555" font-size="9" font-family="IBM Plex Mono">+6.8% (기대)</text>
+              <text x="700" y="188" fill="#555" font-size="9" font-family="IBM Plex Mono">수익률 →</text>
+            </svg>
+          </div>
+
+          <!-- stress test -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb; margin-bottom:14px;">역사적 위기 시나리오 스트레스 테스트</div>
+            <div style="display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 1fr; gap:0 12px; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#5a5a5a; padding-bottom:9px; border-bottom:1px solid #161616;"><span>위기 시나리오</span><span style="text-align:right;">포트폴리오</span><span style="text-align:right;">국내주식</span><span style="text-align:right;">해외주식</span><span style="text-align:right;">대체투자</span></div>
+            <div style="display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 1fr; gap:11px 12px; align-items:center; font-size:11.5px; padding-top:11px; font-family:'IBM Plex Mono',monospace;">
+              <span style="font-family:'Pretendard',sans-serif; color:#ddd;">2008 글로벌 금융위기</span><span style="text-align:right; color:#FCA5A5; font-weight:600;">-28.4%</span><span style="text-align:right; color:#888;">-42%</span><span style="text-align:right; color:#888;">-38%</span><span style="text-align:right; color:#888;">-31%</span>
+              <span style="font-family:'Pretendard',sans-serif; color:#ddd;">2020 코로나19 쇼크</span><span style="text-align:right; color:#FCA5A5; font-weight:600;">-19.7%</span><span style="text-align:right; color:#888;">-35%</span><span style="text-align:right; color:#888;">-32%</span><span style="text-align:right; color:#888;">-24%</span>
+              <span style="font-family:'Pretendard',sans-serif; color:#ddd;">2022 인플레이션 쇼크</span><span style="text-align:right; color:#FCA5A5; font-weight:600;">-17.8%</span><span style="text-align:right; color:#888;">-24%</span><span style="text-align:right; color:#888;">-22%</span><span style="text-align:right; color:#888;">-19%</span>
+              <span style="font-family:'Pretendard',sans-serif; color:#ddd;">2000 닷컴버블 붕괴</span><span style="text-align:right; color:#FCA5A5; font-weight:600;">-15.2%</span><span style="text-align:right; color:#888;">-21%</span><span style="text-align:right; color:#888;">-45%</span><span style="text-align:right; color:#888;">-12%</span>
+              <span style="font-family:'Pretendard',sans-serif; color:#ddd;">2011 유럽재정위기</span><span style="text-align:right; color:#FCA5A5; font-weight:600;">-11.3%</span><span style="text-align:right; color:#888;">-18%</span><span style="text-align:right; color:#888;">-16%</span><span style="text-align:right; color:#888;">-14%</span>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ 프론티어 ============ -->
+        <sc-if value="{{ isFrontier }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb;">효율적 프론티어</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#555;">위험 vs 수익</span></div>
+              <svg viewBox="0 0 360 230" style="width:100%; height:230px;">
+                <line x1="38" y1="12" x2="38" y2="200" stroke="#1d1d1d" stroke-width="1"/>
+                <line x1="38" y1="200" x2="350" y2="200" stroke="#1d1d1d" stroke-width="1"/>
+                <path d="M60,180 C140,90 250,55 340,40" fill="none" stroke="#525252" stroke-width="1.6"/>
+                <circle cx="172" cy="118" r="5" fill="#8a8a8f"/><text x="182" y="122" fill="#888" font-size="9" font-family="IBM Plex Mono">벤치마크</text>
+                <path d="M236,72 l7,12 l-14,0 z" fill="#fff"/><text x="220" y="64" fill="#fff" font-size="9" font-family="IBM Plex Mono">최적화</text>
+                <text x="300" y="216" fill="#555" font-size="9" font-family="IBM Plex Mono">변동성 →</text>
+                <text x="6" y="20" fill="#555" font-size="9" font-family="IBM Plex Mono">수익</text>
+              </svg>
+            </div>
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;"><span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb;">몬테카를로 드리프트 경로</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#555;">15개 샘플</span></div>
+              <svg viewBox="0 0 360 230" style="width:100%; height:230px;">
+                <line x1="30" y1="115" x2="350" y2="115" stroke="#161616" stroke-width="1" stroke-dasharray="3 3"/>
+                <path d="M30,115 C110,100 200,70 350,34" fill="none" stroke="#fff" stroke-width="1.4"/>
+                <path d="M30,115 C110,108 200,92 350,66" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
+                <path d="M30,115 C110,112 200,104 350,90" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
+                <path d="M30,115 C110,120 200,118 350,108" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>
+                <path d="M30,115 C110,126 200,138 350,156" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+                <path d="M30,115 C110,134 200,160 350,194" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+                <text x="280" y="218" fill="#555" font-size="9" font-family="IBM Plex Mono">252 거래일 →</text>
+              </svg>
+            </div>
+          </div>
+          <!-- weight deviation -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb; margin-bottom:16px;">BL 가중치 시장 편차 (pp)</div>
+            <div style="position:relative; height:150px; display:flex; align-items:center; gap:26px; padding:0 8px;">
+              <div style="position:absolute; left:8px; right:8px; top:50%; height:1px; background:#262626;"></div>
+              <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; position:relative;"><div style="width:38px; background:#22C55E; height:38%; align-self:flex-end; margin-bottom:75px;"></div><span style="position:absolute; bottom:8px; font-size:10px; color:#aaa;">해외주식</span><span style="position:absolute; top:6px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+4.8</span></div>
+              <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; position:relative;"><div style="width:38px; background:#EF4444; height:30%; margin-top:75px;"></div><span style="position:absolute; bottom:8px; font-size:10px; color:#aaa;">국내주식</span><span style="position:absolute; bottom:24px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:#EF4444;">−3.6</span></div>
+              <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; position:relative;"><div style="width:38px; background:#22C55E; height:13%; align-self:flex-end; margin-bottom:75px;"></div><span style="position:absolute; bottom:8px; font-size:10px; color:#aaa;">국내채권</span><span style="position:absolute; top:48px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+1.4</span></div>
+              <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; position:relative;"><div style="width:38px; background:#22C55E; height:16%; align-self:flex-end; margin-bottom:75px;"></div><span style="position:absolute; bottom:8px; font-size:10px; color:#aaa;">해외채권</span><span style="position:absolute; top:44px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+1.7</span></div>
+              <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; position:relative;"><div style="width:38px; background:#EF4444; height:36%; margin-top:75px;"></div><span style="position:absolute; bottom:8px; font-size:10px; color:#aaa;">대체투자</span><span style="position:absolute; bottom:20px; font-size:10px; font-family:'IBM Plex Mono',monospace; color:#EF4444;">−4.3</span></div>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ 인텔리전스 (Ben) ============ -->
+        <sc-if value="{{ isIntel }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div style="display:flex; align-items:baseline; gap:9px;"><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:15px; letter-spacing:.5px;">마켓 인텔리전스</span><span style="font-size:11px; color:#666;">Ben · 큐레이션</span></div>
+            <div style="display:flex; gap:6px;"><span style="font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#fff; padding:5px 10px; border-radius:5px;">전체</span><span style="font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#999; border:1px solid #262626; padding:5px 10px; border-radius:5px;">주식</span><span style="font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#999; border:1px solid #262626; padding:5px 10px; border-radius:5px;">채권</span><span style="font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#999; border:1px solid #262626; padding:5px 10px; border-radius:5px;">대체</span><span style="font-size:9.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#999; border:1px solid #262626; padding:5px 10px; border-radius:5px;">경제</span></div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <!-- card -->
+            <div style="border:1px solid #1e1e1e; background:#0a0a0a; border-radius:9px; padding:15px;">
+              <div style="display:flex; align-items:center; gap:7px; margin-bottom:9px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#fff; padding:2px 6px; border-radius:3px; font-weight:700;">리서치</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#22C55E; margin-left:auto;">신뢰도 74%</span></div>
+              <div style="font-size:13px; font-weight:600; color:#fff; line-height:1.45; margin-bottom:7px;">미 연준, 2026 금리 인하 사이클 진입 전망</div>
+              <div style="font-size:11px; line-height:1.55; color:#8f8f8f; margin-bottom:11px;">AI 해석: 듀레이션 우호적 — 해외채권·국내채권 비중 확대 신호. 위험자산에도 점진적 우호.</div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-size:8.5px; color:#666; font-family:'IBM Plex Mono',monospace;">NPS 하우스뷰</span><span style="margin-left:auto; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#34D399; border:1px solid rgba(52,211,153,.3); background:rgba(52,211,153,.08); padding:3px 8px; border-radius:4px;">시뮬에 포함</span></div>
+            </div>
+            <div style="border:1px solid #1e1e1e; background:#0a0a0a; border-radius:9px; padding:15px;">
+              <div style="display:flex; align-items:center; gap:7px; margin-bottom:9px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#fff; border:1px solid #333; padding:2px 6px; border-radius:3px; font-weight:700;">뉴스</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#22C55E; margin-left:auto;">신뢰도 68%</span></div>
+              <div style="font-size:13px; font-weight:600; color:#fff; line-height:1.45; margin-bottom:7px;">엔비디아 실적 서프라이즈 — AI 설비투자 지속</div>
+              <div style="font-size:11px; line-height:1.55; color:#8f8f8f; margin-bottom:11px;">AI 해석: 글로벌 성장주 모멘텀 지속 → 해외주식 강세 근거 강화.</div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-size:8.5px; color:#666; font-family:'IBM Plex Mono',monospace;">Reuters</span><span style="margin-left:auto; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#34D399; border:1px solid rgba(52,211,153,.3); background:rgba(52,211,153,.08); padding:3px 8px; border-radius:4px;">시뮬에 포함</span></div>
+            </div>
+            <div style="border:1px solid rgba(34,211,238,.3); background:#0a0a0a; border-radius:9px; padding:15px;">
+              <div style="display:flex; align-items:center; gap:7px; margin-bottom:9px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#22D3EE; padding:2px 6px; border-radius:3px; font-weight:700;">내 자산</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#888; margin-left:auto;">신뢰도 55%</span></div>
+              <div style="font-size:13px; font-weight:600; color:#fff; line-height:1.45; margin-bottom:7px;">KB증권 2026 자산시장 전망.pdf</div>
+              <div style="font-size:11px; line-height:1.55; color:#8f8f8f; margin-bottom:11px;">AI 해석: 국내주식 중립, 밸류에이션 부담 vs 정책 기대 혼재. 직접 업로드한 자료.</div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-size:8.5px; color:#666; font-family:'IBM Plex Mono',monospace;">회원 업로드 · PDF</span><span style="margin-left:auto; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#999; border:1px solid #2a2a2a; padding:3px 8px; border-radius:4px;">도크에 추가</span></div>
+            </div>
+            <div style="border:1px solid #1e1e1e; background:#0a0a0a; border-radius:9px; padding:15px;">
+              <div style="display:flex; align-items:center; gap:7px; margin-bottom:9px;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#fff; border:1px solid #333; padding:2px 6px; border-radius:3px; font-weight:700;">뉴스</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; margin-left:auto;">신뢰도 61%</span></div>
+              <div style="font-size:13px; font-weight:600; color:#fff; line-height:1.45; margin-bottom:7px;">원/달러 1,380원 돌파 — 환헤지 비용 상승</div>
+              <div style="font-size:11px; line-height:1.55; color:#8f8f8f; margin-bottom:11px;">AI 해석: 해외주식 환위험 요인 — 강세 뷰의 상단을 일부 제한.</div>
+              <div style="display:flex; align-items:center; gap:7px;"><span style="font-size:8.5px; color:#666; font-family:'IBM Plex Mono',monospace;">연합인포맥스</span><span style="margin-left:auto; font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:.5px; color:#999; border:1px solid #2a2a2a; padding:3px 8px; border-radius:4px;">도크에 추가</span></div>
+            </div>
+          </div>
+          <!-- ingestion -->
+          <div style="border:1px dashed #2a2a2a; background:#070707; border-radius:9px; padding:14px 16px; display:flex; align-items:center; gap:12px;">
+            <span style="font-size:11.5px; color:#9a9a9a;">자료 추가 — 링크 입력 또는 PDF 업로드 시 Ben이 본문을 판독해 피드에 추가합니다.</span>
+            <div style="margin-left:auto; display:flex; gap:7px;"><span style="font-size:10px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#bbb; border:1px solid #2a2a2a; padding:7px 12px; border-radius:6px;">링크 분석</span><span style="font-size:10px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#fff; padding:7px 12px; border-radius:6px;">PDF 업로드</span></div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ 매크로 ============ -->
+        <sc-if value="{{ isMacro }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- regime row -->
+          <div style="display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:12px;">
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:7px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a;">감지된 시장 레짐</span><span style="font-family:'Archivo',sans-serif; font-size:20px; font-weight:700; color:#FBBF24;">위험 고조</span><span style="font-size:10.5px; color:#888;">RISK-OFF · 주식 비중 확대에 신중</span></div>
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:7px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a;">VIX 변동성</span><span style="font-family:'Archivo',sans-serif; font-size:20px; font-weight:700;">23.4 <span style="font-size:11px; color:#EF4444;">▲</span></span><span style="font-size:10.5px; color:#888;">장기 평균 상회</span></div>
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:16px 18px; display:flex; flex-direction:column; gap:7px;"><span style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a;">위험회피 배율 λ</span><span style="font-family:'Archivo',sans-serif; font-size:20px; font-weight:700;">1.4×</span><span style="font-size:10.5px; color:#888;">방어적 배분으로 상향</span></div>
+          </div>
+          <!-- indicators -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb; margin-bottom:14px;">실시간 매크로 지표</div>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:#161616; border:1px solid #161616; border-radius:6px; overflow:hidden;">
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">US 10Y</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">4.18% <span style="font-size:10px; color:#22C55E;">▼</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">DXY</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">104.2 <span style="font-size:10px; color:#EF4444;">▲</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">USD/KRW</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">1,382 <span style="font-size:10px; color:#EF4444;">▲</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">WTI</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">$71.3 <span style="font-size:10px; color:#22C55E;">▼</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">GOLD</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">$2,340 <span style="font-size:10px; color:#EF4444;">▲</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">KOSPI</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">2,610 <span style="font-size:10px; color:#EF4444;">▼</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">S&P 500</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">5,420 <span style="font-size:10px; color:#22C55E;">▲</span></span></div>
+              <div style="background:#0a0a0a; padding:12px 14px; display:flex; flex-direction:column; gap:4px;"><span style="font-size:9px; color:#5a5a5a; font-family:'IBM Plex Mono',monospace;">KR 3Y</span><span style="font-family:'Archivo',sans-serif; font-size:16px; font-weight:700;">3.02% <span style="font-size:10px; color:#22C55E;">▼</span></span></div>
+            </div>
+          </div>
+          <!-- correlation heatmap -->
+          <div style="border:1px solid #181818; background:#0a0a0a; border-radius:10px; padding:18px 22px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;"><span style="font-family:'Archivo',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.5px; color:#bbb;">자산 상관관계 히트맵</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#555;">60일 롤링</span></div>
+            <div style="display:grid; grid-template-columns:60px repeat(5,1fr); gap:4px; font-family:'IBM Plex Mono',monospace; font-size:10.5px;">
+              <span></span>
+              <span style="text-align:center; color:#777; font-size:9px;">국내株</span><span style="text-align:center; color:#777; font-size:9px;">해외株</span><span style="text-align:center; color:#777; font-size:9px;">국내債</span><span style="text-align:center; color:#777; font-size:9px;">해외債</span><span style="text-align:center; color:#777; font-size:9px;">대체</span>
+              <span style="color:#777; font-size:9px; display:flex; align-items:center;">국내株</span>
+              <span style="text-align:center; padding:11px 0; background:#171717; color:#fff; border-radius:3px;">1.00</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.50); color:#fff; border-radius:3px;">.72</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.13); color:#fca5a5; border-radius:3px;">-.18</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.04); color:#fca5a5; border-radius:3px;">-.05</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.29); color:#a7f3d0; border-radius:3px;">.41</span>
+              <span style="color:#777; font-size:9px; display:flex; align-items:center;">해외株</span>
+              <span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.50); color:#fff; border-radius:3px;">.72</span><span style="text-align:center; padding:11px 0; background:#171717; color:#fff; border-radius:3px;">1.00</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.15); color:#fca5a5; border-radius:3px;">-.22</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.08); color:#fca5a5; border-radius:3px;">-.12</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.39); color:#fff; border-radius:3px;">.55</span>
+              <span style="color:#777; font-size:9px; display:flex; align-items:center;">국내債</span>
+              <span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.13); color:#fca5a5; border-radius:3px;">-.18</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.15); color:#fca5a5; border-radius:3px;">-.22</span><span style="text-align:center; padding:11px 0; background:#171717; color:#fff; border-radius:3px;">1.00</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.44); color:#fff; border-radius:3px;">.63</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.06); color:#a7f3d0; border-radius:3px;">.08</span>
+              <span style="color:#777; font-size:9px; display:flex; align-items:center;">해외債</span>
+              <span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.04); color:#fca5a5; border-radius:3px;">-.05</span><span style="text-align:center; padding:11px 0; background:rgba(239,68,68,.08); color:#fca5a5; border-radius:3px;">-.12</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.44); color:#fff; border-radius:3px;">.63</span><span style="text-align:center; padding:11px 0; background:#171717; color:#fff; border-radius:3px;">1.00</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.11); color:#a7f3d0; border-radius:3px;">.15</span>
+              <span style="color:#777; font-size:9px; display:flex; align-items:center;">대체</span>
+              <span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.29); color:#a7f3d0; border-radius:3px;">.41</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.39); color:#fff; border-radius:3px;">.55</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.06); color:#a7f3d0; border-radius:3px;">.08</span><span style="text-align:center; padding:11px 0; background:rgba(16,185,129,.11); color:#a7f3d0; border-radius:3px;">.15</span><span style="text-align:center; padding:11px 0; background:#171717; color:#fff; border-radius:3px;">1.00</span>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ 리서치 파이프라인 ============ -->
+        <sc-if value="{{ isResearch }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:15px; letter-spacing:.5px;">매크로 리서치 파이프라인</span>
+            <span style="font-size:11px; color:#666;">수집 → 논거 구축 (Jerry) → 승격 (Ben)</span>
+            <div style="margin-left:auto; display:flex; gap:7px;"><span style="font-size:10px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#bbb; border:1px solid #2a2a2a; padding:7px 12px; border-radius:6px;">1 · 수집</span><span style="font-size:10px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#fff; padding:7px 12px; border-radius:6px;">2 · 논거 구축</span></div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+            <!-- queue -->
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:9px; padding:14px; display:flex; flex-direction:column; gap:9px;">
+              <div style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a; padding-bottom:8px; border-bottom:1px solid #161616;">리서치 큐 · 수집됨</div>
+              <div style="background:#070707; border:1px solid #1a1a1a; border-radius:6px; padding:9px 10px;"><div style="font-size:11px; color:#ddd; line-height:1.4; margin-bottom:5px;">연준 의사록 — 도비시 기조 확인</div><div style="display:flex; gap:8px; font-size:8.5px; font-family:'IBM Plex Mono',monospace; color:#666;"><span>관련도 0.91</span><span style="color:#22C55E;">감성 +0.6</span></div></div>
+              <div style="background:#070707; border:1px solid #1a1a1a; border-radius:6px; padding:9px 10px;"><div style="font-size:11px; color:#ddd; line-height:1.4; margin-bottom:5px;">반도체 수출 3개월 연속 증가</div><div style="display:flex; gap:8px; font-size:8.5px; font-family:'IBM Plex Mono',monospace; color:#666;"><span>관련도 0.84</span><span style="color:#22C55E;">감성 +0.5</span></div></div>
+              <div style="background:#070707; border:1px solid #1a1a1a; border-radius:6px; padding:9px 10px;"><div style="font-size:11px; color:#ddd; line-height:1.4; margin-bottom:5px;">중국 부동산 디레버리징 장기화</div><div style="display:flex; gap:8px; font-size:8.5px; font-family:'IBM Plex Mono',monospace; color:#666;"><span>관련도 0.77</span><span style="color:#EF4444;">감성 −0.4</span></div></div>
+              <div style="background:#070707; border:1px solid #1a1a1a; border-radius:6px; padding:9px 10px;"><div style="font-size:11px; color:#ddd; line-height:1.4; margin-bottom:5px;">유로존 PMI 50 회복</div><div style="display:flex; gap:8px; font-size:8.5px; font-family:'IBM Plex Mono',monospace; color:#666;"><span>관련도 0.69</span><span style="color:#22C55E;">감성 +0.3</span></div></div>
+            </div>
+            <!-- house theses -->
+            <div style="border:1px solid #181818; background:#0a0a0a; border-radius:9px; padding:14px; display:flex; flex-direction:column; gap:9px;">
+              <div style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a; padding-bottom:8px; border-bottom:1px solid #161616;">하우스 논거 · Jerry 구축</div>
+              <div style="background:#070707; border:1px solid #242424; border-radius:6px; padding:10px;"><div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><span style="width:7px;height:7px;border-radius:50%;background:#A78BFA;"></span><span style="font-size:11px; color:#fff; font-weight:600;">해외주식 비중확대</span><span style="margin-left:auto; font-size:9px; font-family:'IBM Plex Mono',monospace; color:#22C55E;">72%</span></div><div style="font-size:10px; line-height:1.5; color:#8a8a8a;">금리 인하 + 이익 모멘텀이 환위험을 상회.</div></div>
+              <div style="background:#070707; border:1px solid #242424; border-radius:6px; padding:10px;"><div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><span style="width:7px;height:7px;border-radius:50%;background:#34D399;"></span><span style="font-size:11px; color:#fff; font-weight:600;">듀레이션 확대</span><span style="margin-left:auto; font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24;">58%</span></div><div style="font-size:10px; line-height:1.5; color:#8a8a8a;">금리 하락 우세, 단 레짐 리스크로 강도 절제.</div></div>
+              <div style="background:#070707; border:1px solid #242424; border-radius:6px; padding:10px;"><div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;"><span style="width:7px;height:7px;border-radius:50%;background:#3B82F6;"></span><span style="font-size:11px; color:#fff; font-weight:600;">국내주식 중립</span><span style="margin-left:auto; font-size:9px; font-family:'IBM Plex Mono',monospace; color:#888;">50%</span></div><div style="font-size:10px; line-height:1.5; color:#8a8a8a;">수출 호조 vs 환·중국 리스크 균형.</div></div>
+            </div>
+            <!-- promote + debate -->
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <div style="border:1px dashed #2a2a2a; background:#070707; border-radius:9px; padding:14px; flex:0 0 auto;"><div style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a; margin-bottom:8px;">분석 및 승격</div><div style="font-size:10.5px; line-height:1.5; color:#777;">논거를 여기로 드래그하면 Ben이 기관급 보고서로 확장해 인텔리전스로 승격합니다.</div></div>
+              <div style="border:1px solid #181818; background:#0a0a0a; border-radius:9px; padding:14px; flex:1; display:flex; flex-direction:column; gap:8px;">
+                <div style="font-size:9px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a; padding-bottom:8px; border-bottom:1px solid #161616;">토론 로그</div>
+                <div style="display:flex; gap:7px;"><span style="flex:0 0 auto; font-size:8px; font-family:'Archivo',sans-serif; font-weight:700; color:#22C55E;">BULL</span><span style="font-size:10.5px; line-height:1.5; color:#9a9a9a;">금리 인하 = 멀티플 확장. 해외주식 오버웨이트.</span></div>
+                <div style="display:flex; gap:7px;"><span style="flex:0 0 auto; font-size:8px; font-family:'Archivo',sans-serif; font-weight:700; color:#EF4444;">BEAR</span><span style="font-size:10.5px; line-height:1.5; color:#9a9a9a;">VIX·환율 부담. 듀레이션이 더 안전.</span></div>
+                <div style="display:flex; gap:7px; border-top:1px solid #161616; padding-top:8px;"><span style="flex:0 0 auto; font-size:8px; font-family:'Archivo',sans-serif; font-weight:700; color:#FBBF24;">JERRY</span><span style="font-size:10.5px; line-height:1.5; color:#cfcfcf;">근거 폭은 Bull 우세 — 해외주식 확대, 단 강도 절제하고 채권 소폭 확대로 헤지.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ============ PM 리포트 (Chris) — 기관급 보고서 ============ -->
+        <sc-if value="{{ isReport }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width:860px; margin:0 auto; display:flex; flex-direction:column; gap:0;">
+
+          <!-- masthead -->
+          <div style="border:1px solid #1c1c1c; border-bottom:none; background:linear-gradient(180deg,#0c0c0c,#080808); border-radius:10px 10px 0 0; padding:24px 30px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+              <div>
+                <div style="font-size:9px; font-family:'IBM Plex Mono',monospace; letter-spacing:1px; color:#5a5a5a; margin-bottom:9px;">국민연금공단 · 투자정책실 · 글로벌 멀티에셋 데스크</div>
+                <div style="font-family:'Archivo',sans-serif; font-weight:800; font-size:22px; letter-spacing:.5px; line-height:1.15; margin-bottom:10px;">글로벌 멀티에셋 배분 보고서</div>
+                <div style="font-size:13.5px; line-height:1.5; color:#cfcfcf; max-width:540px;">금리 정점 통과에 베팅한 해외주식 비중확대 — 단, 위험 고조 레짐과 환위험은 절제로 관리</div>
+              </div>
+              <div style="flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:8px;">
+                <span style="font-size:8.5px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; border:1px solid rgba(251,191,36,.3); padding:3px 8px; border-radius:3px;">CONFIDENTIAL · IC ONLY</span>
+                <button style="font-family:'Archivo',sans-serif; font-weight:700; font-size:9.5px; letter-spacing:1.5px; background:#fff; color:#000; border:none; padding:8px 13px; border-radius:6px; cursor:pointer;">⤓ PDF 내보내기</button>
+              </div>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:18px; margin-top:18px; padding-top:15px; border-top:1px solid #161616; font-size:9.5px; font-family:'IBM Plex Mono',monospace; color:#777;">
+              <span>실행 ID <span style="color:#ddd;">#248</span></span><span>일자 <span style="color:#ddd;">2026-06-29</span></span><span>엔진 <span style="color:#ddd;">ENSEMBLE</span></span><span>이탈 한도 δ <span style="color:#ddd;">5%</span></span><span>작성 <span style="color:#ddd;">Chris (CIS)</span></span><span>검토 <span style="color:#ddd;">Jerry (선임 PM)</span></span>
+            </div>
+          </div>
+
+          <!-- document body -->
+          <div style="border:1px solid #1c1c1c; background:#090909; border-radius:0 0 10px 10px; padding:8px 30px 30px;">
+
+            <!-- I. EXECUTIVE SUMMARY -->
+            <div style="display:flex; align-items:center; gap:9px; margin:24px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">핵심 요약 · EXECUTIVE SUMMARY</span></div>
+            <div style="border-left:2px solid #fff; background:#0c0c0c; padding:14px 18px; font-size:13px; line-height:1.8; color:#dadada;"><b style="color:#fff;">결론 먼저(BLUF).</b> 해외주식을 전략적 벤치마크 대비 <b style="color:#fff;">+4.8%p 비중확대(39.5%)</b>하고, 변동성 기여가 가장 큰 대체투자를 <b style="color:#fff;">−4.3%p 축소(9.7%)</b>할 것을 권고한다. 금리 하락 전망에 따라 채권을 합산 +3.1%p 확대해 균형을 잡았다. 본 배분의 연간 기대수익률은 <b style="color:#fff;">6.84%</b>, 변동성 <b style="color:#fff;">9.12%</b>, 샤프 <b style="color:#fff;">0.61</b>로 벤치마크 대비 위험조정수익을 개선한다. 위험 고조 레짐을 감안해 모든 틸트는 δ 5% 한도 내로 절제했다.</div>
+
+            <!-- II. REGIME -->
+            <div style="display:flex; align-items:center; gap:9px; margin:26px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">시장 국면 진단 · MARKET REGIME DIAGNOSIS</span></div>
+            <div style="font-size:13px; line-height:1.85; color:#cfcfcf;">시스템은 현재 국면을 <b style="color:#FBBF24;">위험 고조(RISK-OFF)</b>로 판정했다. VIX는 <b style="color:#fff;">23.4</b>로 장기 평균을 상회하고, 원/달러는 <b style="color:#fff;">1,382원</b>까지 절하됐다. 다만 미 10년물은 <b style="color:#fff;">4.18%</b>로 하향 안정세를 보여 듀레이션에는 우호적이다. 이 국면은 위험예산을 보수적으로 운용할 것을 요구하며, 이에 위험회피계수 λ를 <b style="color:#fff;">1.4×</b>로 상향해 주식 틸트의 강도를 제한했다.</div>
+
+            <!-- III. POSITIONING -->
+            <div style="display:flex; align-items:center; gap:9px; margin:26px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">포지셔닝 논리 · POSITIONING RATIONALE</span></div>
+            <div style="font-size:13px; line-height:1.85; color:#cfcfcf; margin-bottom:14px;">최대 오버웨이트는 <b style="color:#fff;">해외주식(+4.8%p)</b>, 최대 언더웨이트는 <b style="color:#fff;">대체투자(−4.3%p)</b>다. 해외주식 틸트는 사후 기대수익률을 7.9%→9.2%로 끌어올린 상대 우위 뷰(신뢰도 68%)에 직접 기인하며, Ben의 마켓 근거와 Jerry의 매크로 하우스 뷰가 같은 방향을 가리킨다. 대체투자 축소는 위험 고조 레짐에서 변동성 기여가 가장 컸기 때문이다.</div>
+            <div style="border:1px solid #1a1a1a; border-radius:8px; overflow:hidden;">
+              <div style="display:grid; grid-template-columns:96px 92px 78px 64px 1fr; gap:0 12px; padding:9px 14px; background:#0c0c0c; font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#6a6a6a;"><span>자산</span><span>스탠스</span><span>확신도</span><span style="text-align:right;">액티브</span><span style="padding-left:8px;">핵심 논거</span></div>
+              <div style="display:grid; grid-template-columns:96px 92px 78px 64px 1fr; gap:10px 12px; padding:12px 14px; font-size:11.5px; align-items:center;">
+                <span style="display:flex; align-items:center; gap:6px; color:#ddd;"><span style="width:7px;height:7px;border-radius:50%;background:#A78BFA;"></span>해외주식</span><span style="color:#22C55E; font-size:10.5px;">비중확대 OW</span><span style="font-family:'IBM Plex Mono',monospace; color:#bbb;">高 · 68%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+4.8</span><span style="color:#9a9a9a; font-size:11px; padding-left:8px;">금리 인하·AI 이익 모멘텀</span>
+                <span style="display:flex; align-items:center; gap:6px; color:#ddd;"><span style="width:7px;height:7px;border-radius:50%;background:#3B82F6;"></span>국내주식</span><span style="color:#EF4444; font-size:10.5px;">비중축소 UW</span><span style="font-family:'IBM Plex Mono',monospace; color:#bbb;">中</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#EF4444;">−3.6</span><span style="color:#9a9a9a; font-size:11px; padding-left:8px;">상대 열위 · 환·중국 리스크</span>
+                <span style="display:flex; align-items:center; gap:6px; color:#ddd;"><span style="width:7px;height:7px;border-radius:50%;background:#34D399;"></span>국내채권</span><span style="color:#cfcfcf; font-size:10.5px;">소폭 확대</span><span style="font-family:'IBM Plex Mono',monospace; color:#bbb;">中 · 55%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+1.4</span><span style="color:#9a9a9a; font-size:11px; padding-left:8px;">금리 하락 → 듀레이션 우호</span>
+                <span style="display:flex; align-items:center; gap:6px; color:#ddd;"><span style="width:7px;height:7px;border-radius:50%;background:#6EE7B7;"></span>해외채권</span><span style="color:#cfcfcf; font-size:10.5px;">소폭 확대</span><span style="font-family:'IBM Plex Mono',monospace; color:#bbb;">中 · 55%</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#22C55E;">+1.7</span><span style="color:#9a9a9a; font-size:11px; padding-left:8px;">금리 하락 + 분산 효과</span>
+                <span style="display:flex; align-items:center; gap:6px; color:#ddd;"><span style="width:7px;height:7px;border-radius:50%;background:#FBBF24;"></span>대체투자</span><span style="color:#EF4444; font-size:10.5px;">비중축소 UW</span><span style="font-family:'IBM Plex Mono',monospace; color:#bbb;">—</span><span style="text-align:right; font-family:'IBM Plex Mono',monospace; color:#EF4444;">−4.3</span><span style="color:#9a9a9a; font-size:11px; padding-left:8px;">변동성 기여 최대 · 레짐 방어</span>
+              </div>
+            </div>
+
+            <!-- IV. RETURN & RISK PROFILE -->
+            <div style="display:flex; align-items:center; gap:9px; margin:26px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">기대 성과 및 리스크 프로파일 · RETURN &amp; RISK</span></div>
+            <div style="border:1px solid #1a1a1a; border-radius:8px; overflow:hidden;">
+              <div style="display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:0 12px; padding:9px 14px; background:#0c0c0c; font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#6a6a6a;"><span>지표</span><span style="text-align:right;">전략적 벤치마크</span><span style="text-align:right;">최적화</span><span style="text-align:right;">액티브</span></div>
+              <div style="display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:10px 12px; padding:12px 14px; font-size:11.5px; font-family:'IBM Plex Mono',monospace; align-items:center;">
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">연간 기대수익률</span><span style="text-align:right; color:#999;">6.41%</span><span style="text-align:right; color:#fff;">6.84%</span><span style="text-align:right; color:#22C55E;">+0.43</span>
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">연간 변동성</span><span style="text-align:right; color:#999;">9.38%</span><span style="text-align:right; color:#fff;">9.12%</span><span style="text-align:right; color:#22C55E;">−0.26</span>
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">샤프 비율</span><span style="text-align:right; color:#999;">0.54</span><span style="text-align:right; color:#fff;">0.61</span><span style="text-align:right; color:#22C55E;">+0.07</span>
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">95% VaR (1Y)</span><span style="text-align:right; color:#999;">−14.6%</span><span style="text-align:right; color:#FCA5A5;">−13.7%</span><span style="text-align:right; color:#22C55E;">+0.9</span>
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">95% CVaR (1Y)</span><span style="text-align:right; color:#999;">−19.4%</span><span style="text-align:right; color:#FCA5A5;">−18.2%</span><span style="text-align:right; color:#22C55E;">+1.2</span>
+                <span style="font-family:'Pretendard',sans-serif; color:#ddd;">예상 최대낙폭</span><span style="text-align:right; color:#999;">−24.1%</span><span style="text-align:right; color:#FCA5A5;">−22.4%</span><span style="text-align:right; color:#22C55E;">+1.7</span>
+              </div>
+            </div>
+            <div style="font-size:12px; line-height:1.75; color:#9a9a9a; margin-top:11px;">최적화 포트폴리오는 벤치마크 대비 변동성을 0.26%p 낮추면서 기대수익률을 0.43%p 높여 샤프를 0.54→0.61로 개선한다. 10,000회 몬테카를로 기준 1년 95% VaR는 −13.7%, 예상 최대낙폭은 −22.4%로 추정된다.</div>
+
+            <!-- V. RISK & MITIGATION (MANDATORY) -->
+            <div style="display:flex; align-items:center; gap:9px; margin:26px 0 12px;"><span style="width:3px; height:13px; background:#EF4444;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">리스크 요인 및 완화 전략 · RISK &amp; MITIGATION</span><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#EF4444; border:1px solid rgba(239,68,68,.3); padding:2px 6px; border-radius:3px;">필수</span></div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div style="border:1px solid #1a1a1a; border-left:2px solid #EF4444; border-radius:0 8px 8px 0; padding:13px 16px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><span style="font-size:12px; color:#fff; font-weight:700;">① 해외주식 집중</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; margin-left:auto;">영향 高 · 가능성 中</span></div>
+                <div style="font-size:12px; line-height:1.65; color:#bbb; margin-bottom:5px;">단일 최대 오버웨이트(+4.8%p, 비중 39.5%). AI 모멘텀 되돌림 시 손실 기여가 가장 크다.</div>
+                <div style="font-size:12px; line-height:1.65; color:#9a9a9a;"><b style="color:#34D399;">완화:</b> 해외주식 액티브 비중을 벤치마크 +5%p로 캡, KOSPI200·S&amp;P 풋 스프레드로 하방 5% 헤지.</div>
+              </div>
+              <div style="border:1px solid #1a1a1a; border-left:2px solid #EF4444; border-radius:0 8px 8px 0; padding:13px 16px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><span style="font-size:12px; color:#fff; font-weight:700;">② 환위험 (USD/KRW)</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; margin-left:auto;">영향 中 · 가능성 高</span></div>
+                <div style="font-size:12px; line-height:1.65; color:#bbb; margin-bottom:5px;">원화 1,382원, 해외 익스포저 약 49%가 KRW 부채 대비 환노출. 원화 강세 전환 시 해외 수익을 잠식한다.</div>
+                <div style="font-size:12px; line-height:1.65; color:#9a9a9a;"><b style="color:#34D399;">완화:</b> 해외주식 환노출 50%에 KRW 선물 오버레이, 분기 리밸런싱 시 헤지비율 재산정.</div>
+              </div>
+              <div style="border:1px solid #1a1a1a; border-left:2px solid #EF4444; border-radius:0 8px 8px 0; padding:13px 16px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><span style="font-size:12px; color:#fff; font-weight:700;">③ 금리·듀레이션</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; margin-left:auto;">영향 中 · 가능성 中</span></div>
+                <div style="font-size:12px; line-height:1.65; color:#bbb; margin-bottom:5px;">채권 합산 +3.1%p 확대가 금리 하락 가정에 의존. 인하 지연·반등 시 채권·대체가 동반 약세할 수 있다.</div>
+                <div style="font-size:12px; line-height:1.65; color:#9a9a9a;"><b style="color:#34D399;">완화:</b> 채권 듀레이션 중립~단기 유지, US10Y 4.5% 상향 돌파를 뷰 재검토 트리거로 설정.</div>
+              </div>
+              <div style="border:1px solid #1a1a1a; border-left:2px solid #EF4444; border-radius:0 8px 8px 0; padding:13px 16px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;"><span style="font-size:12px; color:#fff; font-weight:700;">④ 모델 리스크 (BL)</span><span style="font-size:9px; font-family:'IBM Plex Mono',monospace; color:#FBBF24; margin-left:auto;">영향 中 · 가능성 中</span></div>
+                <div style="font-size:12px; line-height:1.65; color:#bbb; margin-bottom:5px;">사후 기대수익률이 뷰 신뢰도(68/55%)·τ·λ 가정에 민감하며 추정오차가 존재한다.</div>
+                <div style="font-size:12px; line-height:1.65; color:#9a9a9a;"><b style="color:#34D399;">완화:</b> 앙상블(MVO·RP·HRP)로 단일모델 민감도 완화, 신뢰도 ±10% 민감도 분석 병행.</div>
+              </div>
+            </div>
+
+            <!-- VI. RECOMMENDATIONS -->
+            <div style="display:flex; align-items:center; gap:9px; margin:26px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">실행 권고 · ACTIONABLE RECOMMENDATIONS</span></div>
+            <div style="display:flex; flex-direction:column; gap:8px; font-size:12.5px; line-height:1.65; color:#cfcfcf;">
+              <div style="display:flex; gap:9px;"><span style="color:#fff;">·</span><span><b style="color:#fff;">리밸런싱.</b> 분기 1회 정기 + δ 5% 이탈 시 수시. 다음 정기검토 2026-09-30.</span></div>
+              <div style="display:flex; gap:9px;"><span style="color:#fff;">·</span><span><b style="color:#fff;">헤지 오버레이.</b> 해외주식 FX 50%에 KRW 선물, 주식 하방 5% 풋 스프레드.</span></div>
+              <div style="display:flex; gap:9px;"><span style="color:#fff;">·</span><span><b style="color:#fff;">비중 한도.</b> 대체투자 벤치마크 +5%p 캡, 단일 자산 액티브 ±5%p 이내.</span></div>
+              <div style="display:flex; gap:9px;"><span style="color:#fff;">·</span><span><b style="color:#fff;">모니터링 트리거.</b> VIX 30 · US10Y 4.5% · USD/KRW 1,420 돌파 시 뷰 즉시 재검토.</span></div>
+            </div>
+
+            <!-- VII. CONVICTION CALL -->
+            <div style="margin-top:24px; border:1px solid #242424; background:#0c0c0c; border-radius:8px; padding:16px 18px;">
+              <div style="font-size:8.5px; font-family:'Archivo',sans-serif; letter-spacing:1.5px; color:#5a5a5a; margin-bottom:7px;">한 줄 결론 · CONVICTION CALL</div>
+              <div style="font-size:13.5px; line-height:1.6; color:#fff; font-weight:600;">“금리 정점 통과에 해외주식으로 베팅하되, 환·변동성은 헤지로 관리한다 — δ 한도 내 절제된 비중확대.”</div>
+            </div>
+
+            <!-- signature -->
+            <div style="display:flex; align-items:center; gap:12px; margin-top:22px; padding-top:18px; border-top:1px solid #161616;" data-comment-anchor="31b7a6b1cd-div">
+              <div style="width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:12px; color:#fff;">C</div>
+              <div><div style="font-size:12.5px; font-weight:700; color:#fff;">Chris</div><div style="font-size:9.5px; color:#777;">PM · 최고투자전략가 (CIS) · 작성</div></div>
+              <div style="width:1px; height:28px; background:#222; margin:0 4px;"></div>
+              <div style="width:30px; height:30px; border-radius:50%; background:#0e0e0e; border:1px solid #2e2e2e; display:flex; align-items:center; justify-content:center; font-family:'Archivo',sans-serif; font-weight:700; font-size:12px; color:#FBBF24;">J</div>
+              <div><div style="font-size:12.5px; font-weight:700; color:#fff;">Jerry</div><div style="font-size:9.5px; color:#777;">선임 PM · 자산배분 총괄 · 검토</div></div>
+              <span style="margin-left:auto; font-size:9px; font-family:'IBM Plex Mono',monospace; color:#555;">서명일 2026-06-29</span>
+            </div>
+
+            <!-- sources -->
+            <div style="display:flex; align-items:center; gap:9px; margin:24px 0 12px;"><span style="width:3px; height:13px; background:#fff;"></span><span style="font-family:'Archivo',sans-serif; font-weight:700; font-size:11px; letter-spacing:2px; color:#fff;">본 분석에 사용된 출처 · SOURCES</span></div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <div style="display:flex; align-items:center; gap:10px; font-size:11.5px; color:#9a9a9a;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#fff; padding:2px 6px; border-radius:3px; font-weight:700;">리서치</span>미 연준 2026 금리 인하 전망 · NPS 하우스뷰<span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; color:#22C55E;">74%</span></div>
+              <div style="display:flex; align-items:center; gap:10px; font-size:11.5px; color:#9a9a9a;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#fff; border:1px solid #333; padding:2px 6px; border-radius:3px; font-weight:700;">뉴스</span>엔비디아 실적 서프라이즈 · Reuters<span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; color:#22C55E;">68%</span></div>
+              <div style="display:flex; align-items:center; gap:10px; font-size:11.5px; color:#9a9a9a;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#000; background:#22D3EE; padding:2px 6px; border-radius:3px; font-weight:700;">내 자산</span>KB증권 2026 자산시장 전망.pdf · 회원 업로드<span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; color:#888;">55%</span></div>
+              <div style="display:flex; align-items:center; gap:10px; font-size:11.5px; color:#9a9a9a;"><span style="font-size:8px; font-family:'Archivo',sans-serif; letter-spacing:1px; color:#fff; border:1px solid #333; padding:2px 6px; border-radius:3px; font-weight:700;">뉴스</span>원/달러 1,380원 돌파 · 연합인포맥스<span style="margin-left:auto; font-family:'IBM Plex Mono',monospace; color:#FBBF24;">61%</span></div>
+            </div>
+
+            <!-- disclaimer -->
+            <div style="margin-top:22px; padding:13px 16px; background:#070707; border:1px solid #161616; border-radius:8px; font-size:10px; line-height:1.7; color:#6a6a6a;">면책: 본 보고서는 공급된 데이터에 근거한 내부 검토용 문서이며 투자 권유가 아닙니다. 사후 기대수익률·VaR·낙폭은 확정치가 아니라 블랙-리터만 및 몬테카를로 모델의 추정치이며, 실제 성과는 시장 상황에 따라 달라질 수 있습니다. NEMOTRON 3 ULTRA 추론 기반 · RUN #248.</div>
+
+          </div>
+        </div>
+        </sc-if>
+
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { tab: 'alloc' };
+  renderVals() {
+    const t = this.state.tab;
+    const mk = (k) => () => this.setState({ tab: k });
+    const base = { fontFamily: "'Archivo',sans-serif", fontWeight: 700, fontSize: '11px', letterSpacing: '1px', padding: '14px 11px', cursor: 'pointer', whiteSpace: 'nowrap' };
+    const sty = (k) => t === k
+      ? { ...base, color: '#fff', borderBottom: '2px solid #fff' }
+      : { ...base, color: '#5a5a5a', borderBottom: '2px solid transparent' };
+    return {
+      isAlloc: t === 'alloc', isRisk: t === 'risk', isFrontier: t === 'frontier',
+      isIntel: t === 'intel', isMacro: t === 'macro', isResearch: t === 'research', isReport: t === 'report',
+      selAlloc: mk('alloc'), selRisk: mk('risk'), selFrontier: mk('frontier'),
+      selIntel: mk('intel'), selMacro: mk('macro'), selResearch: mk('research'), selReport: mk('report'),
+      tAlloc: sty('alloc'), tRisk: sty('risk'), tFrontier: sty('frontier'),
+      tIntel: sty('intel'), tMacro: sty('macro'), tResearch: sty('research'), tReport: sty('report'),
+    };
+  }
+}
+</script>
+<template id="__bundler_thumbnail">
+<div style="width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:30%;">
+    <svg viewBox="0 0 100 100" style="width:100%;max-width:120px;">
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#A78BFA" stroke-width="11" stroke-dasharray="120 214" transform="rotate(-90 50 50)"/>
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#34D399" stroke-width="11" stroke-dasharray="70 214" stroke-dashoffset="-120" transform="rotate(-90 50 50)"/>
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#FBBF24" stroke-width="11" stroke-dasharray="40 214" stroke-dashoffset="-190" transform="rotate(-90 50 50)"/>
+    </svg>
+    <div style="font-family:sans-serif;font-weight:800;font-size:26px;letter-spacing:1px;color:#fff;">Etacolla</div>
+  </div>
+</div>
+</template>
+</body>
+</html>

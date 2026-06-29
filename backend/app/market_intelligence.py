@@ -348,7 +348,7 @@ IMPORTANT LANGUAGE RULE: If the article's source or content is primarily in Engl
     }
     
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,  # Nemotron Ultra for article digestion
+        "model": ARTICLE_DIGESTION_MODEL,  # Nemotron Super for article digestion
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Financial Headlines:\n{headlines_text}"}
@@ -459,11 +459,47 @@ def _domain_of(url: str) -> str:
     return m.group(1).replace("www.", "") if m else ""
 
 
+async def assess_article_relevance(text: str) -> Dict[str, Any]:
+    """LLM gate: is this material useful for TOP-DOWN multi-asset allocation, or is it
+    off-topic / too single-company specific? Returns {relevant, too_company_specific, reason}.
+    Fails open (relevant=True) on any error so ingestion is never silently blocked."""
+    if not OPENROUTER_API_KEY:
+        return {"relevant": True, "too_company_specific": False, "reason": ""}
+    system = (
+        "You are a macro asset-allocation research editor for a pension fund. Decide whether an "
+        "article is useful for TOP-DOWN multi-asset allocation (macro, rates, FX, commodities, "
+        "broad sectors, asset classes). Flag it if it is OFF-TOPIC (not about markets/economy/"
+        "investing at all) OR TOO COMPANY-SPECIFIC (centered on one company's product/earnings/"
+        "personnel with no macro or asset-class read-through). Reply ONLY with JSON: "
+        '{"relevant": true|false, "too_company_specific": true|false, "reason": "<one short Korean sentence>"}'
+    )
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": ARTICLE_DIGESTION_MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": text[:4000]}],
+        "response_format": {"type": "json_object"}, "temperature": 0.0, "max_tokens": 200,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=60.0)
+        if r.status_code == 200:
+            j = clean_and_parse_json(r.json()["choices"][0]["message"]["content"])
+            return {
+                "relevant": bool(j.get("relevant", True)),
+                "too_company_specific": bool(j.get("too_company_specific", False)),
+                "reason": str(j.get("reason", "")),
+            }
+    except Exception as e:
+        logger.warning(f"Relevance check failed ({e}); allowing ingestion.")
+    return {"relevant": True, "too_company_specific": False, "reason": ""}
+
+
 async def ingest_article(
     db: Session,
     url: Optional[str] = None,
     content: Optional[str] = None,
     source_label: Optional[str] = None,
+    confirm: bool = False,
 ) -> Dict[str, Any]:
     """
     Turns a user-supplied article into a structured thesis.
@@ -493,6 +529,18 @@ async def ingest_article(
                            "기사 본문을 복사하여 아래에 붙여넣어 주세요.",
             }
         text = fetched
+
+    # Relevance gate — warn (and require confirmation) when the material is off-topic for
+    # asset allocation or too single-company specific. The LLM makes the call.
+    if not confirm:
+        verdict = await assess_article_relevance(text)
+        if (not verdict.get("relevant", True)) or verdict.get("too_company_specific", False):
+            return {
+                "status": "needs_confirmation",
+                "warning": verdict.get("reason") or "이 자료는 자산배분 관점과 거리가 있어 보입니다.",
+                "relevant": verdict.get("relevant", True),
+                "too_company_specific": verdict.get("too_company_specific", False),
+            }
 
     # Wrap the article as a single "headline" and reuse the thesis generator.
     domain = _domain_of(source_url)
