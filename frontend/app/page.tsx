@@ -100,6 +100,7 @@ export default function LandingPage() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
           <Link
+            id="nav-classic-terminal"
             href="/classic"
             style={{
               fontSize: 12,
@@ -116,6 +117,7 @@ export default function LandingPage() {
             CLASSIC TERMINAL
           </Link>
           <Link
+            id="nav-new-blank"
             href="/new"
             style={{
               fontSize: 12,
@@ -169,6 +171,7 @@ export default function LandingPage() {
           <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap", marginBottom: 60 }}>
             <Link href="/workspace" style={{ textDecoration: "none" }}>
               <button
+                id="btn-launch-demo"
                 style={{
                   fontFamily: FA,
                   fontWeight: 700,
@@ -193,6 +196,7 @@ export default function LandingPage() {
             </Link>
             <Link href="/new" style={{ textDecoration: "none" }}>
               <button
+                id="btn-new-simulation"
                 style={{
                   fontFamily: FA,
                   fontWeight: 700,
@@ -279,7 +283,7 @@ export default function LandingPage() {
         {/* METRICS */}
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 20, width: "100%", maxWidth: 900, marginTop: 80, borderTop: `1px solid ${C.b1}`, paddingTop: 40 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px" }}>
-            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FA, color: C.violet }}>10,000+</span>
+            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FP, color: C.violet }}>10,000+</span>
             <span style={{ fontSize: 12, color: C.t4, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 600 }}>몬테카를로 경로 시뮬레이션</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px" }}>
