@@ -783,20 +783,24 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
     for h in selected_headlines:
         yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "analyzing"}
 
-    thesis_tasks = [
-        generate_theses_with_llm([h], category_hint=h.get("category_hint"))
-        for h in selected_headlines
-    ]
+    # Fire all analyses concurrently, but emit each article's "done" the MOMENT it
+    # finishes — not after the whole batch. Batching the done-events behind a single
+    # asyncio.gather made the UI sit frozen for the entire (slow) analysis, which read
+    # as the refresh "stopping/crashing" right after article selection.
+    async def _analyze_one(h):
+        cat_theses = await generate_theses_with_llm([h], category_hint=h.get("category_hint"))
+        return h, cat_theses
+
     all_theses = []
-    if thesis_tasks:
+    tasks = [asyncio.create_task(_analyze_one(h)) for h in selected_headlines]
+    for fut in asyncio.as_completed(tasks):
         try:
-            thesis_results = await asyncio.gather(*thesis_tasks)
-            for i, (h, cat_theses) in enumerate(zip(selected_headlines, thesis_results)):
-                if cat_theses:
-                    all_theses.extend(cat_theses)
-                yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
+            h, cat_theses = await fut
+            if cat_theses:
+                all_theses.extend(cat_theses)
+            yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
         except Exception as e:
-            logger.error(f"Failed parallel LLM thesis generation: {e}")
+            logger.error(f"Thesis task failed during analysis: {e}")
 
     # -- Phase 5: Commit to DB --
     yield {"type": "phase", "phase": "saving", "msg": f"Saving {len(all_theses)} theses to database..."}

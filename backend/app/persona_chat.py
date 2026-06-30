@@ -232,7 +232,12 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
                 if response.status_code != 200:
                     body = await response.aread()
                     logger.error("chat_with_persona_stream " + str(response.status_code) + ": " + str(body[:300]))
-                    yield {"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.)"}
+                    if response.status_code == 429:
+                        msg = ("(지금은 무료 AI 사용량 한도를 초과했습니다 — OpenRouter 무료 등급의 "
+                               "일일 한도에 도달했어요. 잠시 후(한도 초기화 시) 다시 시도하거나 크레딧을 추가해 주세요.)")
+                    else:
+                        msg = "(답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.)"
+                    yield {"type": "token", "chunk": msg}
                     return
                 async for raw_line in response.aiter_lines():
                     if not raw_line.startswith("data: "):

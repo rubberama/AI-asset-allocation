@@ -48,11 +48,31 @@ const FP = "'Pretendard',sans-serif";
 const FM = FP;
 
 // The three desk personas you can address in the left chat. `key` is sent to
-// the backend /chat endpoint; the rest drive avatar colour + name/role labels.
-const PERSONA_META: Record<"chris" | "jerry" | "ben", { name: string; role: string; color: string; bg?: string; border?: string }> = {
-  chris: { name: "Chris", role: "PM · 최고투자전략가", color: C.white },
-  jerry: { name: "Jerry", role: "선임 PM · 매크로 데스크", color: C.amber },
-  ben: { name: "Ben", role: "마켓 인텔리전스 애널리스트", color: C.cyan, bg: "rgba(34,211,238,.12)", border: "rgba(34,211,238,.35)" },
+// the backend /chat endpoint; the rest drive avatar colour + name/role labels and short info.
+const PERSONA_META: Record<"chris" | "jerry" | "ben", { name: string; role: string; color: string; bg?: string; border?: string; desc: string; avatar: string }> = {
+  chris: {
+    name: "Chris",
+    role: "PM · 최고투자전략가",
+    color: C.white,
+    desc: "이 데스크의 최고투자전략가(PM)입니다. Ben의 분석과 Jerry의 매크로 의견을 수렴하여 최종 자산배분을 결정하고 실행합니다.",
+    avatar: "/chris.jpg"
+  },
+  jerry: {
+    name: "Jerry",
+    role: "선임 PM · 매크로 데스크",
+    color: C.amber,
+    desc: "자산배분 총괄 선임 PM입니다. 매크로 데스크를 담당하며, 주요 리스크 요인과 하우스 뷰(Bull/Bear 논거)를 검증하고 제안합니다.",
+    avatar: "/jerry.jpg"
+  },
+  ben: {
+    name: "Ben",
+    role: "마켓 인텔리전스 애널리스트",
+    color: C.cyan,
+    bg: "rgba(34,211,238,.12)",
+    border: "rgba(34,211,238,.35)",
+    desc: "마켓 인텔리전스 AI 애널리스트입니다. 수집된 시장 뉴스, 리서치 리포트, 기사를 분석하고 요약하여 자산배분 논거를 도출합니다.",
+    avatar: "/ben.jpg"
+  },
 };
 
 const TICKER = [
@@ -179,6 +199,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // persona = whom you're addressing; chatMsgs = the live thread (multi-turn);
   // considerations = market views captured from chat that fold into the next run.
   const [persona, setPersona] = useState<"chris" | "jerry" | "ben">("chris");
+  const [hoveredPersona, setHoveredPersona] = useState<"chris" | "jerry" | "ben" | null>(null);
   const [chatMsgs, setChatMsgs] = useState<any[]>([]);
   const [considerations, setConsiderations] = useState<any[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
@@ -713,16 +734,65 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               </div>
             )}
             {/* persona selector — choose who you're addressing */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap", position: "relative" }}>
               {(["chris", "jerry", "ben"] as const).map((key) => {
                 const meta = PERSONA_META[key];
                 const active = persona === key;
                 return (
-                  <span key={key} onClick={() => setPersona(key)} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 600, cursor: "pointer", color: active ? "#000" : meta.color, background: active ? meta.color : "transparent", border: `1px solid ${active ? meta.color : C.b3}`, borderRadius: 13, padding: "4px 10px" }}>
-                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: active ? "#000" : meta.color }} />@{meta.name}
+                  <span
+                    key={key}
+                    onClick={() => setPersona(key)}
+                    onMouseEnter={() => setHoveredPersona(key)}
+                    onMouseLeave={() => setHoveredPersona(null)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", color: active ? "#000" : meta.color, background: active ? meta.color : "transparent", border: `1px solid ${active ? meta.color : C.b3}`, borderRadius: 13, padding: "4px 10px" }}
+                  >
+                    <img src={meta.avatar} alt={meta.name} style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover", border: `1px solid ${active ? "#000" : meta.color}` }} />@{meta.name}
                   </span>
                 );
               })}
+              {hoveredPersona && (() => {
+                const meta = PERSONA_META[hoveredPersona];
+                const caretLeft = hoveredPersona === "chris" ? 30 : hoveredPersona === "jerry" ? 95 : 157;
+                return (
+                  <div style={{
+                    position: "absolute",
+                    bottom: "100%",
+                    left: 0,
+                    marginBottom: 10,
+                    width: 260,
+                    background: "rgba(15, 15, 15, 0.98)",
+                    backdropFilter: "blur(12px)",
+                    border: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                    borderRadius: 8,
+                    padding: "12px",
+                    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
+                    zIndex: 1000,
+                    pointerEvents: "none",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <img src={meta.avatar} alt={meta.name} style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", border: `1px solid ${meta.color}` }} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>@{meta.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#888", fontFamily: FP }}>{meta.role}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#ccc", lineHeight: 1.6, fontFamily: FP, fontWeight: 400, textAlign: "left", whiteSpace: "normal" }}>
+                      {meta.desc}
+                    </div>
+                    <div style={{
+                      position: "absolute",
+                      bottom: -4,
+                      left: caretLeft,
+                      transform: "translateX(-50%) rotate(45deg)",
+                      width: 8,
+                      height: 8,
+                      background: "rgba(15, 15, 15, 0.98)",
+                      borderRight: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                      borderBottom: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                    }} />
+                  </div>
+                );
+              })()}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.chip, border: `1px solid ${C.b4}`, borderRadius: 10, padding: "10px 12px" }}>
               <input
@@ -839,9 +909,19 @@ function Avatar({ children, color, bg, border, small }: { children: React.ReactN
 }
 
 function Msg({ who, role, children, avatarColor, avatarBg, avatarBorder }: { who: string; role: string; children: React.ReactNode; avatarColor: string; avatarBg?: string; avatarBorder?: string }) {
+  const nameKey = who.toLowerCase() as "chris" | "jerry" | "ben";
+  const hasAvatar = nameKey in PERSONA_META;
   return (
     <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-      <Avatar color={avatarColor} bg={avatarBg} border={avatarBorder}>{who[0]}</Avatar>
+      {hasAvatar ? (
+        <img
+          src={PERSONA_META[nameKey].avatar}
+          alt={who}
+          style={{ flex: "0 0 30px", width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: `1px solid ${avatarBorder || avatarColor}` }}
+        />
+      ) : (
+        <Avatar color={avatarColor} bg={avatarBg} border={avatarBorder}>{who[0]}</Avatar>
+      )}
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginBottom: 4 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{who}</span>
