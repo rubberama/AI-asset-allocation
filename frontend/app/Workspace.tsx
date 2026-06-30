@@ -1831,7 +1831,7 @@ function GuideTab({ onNavigate, runSimulation, running }: { onNavigate: (t: stri
             <span style={{ fontSize: 10, fontFamily: FA, fontWeight: 800, color: C.violet, background: `${C.violet}1a`, border: `1px solid ${C.violet}33`, padding: "2px 6px", borderRadius: 3 }}>
               PHASE 0{current.id}
             </span>
-            <h4 style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: 0 }}>{current.title}</h4>
+            <h4 style={{ fontSize: 13, fontWeight: 600, fontFamily: FA, color: "#fff", margin: 0 }}>{current.title}</h4>
           </div>
           <p style={{ fontSize: 12.5, color: C.t2, lineHeight: 1.6, margin: "0 0 16px 0" }}>{current.desc}</p>
 
