@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { EtacollaLogo } from "./EtacollaLogo";
 
 // Design constants aligned with DESIGN.md and Workspace.tsx
 const C = {
@@ -132,10 +133,10 @@ export default function LoginPage() {
         }}
       >
         {/* Branding Header */}
-        <div style={{ textAlign: "center" }}>
-          <span style={{ fontSize: 9.5, fontFamily: FA, color: C.t4, letterSpacing: "2.5px", fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>NPS QUANT LABS</span>
-          <h1 style={{ fontFamily: FA, fontSize: "28px", fontWeight: 800, letterSpacing: "-1px", color: C.white, margin: 0, textTransform: "uppercase" }}>Etacolla</h1>
-          <span style={{ fontSize: 11.5, color: C.t3, marginTop: 4, display: "block" }}>Quant Labs Portal / 자산배분 시스템</span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <span style={{ fontSize: 9.5, fontFamily: FA, color: C.t4, letterSpacing: "2.5px", fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 14 }}>NPS QUANT LABS</span>
+          <EtacollaLogo size={52} wordmarkSize={28} orientation="column" color={C.white} spin />
+          <span style={{ fontSize: 11.5, color: C.t3, marginTop: 10, display: "block" }}>Quant Labs Portal / 자산배분 시스템</span>
         </div>
 
         {/* Login Form */}

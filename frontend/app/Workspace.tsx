@@ -11,9 +11,10 @@
  * Styles are copied verbatim from the .dc.html inline styles (colors, sizes, spacing, radii).
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { 
+import {
   TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation
 } from "lucide-react";
+import { EtacollaLogo } from "./EtacollaLogo";
 
 const API_BASE = "http://localhost:8000";
 
@@ -568,7 +569,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       {/* ============ TOP NAV ============ */}
       <div style={{ height: 54, flex: "0 0 54px", borderBottom: `1px solid ${C.b1}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontFamily: FA, fontWeight: 800, fontSize: 16, letterSpacing: ".5px" }}>Etacolla</span>
+          <EtacollaLogo size={22} wordmarkSize={16} color={C.white} />
           <span style={{ width: 1, height: 18, background: "#222" }} />
           <span style={{ fontSize: 10.5, color: C.t4, letterSpacing: ".2px" }}>your personal macro asset allocation analyst</span>
         </div>
