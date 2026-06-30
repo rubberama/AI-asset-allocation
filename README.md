@@ -127,11 +127,18 @@ npm run dev
 
 | 역할 | 기본 모델 | 환경변수로 변경 |
 |------|---------|--------------|
+| 일반 읽기 / 헤드라인 선택 | `openrouter/owl-alpha` | `OPENROUTER_MODEL` |
 | 기사 분석 (장문 컨텍스트) | `openrouter/owl-alpha` | `ARTICLE_DIGESTION_MODEL` |
-| 의견 파싱 / PM 메모 | `deepseek/deepseek-chat-v3-0324:free` | `VIEW_PARSING_MODEL` |
-| 연쇄 추론 (CoT) | `deepseek/deepseek-r1:free` | `REASONING_MODEL` |
+| 의견 파싱 / 변동성 보정 | `openrouter/owl-alpha` *(임시 — 평소 추론 모델)* | `VIEW_PARSING_MODEL` |
+| 연쇄 추론 / PM 메모 | `openrouter/owl-alpha` *(임시 — 평소 추론 모델)* | `REASONING_MODEL` |
 
-더 강력한 모델(예: Claude, GPT-4o)을 사용하려면 `.env`에서 변경합니다:
+> ⚙️ **앱 안에서도 바꿀 수 있습니다.** 워크스페이스 상단의 **시스템 → 설정** 탭에서 각 작업의 모델을
+> 클릭 한 번으로 교체할 수 있으며, 변경 사항은 자동으로 `backend/.env`에 저장됩니다.
+>
+> 현재 의견 파싱·연쇄 추론은 OpenRouter 크레딧 소진으로 `owl-alpha`로 **임시 전환**되어 있습니다.
+> 크레딧이 복구되면 설정 탭(또는 `.env`)에서 `nvidia/nemotron-3-super-120b-a12b:free` 등 추론 모델로 되돌리세요.
+
+더 강력한 모델(예: Claude, GPT-4o)을 사용하려면 설정 탭 또는 `.env`에서 변경합니다:
 
 ```env
 REASONING_MODEL=anthropic/claude-sonnet-4-5
