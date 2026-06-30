@@ -6,7 +6,8 @@ import httpx
 import numpy as np
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Union, Dict, Any, Optional
-from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL, VIEW_PARSING_MODEL, REASONING_MODEL
+from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL
+from app import config  # VIEW_PARSING_MODEL / REASONING_MODEL read live so the 설정 tab can switch them at runtime
 from app.macro_data import fetch_macro_context, format_macro_context_for_llm
 
 logger = logging.getLogger(__name__)
@@ -269,7 +270,7 @@ async def _multi_call_confidence_calibration(
 
     async def _single_sample() -> List[Dict]:
         payload = {
-            "model": VIEW_PARSING_MODEL,
+            "model": config.VIEW_PARSING_MODEL,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": f'User View: "{view_text}"'},
@@ -359,7 +360,7 @@ async def parse_views_with_llm_stream(view_text: str):
         "X-Title": "NPS Black-Litterman Platform",
     }
     payload = {
-        "model": REASONING_MODEL,
+        "model": config.REASONING_MODEL,
         "messages": [
             {"role": "system", "content": _build_views_system_prompt(macro_context_str)},
             {"role": "user", "content": f"User View: \"{view_text}\""},
@@ -555,7 +556,7 @@ guide's formatting rules — no JSON, no Markdown syntax, no preamble or sign-of
     }
     
     payload = {
-        "model": REASONING_MODEL,
+        "model": config.REASONING_MODEL,
         "messages": [
             {"role": "user", "content": prompt}
         ],
@@ -682,7 +683,7 @@ Provide your Portfolio Manager (Jerry's) internal memo analyzing these views aga
     }
 
     payload = {
-        "model": VIEW_PARSING_MODEL,
+        "model": config.VIEW_PARSING_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}

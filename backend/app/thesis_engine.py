@@ -22,9 +22,9 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import (
-    OPENROUTER_API_KEY, OPENROUTER_API_URL, ARTICLE_DIGESTION_MODEL, ASSET_CLASSES,
-    REASONING_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_API_URL, ASSET_CLASSES,
 )
+from app import config  # ARTICLE_DIGESTION_MODEL / REASONING_MODEL read live for runtime switching (설정 tab)
 from app.db import Document, Thesis
 from app.market_intelligence import clean_and_parse_json
 from app.collect import get_research_queue
@@ -59,7 +59,8 @@ def load_persona(filename: str) -> str:
 
 async def _call_llm(system_prompt: str, user_content: str, timeout: float = 600.0) -> Optional[Dict[str, Any]]:
     """Single OpenRouter JSON call using ARTICLE_DIGESTION_MODEL. Returns parsed dict or None."""
-    from app.config import OPENROUTER_API_KEY as _key, OPENROUTER_API_URL as _url, ARTICLE_DIGESTION_MODEL as _model
+    from app.config import OPENROUTER_API_KEY as _key, OPENROUTER_API_URL as _url
+    _model = config.ARTICLE_DIGESTION_MODEL  # read live so the 설정 tab can switch it
     if not _key:
         logger.warning("OPENROUTER_API_KEY not set; thesis engine cannot run.")
         return None
@@ -96,7 +97,7 @@ async def _call_reasoning_llm(system_prompt: str, user_content: str, timeout: fl
         logger.warning("OPENROUTER_API_KEY not set; reasoning LLM cannot run.")
         return None
     payload = {
-        "model": REASONING_MODEL,
+        "model": config.REASONING_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},

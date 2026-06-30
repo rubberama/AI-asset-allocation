@@ -12,7 +12,8 @@ import logging
 
 import httpx
 
-from app.config import OPENROUTER_API_KEY, OPENROUTER_API_URL, VIEW_PARSING_MODEL, REASONING_MODEL
+from app.config import OPENROUTER_API_KEY, OPENROUTER_API_URL
+from app import config  # VIEW_PARSING_MODEL / REASONING_MODEL read live for runtime switching (설정 tab)
 from app.llm import clean_and_parse_json
 
 logger = logging.getLogger(__name__)
@@ -149,7 +150,7 @@ async def classify_chat_intent(message, history=None):
         "X-Title": "NPS Black-Litterman Platform",
     }
     payload = {
-        "model": VIEW_PARSING_MODEL,
+        "model": config.VIEW_PARSING_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": message}],
         "temperature": 0.0,
     }
@@ -219,7 +220,7 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
         "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
         "X-Title": "NPS Black-Litterman Platform",
     }
-    payload = {"model": REASONING_MODEL, "messages": messages, "stream": True, "temperature": 0.4}
+    payload = {"model": config.REASONING_MODEL, "messages": messages, "stream": True, "temperature": 0.4}
 
     full = ""
     in_think = False

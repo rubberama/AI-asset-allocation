@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 
 from app.db import init_db, get_db, Simulation, NpsSnapshot
 from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU, DEFAULT_RISK_FREE_RATE
+from app import config
 from app.crawler import fetch_and_sync_nps_data
 from app.market_data import (
     fetch_market_data, fetch_risk_free_rate, regime_blended_covariance, _REGIME_STRESS_ALPHA,
@@ -169,6 +170,39 @@ def _regime_lambda_multiplier(macro_context: Dict[str, Any]) -> float:
 @app.get("/")
 def read_root():
     return {"message": "NPS AI Black-Litterman Platform API is running!"}
+
+
+class ModelUpdate(BaseModel):
+    env: str    # which task to change (matches config.MODEL_TASKS[].env)
+    model: str  # the model id to switch it to
+
+
+@app.get("/config/models")
+def get_model_config():
+    """Which LLM each task is currently using, plus the switchable choices.
+    Reads live config so it always reflects what the desk is actually calling."""
+    tasks = [
+        {**t, "current": config.get_model(t["env"])}
+        for t in config.MODEL_TASKS
+    ]
+    return {"tasks": tasks, "choices": config.MODEL_CHOICES}
+
+
+@app.post("/config/models")
+def update_model_config(body: ModelUpdate):
+    """Switch the model for one task. Takes effect immediately (live) and is
+    persisted to backend/.env so it survives a restart."""
+    valid_envs = {t["env"] for t in config.MODEL_TASKS}
+    if body.env not in valid_envs:
+        raise HTTPException(status_code=400, detail=f"Unknown task: {body.env}")
+    if not body.model or not body.model.strip():
+        raise HTTPException(status_code=400, detail="Model id must not be empty")
+    try:
+        config.set_model(body.env, body.model.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"Model for {body.env} switched to {body.model.strip()}")
+    return {"ok": True, "env": body.env, "model": config.get_model(body.env)}
 
 @app.get("/nps")
 def get_nps_weights(db: Session = Depends(get_db)):

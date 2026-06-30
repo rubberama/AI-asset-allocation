@@ -7,10 +7,10 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.db import MarketIntelligence
 from app.config import (
-    OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_API_URL,
     MARKETAUX_API_KEY, MARKETAUX_API_URL, MARKETAUX_LIMIT, MARKETAUX_INDUSTRIES,
-    ARTICLE_DIGESTION_MODEL,
 )
+from app import config  # OPENROUTER_MODEL / ARTICLE_DIGESTION_MODEL read live for runtime switching (설정 tab)
 import json
 import re
 import asyncio
@@ -348,7 +348,7 @@ IMPORTANT LANGUAGE RULE: If the article's source or content is primarily in Engl
     }
     
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,  # Nemotron Super for article digestion
+        "model": config.ARTICLE_DIGESTION_MODEL,  # reading-grade model for article digestion
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Financial Headlines:\n{headlines_text}"}
@@ -475,7 +475,7 @@ async def assess_article_relevance(text: str) -> Dict[str, Any]:
     )
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,
+        "model": config.ARTICLE_DIGESTION_MODEL,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": text[:4000]}],
         "response_format": {"type": "json_object"}, "temperature": 0.0, "max_tokens": 200,
     }
@@ -656,7 +656,7 @@ Output ONLY valid, parseable JSON. Do not write markdown decorations other than 
     }
     
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": config.OPENROUTER_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Here is the list of headlines:\n\n{headlines_text}"}
@@ -1037,7 +1037,7 @@ Confidence: {thesis_row.confidence_calibrated}
     }
     
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,
+        "model": config.ARTICLE_DIGESTION_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}

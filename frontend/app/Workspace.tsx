@@ -12,7 +12,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation
+  TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation, Settings, Check, AlertTriangle
 } from "lucide-react";
 import { EtacollaLogo } from "./EtacollaLogo";
 
@@ -91,7 +91,7 @@ const TICKER = [
 const TAB_GROUPS: { label: string; tabs: string[] }[] = [
   { label: "입력", tabs: ["매크로", "인텔리전스", "리서치"] },
   { label: "결과", tabs: ["배분", "리스크", "프론티어", "리포트"] },
-  { label: "시스템", tabs: ["가이드"] },
+  { label: "시스템", tabs: ["가이드", "설정"] },
 ];
 
 const REASONING =
@@ -578,6 +578,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             <span style={{ fontSize: 9, fontFamily: FA, letterSpacing: "1.5px", color: "#6b6b6b" }}>MARKET REGIME</span>
             <span style={{ fontSize: 9, fontFamily: FM, fontWeight: 600, letterSpacing: "1px", color: regimeColor, background: `${regimeColor}1a`, border: `1px solid ${regimeColor}40`, padding: "2px 7px", borderRadius: 3 }}>{regimeLabel}</span>
           </div>
+          <VersionBadge />
           <span style={{ fontSize: 10, fontFamily: FA, letterSpacing: "1.5px", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 4, color: "#999" }}>KO</span>
         </div>
       </div>
@@ -835,6 +836,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
             {tab === "리포트" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <ReportTab sim={sim} />)}
             {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
+            {tab === "설정" && <ConfigTab />}
           </div>
         </div>
       </div>
@@ -885,6 +887,21 @@ function IntelModal({ item, onClose, onAttach, onDelete }: { item: any; onClose:
         </div>
       </div>
     </div>
+  );
+}
+function VersionBadge() {
+  const [v, setV] = useState<{ sha: string; branch: string; date: string; subject: string; dirty: boolean } | null>(null);
+  useEffect(() => { fetch("/api/version").then((r) => (r.ok ? r.json() : null)).then(setV).catch(() => {}); }, []);
+  if (!v?.sha) return null;
+  const dot = v.dirty ? "#FBBF24" : "#34D399";
+  return (
+    <span
+      title={`${v.branch}@${v.sha} · ${v.date}\n${v.subject}${v.dirty ? "\n⚠ uncommitted changes in working tree" : "\n✓ matches commit"}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: "#999", border: `1px solid ${C.b4}`, padding: "4px 9px", borderRadius: 4, cursor: "default" }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flex: "0 0 auto" }} />
+      {v.branch} · {v.sha}{v.dirty ? "*" : ""}
+    </span>
   );
 }
 function EmptyResults({ go }: { go: (t: string) => void }) {
@@ -2110,6 +2127,141 @@ function ReportTab({ sim }: { sim: any }) {
         </div>
         <div style={{ marginTop: 22, padding: "13px 16px", background: C.panel2, border: `1px solid ${C.b1}`, borderRadius: 8, fontSize: 10, lineHeight: 1.7, color: C.t4 }}>면책: 본 보고서는 공급된 데이터에 근거한 내부 검토용 문서이며 투자 권유가 아닙니다. 사후 기대수익률·VaR·낙폭은 확정치가 아니라 블랙-리터만 및 몬테카를로 모델의 추정치이며, 실제 성과는 시장 상황에 따라 달라질 수 있습니다. NEMOTRON 3 SUPER 추론 기반 · RUN {runId}.</div>
       </div>
+    </div>
+  );
+}
+
+// ── 설정 (Config) tab — view & switch the LLM used for each task ──────────────
+// Reads/writes the live backend model registry (/config/models). Switching a
+// model takes effect immediately and is persisted to backend/.env.
+type ModelChoice = { id: string; label: string; kind: "fast" | "reasoning"; note: string };
+type ModelTask = { key: string; env: string; label: string; desc: string; prefer: "fast" | "reasoning"; current: string };
+
+function ConfigTab() {
+  const [tasks, setTasks] = useState<ModelTask[] | null>(null);
+  const [choices, setChoices] = useState<ModelChoice[]>([]);
+  const [error, setError] = useState<string>("");
+  const [saving, setSaving] = useState<string>("");      // env currently being saved
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  const load = async () => {
+    setError("");
+    try {
+      const r = await fetch(API_BASE + "/config/models");
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      setTasks(j.tasks); setChoices(j.choices);
+    } catch {
+      setError("백엔드에 연결할 수 없습니다 (localhost:8000). 서버가 실행 중인지 확인하세요.");
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const choiceOf = (id: string): ModelChoice | undefined => choices.find(c => c.id === id);
+
+  const switchModel = async (env: string, model: string) => {
+    setSaving(env); setToast(null);
+    try {
+      const r = await fetch(API_BASE + "/config/models", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ env, model }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      setTasks(ts => ts ? ts.map(t => t.env === env ? { ...t, current: j.model } : t) : ts);
+      setToast({ msg: `${choiceOf(model)?.label || model} (으)로 변경되었습니다 · .env에 저장됨`, ok: true });
+    } catch {
+      setToast({ msg: "변경에 실패했습니다. 백엔드 연결을 확인하세요.", ok: false });
+    }
+    setSaving("");
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Header card */}
+      <div style={{ background: "linear-gradient(135deg, #050505 0%, #0a0a0a 100%)", border: `1px solid ${C.b1}`, padding: "20px 24px", borderRadius: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <Settings size={16} style={{ color: C.violet }} />
+          <h3 style={{ fontSize: 14, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", margin: 0, textTransform: "uppercase" }}>AI 모델 설정 · Model Configuration</h3>
+        </div>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, lineHeight: 1.5 }}>
+          각 작업(task)에 어떤 LLM이 사용되는지 확인하고, 클릭 한 번으로 모델을 교체할 수 있습니다.<br />
+          변경 사항은 <span style={{ color: C.t2, fontFamily: FM }}>backend/.env</span> 에 즉시 저장되며 별도 재시작 없이 적용됩니다.
+        </p>
+      </div>
+
+      {error && (
+        <div style={{ border: `1px solid ${C.red}`, background: "#160a05", color: C.redL, padding: "12px 16px", borderRadius: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <AlertTriangle size={14} /> {error}
+          <span onClick={load} style={{ marginLeft: "auto", cursor: "pointer", textDecoration: "underline", color: C.t2 }}>다시 시도</span>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{ border: `1px solid ${toast.ok ? C.green : C.red}`, background: toast.ok ? "#04140a" : "#160a05", color: toast.ok ? C.green : C.redL, padding: "10px 14px", borderRadius: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          {toast.ok ? <Check size={14} /> : <AlertTriangle size={14} />} {toast.msg}
+        </div>
+      )}
+
+      {tasks?.map(task => {
+        const cur = choiceOf(task.current);
+        const mismatch = task.prefer === "reasoning" && cur?.kind === "fast";
+        return (
+          <div key={task.env} style={{ border: `1px solid ${C.b1}`, background: C.panel, borderRadius: 10, padding: "16px 18px" }}>
+            {/* Task header */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.white }}>{task.label}</span>
+              <span style={{ fontSize: 10, fontFamily: FM, color: C.t5 }}>{task.env}</span>
+            </div>
+            <p style={{ fontSize: 11.5, color: C.t3, margin: "0 0 6px" }}>{task.desc}</p>
+            <div style={{ fontSize: 11.5, color: C.t4, marginBottom: 12 }}>
+              현재 모델: <span style={{ color: C.violet, fontWeight: 600 }}>{cur?.label || task.current}</span>
+              {cur && <span style={{ color: C.t5 }}> · {cur.note}</span>}
+            </div>
+
+            {mismatch && (
+              <div style={{ fontSize: 11, color: C.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertTriangle size={12} /> 이 작업은 추론(CoT) 모델을 권장합니다. 현재 모델은 추론이 없어 결과 품질이 낮을 수 있습니다.
+              </div>
+            )}
+
+            {/* Choice chips */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {choices.map(ch => {
+                const active = ch.id === task.current;
+                const isSaving = saving === task.env;
+                return (
+                  <button
+                    key={ch.id}
+                    disabled={active || isSaving}
+                    onClick={() => switchModel(task.env, ch.id)}
+                    title={ch.note}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      fontFamily: FA, fontSize: 11, fontWeight: 600, letterSpacing: ".3px",
+                      padding: "7px 11px", borderRadius: 7,
+                      cursor: active ? "default" : (isSaving ? "wait" : "pointer"),
+                      background: active ? "#04140a" : C.card,
+                      color: active ? C.green : C.t2,
+                      border: `1px solid ${active ? C.green : C.b3}`,
+                      opacity: isSaving && !active ? 0.5 : 1,
+                      transition: "all .12s",
+                    }}
+                  >
+                    {active && <Check size={12} />}
+                    {ch.label}
+                    <span style={{ fontSize: 9, color: active ? C.green : C.t5, border: `1px solid ${active ? C.green : C.b3}`, borderRadius: 4, padding: "1px 4px" }}>
+                      {ch.kind === "reasoning" ? "추론" : "고속"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {!tasks && !error && <div style={{ fontSize: 12, color: C.t4 }}>모델 설정을 불러오는 중...</div>}
     </div>
   );
 }
