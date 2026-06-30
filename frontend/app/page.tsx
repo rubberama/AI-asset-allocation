@@ -367,7 +367,7 @@ export default function LandingPage() {
           <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 24 }}>
             <div>
               <span style={{ fontSize: 9.5, fontFamily: FA, color: C.t4, letterSpacing: "1.5px", fontWeight: 700, display: "block", marginBottom: 6 }}>INTERACTIVE SIMULATOR</span>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>포트폴리오 자산배분 체험</h3>
+              <h3 style={{ fontSize: 18, fontWeight: 700, fontFamily: FA, margin: 0 }}>포트폴리오 자산배분 체험</h3>
               <p style={{ fontSize: 12, color: C.t3, marginTop: 6, lineHeight: 1.5 }}>아래의 슬라이더를 조정하여 NPS 하우스의 블랙-리터만 모형 하에서 자산비중과 기대 성과 지표가 실시간으로 어떻게 변화하는지 체험해 보세요.</p>
             </div>
 
@@ -487,11 +487,11 @@ export default function LandingPage() {
             <span style={{ fontSize: 12, color: C.t4, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 600 }}>몬테카를로 경로 시뮬레이션</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px" }}>
-            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FP, color: C.green }}>Black-Litterman</span>
+            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FA, color: C.green }}>Black-Litterman</span>
             <span style={{ fontSize: 12, color: C.t4, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 600 }}>시장 균형 대비 사후 기대수익률 계산</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px" }}>
-            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FP, color: C.white }}>Ensemble MVO</span>
+            <span style={{ fontSize: "28px", fontWeight: 700, fontFamily: FA, color: C.white }}>Ensemble MVO</span>
             <span style={{ fontSize: 12, color: C.t4, textTransform: "uppercase", letterSpacing: "1px", fontWeight: 600 }}>리스크 패리티 & HRP 결합 분석</span>
           </div>
         </section>
