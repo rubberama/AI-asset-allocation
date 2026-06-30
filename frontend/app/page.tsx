@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 // Design constants aligned with DESIGN.md and Workspace.tsx
@@ -30,6 +29,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +51,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     // Simulate auth lag and redirect
-    setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       setLoading(false);
       router.push("/workspace");
     }, 600);
@@ -54,7 +60,7 @@ export default function LoginPage() {
   const handleDemoLogin = () => {
     setLoading(true);
     setError("");
-    setTimeout(() => {
+    timerRef.current = setTimeout(() => {
       setLoading(false);
       router.push("/workspace");
     }, 300);

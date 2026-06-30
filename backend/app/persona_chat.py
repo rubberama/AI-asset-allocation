@@ -169,6 +169,17 @@ async def classify_chat_intent(message, history=None):
     except Exception as e:
         logger.warning("classify_chat_intent failed, using heuristic: " + str(e))
     return _persona_heuristic_intent(message)
+def _get_pending_prefix_len(text: str, tag: str) -> int:
+    text_lower = text.lower()
+    tag_lower = tag.lower()
+    for i in range(len(tag_lower) - 1, 0, -1):
+        if text_lower.endswith(tag_lower[:i]):
+            return i
+    return 0
+
+
+def _find_tag_case_insensitive(text: str, tag: str, start: int) -> int:
+    return text.lower().find(tag.lower(), start)
 
 
 async def chat_with_persona_stream(persona, message, history=None, context=None):
@@ -240,21 +251,24 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
                     # Strip any <think>…</think> the model embeds in content; emit only the answer.
                     while True:
                         if not in_think:
-                            idx = full.find("<think>", last)
+                            idx = _find_tag_case_insensitive(full, "<think>", last)
                             if idx == -1:
-                                emit = full[last:]
+                                p_len = _get_pending_prefix_len(full, "<think>")
+                                safe_len = len(full) - p_len
+                                emit = full[last:safe_len]
                                 if emit:
                                     yield {"type": "token", "chunk": emit}
-                                    last = len(full)
+                                last = safe_len
                                 break
                             if idx > last:
                                 yield {"type": "token", "chunk": full[last:idx]}
                             in_think = True
                             last = idx + 7
                         else:
-                            end_idx = full.find("</think>", last)
+                            end_idx = _find_tag_case_insensitive(full, "</think>", last)
                             if end_idx == -1:
-                                last = len(full)
+                                p_len = _get_pending_prefix_len(full, "</think>")
+                                last = len(full) - p_len
                                 break
                             in_think = False
                             last = end_idx + 8

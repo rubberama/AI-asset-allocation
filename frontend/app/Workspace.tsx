@@ -467,7 +467,14 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         }
       }
     } catch {
-      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(연결 오류로 답변을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
+      setChatMsgs((prev) => prev.map((m) => {
+        if (m.id !== botId) return m;
+        const errMsg = "(연결 오류로 인해 답변이 중단되었습니다.)";
+        return {
+          ...m,
+          content: m.content ? `${m.content} \n\n${errMsg}` : "(연결 오류로 답변을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)"
+        };
+      }));
     } finally {
       setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
       setChatBusy(false);
