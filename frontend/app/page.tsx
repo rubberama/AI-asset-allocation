@@ -5,19 +5,19 @@ import { useRouter } from "next/navigation";
 
 // Design constants aligned with DESIGN.md and Workspace.tsx
 const C = {
-  bg: "#000",
+  bg: "#000000",
   white: "#fff",
-  t3: "#9a9a9a",
-  t4: "#6a6a6a",
-  b1: "#161616",
-  b2: "#1c1c1c",
-  b3: "#242424",
-  violet: "#A78BFA",
-  green: "#34D399",
-  green2: "#6EE7B7",
-  blue: "#3B82F6",
-  amber: "#FBBF24",
-  red: "#EF4444",
+  t3: "#909090",
+  t4: "#606060",
+  b1: "#1e1e1e",
+  b2: "#2a2a2a",
+  b3: "#333333",
+  violet: "#00C805",
+  green: "#00C805",
+  green2: "#21e000",
+  blue: "#3b82f6",
+  amber: "#f59e0b",
+  red: "#ff5000",
 };
 
 const FA = "'Archivo',sans-serif";
@@ -91,8 +91,8 @@ export default function LoginPage() {
           transition: border-color 0.15s, box-shadow 0.15s;
         }
         input:focus {
-          border-color: ${C.violet} !important;
-          box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
+          border-color: ${C.green} !important;
+          box-shadow: 0 0 0 2px rgba(0, 200, 5, 0.15);
         }
       `}</style>
 
@@ -103,7 +103,7 @@ export default function LoginPage() {
           width: "480px",
           height: "480px",
           borderRadius: "50%",
-          background: `radial-gradient(circle, rgba(167,139,250,0.18) 0%, rgba(0,0,0,0) 70%)`,
+          background: `radial-gradient(circle, rgba(0,200,5,0.12) 0%, rgba(0,0,0,0) 70%)`,
           filter: "blur(60px)",
           pointerEvents: "none",
           animation: "subtlePulse 6s infinite ease-in-out",
