@@ -20,8 +20,8 @@ const API_BASE = "http://localhost:8000";
 // Regime → [short KR label, accent color], and the regime-scaled risk-aversion λ
 // (mirrors backend _regime_lambda_multiplier in main.py).
 const REGIME_MAP: Record<string, [string, string]> = {
-  CRISIS: ["위기", "#EF4444"], ELEVATED_RISK: ["위험 고조", "#FBBF24"],
-  NORMAL: ["정상", "#9a9a9a"], LOW_VOL: ["안정", "#34D399"],
+  CRISIS: ["위기", "#ff5000"], ELEVATED_RISK: ["위험 고조", "#FBBF24"],
+  NORMAL: ["정상", "#9a9a9a"], LOW_VOL: ["안정", "#00C805"],
 };
 const REGIME_LAMBDA: Record<string, string> = { CRISIS: "1.6×", ELEVATED_RISK: "1.25×", NORMAL: "1.0×", LOW_VOL: "0.9×" };
 
@@ -38,8 +38,8 @@ const C = {
   card: "#0a0a0a", card2: "#0c0c0c", chip: "#0b0b0b",
   b1: "#161616", b2: "#1c1c1c", b3: "#242424", b4: "#2a2a2a", b5: "#1e1e1e", b6: "#181818",
   white: "#fff", t1: "#d2d2d2", t2: "#cfcfcf", t3: "#9a9a9a", t4: "#6a6a6a", t5: "#5a5a5a", t6: "#555",
-  violet: "#A78BFA", green: "#34D399", green2: "#6EE7B7", blue: "#3B82F6",
-  amber: "#FBBF24", red: "#EF4444", up: "#22C55E", cyan: "#22D3EE", redL: "#FCA5A5",
+  violet: "#00C805", green: "#00C805", green2: "#21e000", blue: "#3B82F6",
+  amber: "#FBBF24", red: "#ff5000", up: "#00C805", cyan: "#22D3EE", redL: "#ff9166",
 };
 const FA = "'Archivo',sans-serif";
 const FP = "'Pretendard',sans-serif";
@@ -1484,7 +1484,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
   );
 }
 
-const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#A78BFA", KR_BOND: "#34D399", GLOBAL_BOND: "#6EE7B7", ALTERNATIVE: "#FBBF24" };
+const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#00C805", KR_BOND: "#22D3EE", GLOBAL_BOND: "#60efb0", ALTERNATIVE: "#FBBF24" };
 const Q_MOCK: any[] = [
   ["연준 의사록 — 도비시 기조 확인", "관련도 0.91", "감성 +0.6", C.up],
   ["반도체 수출 3개월 연속 증가", "관련도 0.84", "감성 +0.5", C.up],

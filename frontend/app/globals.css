@@ -3,23 +3,23 @@
 :root {
   --background: #000000;
   --foreground: #ffffff;
-  --card: #0a0a0a;
+  --card: #111111;
   --card-foreground: #ffffff;
-  --popover: #0a0a0a;
+  --popover: #111111;
   --popover-foreground: #ffffff;
-  --primary: #ffffff;
+  --primary: #00C805;
   --primary-foreground: #000000;
-  --secondary: #121212;
+  --secondary: #1a1a1a;
   --secondary-foreground: #ffffff;
-  --muted: #121212;
-  --muted-foreground: #8a8a8f;
-  --accent: #2c2c2e;
+  --muted: #1a1a1a;
+  --muted-foreground: #888888;
+  --accent: #242424;
   --accent-foreground: #ffffff;
-  --destructive: #ff3b30;
+  --destructive: #ff5000;
   --destructive-foreground: #ffffff;
-  --border: #3a3a3f;
-  --input: #0a0a0a;
-  --ring: #ffffff;
+  --border: #2a2a2a;
+  --input: #111111;
+  --ring: #00C805;
 }
 
 body {
@@ -83,10 +83,10 @@ body {
   background: #000000;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3a3a3f;
+  background: #2a2a2a;
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #5a5a5f;
+  background: #3d3d3d;
 }
 
