@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 TICKER_DETAILS = {
     "VIX": {"ticker": "^VIX", "name": "CBOE VIX Volatility", "category": "VOLATILITY"},
+    "VIX3M": {"ticker": "^VIX3M", "name": "CBOE VIX 3-Month Volatility", "category": "VOLATILITY"},
     "MOVE": {"ticker": "^MOVE", "name": "MOVE Bond Volatility", "category": "VOLATILITY"},
     
     "US3M": {"ticker": "^IRX", "name": "US 3-Month T-Bill Yield", "category": "YIELD_CURVE"},

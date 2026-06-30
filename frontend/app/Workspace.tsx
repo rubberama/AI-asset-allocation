@@ -1467,9 +1467,12 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
   );
 }
 
+// ── MacroTab helpers & constants ─────────────────────────────────────────────
+
 const MACRO_IND = [
   ["US 10Y", "4.18%", "▼", C.up], ["DXY", "104.2", "▲", C.red], ["USD/KRW", "1,382", "▲", C.red], ["WTI", "$71.3", "▼", C.up],
-  ["GOLD", "$2,340", "▲", C.red], ["KOSPI", "2,610", "▼", C.red], ["S&P 500", "5,420", "▲", C.up], ["KR 3Y", "3.02%", "▼", C.up],
+  ["GOLD", "$2,340", "▲", C.red], ["KOSPI", "2,610", "▼", C.red], ["S&P 500", "5,420", "▲", C.up], ["NASDAQ", "17,330", "▲", C.up],
+  ["VIX", "23.4", "▲", C.red], ["MOVE", "115", "▲", C.red],
 ];
 const HEAT_LABELS = ["국내株", "해외株", "국내債", "해외債", "대체"];
 const HEAT: [string, string, string][][] = [
@@ -1487,6 +1490,7 @@ const REGIME_DESC: Record<string, string> = {
 const MACRO_IND_SPEC: [string, string][] = [
   ["US 10Y", "US10Y"], ["DXY", "DXY"], ["USD/KRW", "USD_KRW"], ["WTI", "WTI"],
   ["GOLD", "GOLD"], ["KOSPI", "KOSPI"], ["S&P 500", "SPY"], ["NASDAQ", "QQQ"],
+  ["VIX", "VIX"], ["채권변동성", "MOVE"],
 ];
 const HEAT_PROXY: [string, string][] = [["국내株", "KOSPI"], ["해외株", "SPY"], ["국내債", "US10Y"], ["해외債", "HYG"], ["대체", "GOLD"]];
 
@@ -1498,22 +1502,116 @@ function heatCell(v: number): [string, string, string] {
   return [s, `rgba(239,68,68,${a.toFixed(2)})`, "#fca5a5"];
 }
 
+function Sparkline({ history, color, w = 60, h = 24 }: { history?: Array<{ date: string; value: number }>; color?: string; w?: number; h?: number }) {
+  if (!history || history.length < 3) return <span style={{ display: "inline-block", width: w, height: h }} />;
+  const vals = history.slice(-30).map(p => p.value);
+  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const tx = (i: number) => (i / (vals.length - 1)) * w;
+  const ty = (v: number) => h - 2 - ((v - mn) / rng) * (h - 4);
+  const pts = vals.map((v, i) => `${tx(i)},${ty(v)}`).join(" ");
+  const trend = vals[vals.length - 1] >= vals[0];
+  const stroke = color || (trend ? C.up : C.red);
+  const lx = tx(vals.length - 1), ly = ty(vals[vals.length - 1]);
+  return (
+    <svg width={w} height={h} style={{ display: "block", overflow: "visible", flexShrink: 0 }}>
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={lx} cy={ly} r={1.8} fill={stroke} />
+    </svg>
+  );
+}
+
+function YieldCurveChart({ macro }: { macro: any }) {
+  const curvePts = [
+    { label: "3M", key: "US3M" },
+    { label: "5Y", key: "US5Y" },
+    { label: "10Y", key: "US10Y" },
+    { label: "30Y", key: "US30Y" },
+  ].map(p => ({ label: p.label, rate: macro?.[p.key]?.current as number | undefined }))
+   .filter((p): p is { label: string; rate: number } => p.rate != null);
+
+  const useFallback = curvePts.length < 2;
+  const pts = useFallback
+    ? [{ label: "3M", rate: 5.27 }, { label: "5Y", rate: 4.21 }, { label: "10Y", rate: 4.18 }, { label: "30Y", rate: 4.41 }]
+    : curvePts;
+
+  const W = 260, H = 90, PL = 30, PR = 8, PT = 12, PB = 22;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const rates = pts.map(p => p.rate);
+  const mn = Math.min(...rates) - 0.15, mx = Math.max(...rates) + 0.15, rng = mx - mn || 1;
+  const tx = (i: number) => PL + (i / (pts.length - 1)) * iW;
+  const ty = (r: number) => PT + iH - ((r - mn) / rng) * iH;
+  const inverted = pts[0]?.rate != null && pts.find(p => p.label === "10Y") != null
+    ? pts[0].rate > (pts.find(p => p.label === "10Y")!.rate)
+    : false;
+  const col = inverted ? C.red : C.green;
+  const pathStr = pts.map((p, i) => `${tx(i)},${ty(p.rate)}`).join(" ");
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>미국 국채 수익률 곡선</span>
+        {inverted && <span style={{ fontSize: 8, fontFamily: FA, color: C.red, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "2px 7px", borderRadius: 3, letterSpacing: ".5px" }}>역전 · 침체 경보</span>}
+        {!useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>실시간</span>}
+        {useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>예시</span>}
+      </div>
+      <svg width={W} height={H} style={{ display: "block" }}>
+        {[mn + rng * 0.1, mn + rng * 0.5, mn + rng * 0.9].map((v, i) => (
+          <g key={i}>
+            <line x1={PL} y1={ty(v)} x2={W - PR} y2={ty(v)} stroke="#1c1c1c" strokeWidth={1} />
+            <text x={PL - 4} y={ty(v) + 3.5} fill="#444" fontSize={7} textAnchor="end" fontFamily={FM}>{v.toFixed(1)}</text>
+          </g>
+        ))}
+        <polygon points={`${tx(0)},${PT + iH} ${pathStr} ${tx(pts.length - 1)},${PT + iH}`} fill={col} fillOpacity={0.08} />
+        <polyline points={pathStr} fill="none" stroke={col} strokeWidth={1.5} strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <g key={p.label}>
+            <circle cx={tx(i)} cy={ty(p.rate)} r={3} fill={col} />
+            <text x={tx(i)} y={ty(p.rate) - 6} fill={col} fontSize={7.5} textAnchor="middle" fontFamily={FM}>{p.rate.toFixed(2)}</text>
+            <text x={tx(i)} y={H - 5} fill="#555" fontSize={7.5} textAnchor="middle" fontFamily={FM}>{p.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+const REGIME_ORDER_LIST = ["LOW_VOL", "NORMAL", "ELEVATED_RISK", "CRISIS"] as const;
+const REGIME_COLORS_SEQ = [C.green, "#cfcfcf", C.amber, C.red];
+const REGIME_KR_SHORT: Record<string, string> = { LOW_VOL: "저위험", NORMAL: "정상", ELEVATED_RISK: "위험 고조", CRISIS: "위기" };
+
 function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; regime: string; regimeLabel: string; regimeColor: string }) {
   const vix = macro?.VIX;
+  const yieldSpread = macro?.YIELD_SPREAD;
+
   const regimeCards = [
     { l: "감지된 시장 레짐", v: macro ? regimeLabel : "위험 고조", vc: macro ? regimeColor : C.amber, d: REGIME_DESC[regime] || "RISK-OFF · 주식 비중 확대에 신중" },
-    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_1d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_1d >= 0 ? C.red : C.up) : C.red, d: "장기 평균 상회" },
+    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_1d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_1d >= 0 ? C.red : C.up) : C.red, d: vix?.change_1d != null ? `1일 ${vix.change_1d >= 0 ? "+" : ""}${vix.change_1d.toFixed(2)}%` : "장기 평균 상회" },
     { l: "위험회피 배율 λ", v: REGIME_LAMBDA[regime] || "1.25×", vc: C.white, d: "방어적 배분으로 상향" },
   ];
 
-  const indCells: [string, string, string, string][] = macro
+  const regimeIdx = REGIME_ORDER_LIST.indexOf(regime as typeof REGIME_ORDER_LIST[number]);
+
+  const indCells = macro
     ? MACRO_IND_SPEC.flatMap(([label, key]) => {
         const d = macro[key];
         if (!d || typeof d.current !== "number") return [];
         const up = (d.change_1d ?? 0) >= 0;
-        return [[label, fmtQuote(key, d.current), up ? "▲" : "▼", up ? C.up : C.red]] as [string, string, string, string][];
+        return [{ label, value: fmtQuote(key, d.current), up, change1d: d.change_1d ?? 0, history: d.history as Array<{ date: string; value: number }> | undefined }];
       })
-    : (MACRO_IND as [string, string, string, string][]);
+    : (MACRO_IND as [string, string, string, string][]).map(([l, v, a]) => ({ label: l, value: v, up: a === "▲", change1d: 0, history: undefined as undefined }));
+
+  const sentimentPulse: Array<{ label: string; sub: string; raw: number | undefined; fmt: (v: number) => string; tag: (v: number) => [string, string]; fallback: string }> = [
+    { label: "VIX 지수", sub: "주식 내재변동성", raw: vix?.current, fmt: (v) => v.toFixed(1), tag: (v) => v > 30 ? ["위기", C.red] : v > 20 ? ["경계", C.amber] : v > 13 ? ["정상", C.t3] : ["안정", C.green], fallback: "23.4" },
+    { label: "MOVE 지수", sub: "채권 내재변동성", raw: macro?.MOVE?.current, fmt: (v) => v.toFixed(0), tag: (v) => v > 140 ? ["고변동", C.red] : v > 100 ? ["경계", C.amber] : ["정상", C.t3], fallback: "—" },
+    { label: "10Y-3M 스프레드", sub: "장단기 금리차", raw: yieldSpread?.current, fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", tag: (v) => v < -0.1 ? ["역전", C.red] : v < 0.3 ? ["평탄", C.amber] : ["정상", C.green], fallback: "—" },
+    { label: "HY 크레딧", sub: "HYG 1일 변화", raw: macro?.HYG?.change_1d, fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", tag: (v) => v < -1 ? ["확대", C.red] : v < 0 ? ["소폭 약세", C.amber] : ["타이트", C.green], fallback: "—" },
+  ];
+
+  const keyRates = [
+    { label: "미국 단기금리", sub: "US 3M T-Bill", key: "US3M" },
+    { label: "미국 장기금리", sub: "US 10Y Treasury", key: "US10Y" },
+    { label: "하이일드 ETF", sub: "HYG 현재가", key: "HYG" },
+  ].map(r => ({ ...r, current: macro?.[r.key]?.current as number | undefined, change1d: macro?.[r.key]?.change_1d as number | undefined }));
 
   const cm = macro?.correlation_matrix;
   const heatRows: [string, string, string][][] | null = cm
@@ -1524,28 +1622,103 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
     : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 12 }}>
-        {regimeCards.map((r) => (
-          <Card key={r.l} style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 7 }}>
-            <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>{r.l}</span>
-            <span style={{ fontFamily: FA, fontSize: 20, fontWeight: 700, color: r.vc }}>{r.v} {r.arrow && <span style={{ fontSize: 11, color: r.ac }}>{r.arrow}</span>}</span>
-            <span style={{ fontSize: 10.5, color: "#888" }}>{r.d}</span>
-          </Card>
-        ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* S1: Regime Dashboard ──────────────────────────────────────────────── */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr" }}>
+          {regimeCards.map((r, i) => (
+            <div key={r.l} style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6, borderRight: i < 2 ? `1px solid ${C.b2}` : undefined }}>
+              <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>{r.l}</span>
+              <span style={{ fontFamily: FA, fontSize: 20, fontWeight: 700, color: r.vc }}>
+                {r.v}{r.arrow && <span style={{ fontSize: 11, color: r.ac, marginLeft: 4 }}>{r.arrow}</span>}
+              </span>
+              <span style={{ fontSize: 10, color: "#777" }}>{r.d}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ borderTop: `1px solid ${C.b2}`, padding: "10px 18px 12px" }}>
+          <div style={{ position: "relative", height: 3, background: `linear-gradient(to right, ${C.green} 0%, #cfcfcf 33%, ${C.amber} 66%, ${C.red} 100%)`, borderRadius: 2, marginBottom: 8 }}>
+            {regimeIdx >= 0 && (
+              <div style={{ position: "absolute", left: `${(regimeIdx / (REGIME_ORDER_LIST.length - 1)) * 100}%`, top: "50%", transform: "translate(-50%, -50%)", width: 10, height: 10, borderRadius: "50%", background: REGIME_COLORS_SEQ[regimeIdx], border: "2px solid #000", boxShadow: `0 0 6px ${REGIME_COLORS_SEQ[regimeIdx]}` }} />
+            )}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            {REGIME_ORDER_LIST.map((r, i) => (
+              <span key={r} style={{ fontSize: 7.5, fontFamily: FA, letterSpacing: ".3px", color: i === regimeIdx ? REGIME_COLORS_SEQ[i] : C.t5, fontWeight: i === regimeIdx ? 700 : 400 }}>{REGIME_KR_SHORT[r]}</span>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* S2: Yield Curve + Key Rates ────────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12 }}>
+        <Card style={{ padding: "14px 18px" }}>
+          <YieldCurveChart macro={macro} />
+        </Card>
+        <Card style={{ padding: "14px 16px", display: "flex", flexDirection: "column" }}>
+          <CardTitle>주요 금리 현황</CardTitle>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "space-around" }}>
+            {keyRates.map((r, i) => (
+              <div key={r.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: i < keyRates.length - 1 ? `1px solid ${C.b2}` : undefined }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#bbb", fontWeight: 500 }}>{r.label}</div>
+                  <div style={{ fontSize: 8.5, color: C.t5, fontFamily: FA, letterSpacing: ".5px", marginTop: 1 }}>{r.sub}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontFamily: FM, fontSize: 14, fontWeight: 700, color: "#fff" }}>{r.current != null ? fmtQuote(r.key, r.current) : "—"}</div>
+                  {r.change1d != null && (
+                    <div style={{ fontSize: 9, fontFamily: FM, color: r.change1d >= 0 ? C.up : C.red, marginTop: 1 }}>
+                      {r.change1d >= 0 ? "▲" : "▼"}{Math.abs(r.change1d).toFixed(2)}%
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       </div>
-      <Card>
+
+      {/* S3: Macro Indicators with Sparklines ──────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
         <CardTitle right={macro ? "실시간" : undefined}>실시간 매크로 지표</CardTitle>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: C.b1, border: `1px solid ${C.b1}`, borderRadius: 6, overflow: "hidden" }}>
-          {indCells.map(([k, v, a, ac]) => (
-            <div key={k} style={{ background: C.card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 9, color: C.t5, fontFamily: FM }}>{k}</span>
-              <span style={{ fontFamily: FA, fontSize: 16, fontWeight: 700 }}>{v} <span style={{ fontSize: 10, color: ac }}>{a}</span></span>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: C.b2, border: `1px solid ${C.b2}`, borderRadius: 6, overflow: "hidden" }}>
+          {indCells.map((cell) => (
+            <div key={cell.label} style={{ background: C.card, padding: "11px 13px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ fontSize: 8.5, color: C.t5, fontFamily: FM }}>{cell.label}</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontFamily: FA, fontSize: 14, fontWeight: 700 }}>
+                  {cell.value} <span style={{ fontSize: 9.5, color: cell.up ? C.up : C.red }}>{cell.up ? "▲" : "▼"}</span>
+                </span>
+                <Sparkline history={cell.history} color={cell.up ? C.up : C.red} w={52} h={22} />
+              </div>
+              <span style={{ fontSize: 8, color: cell.up ? C.up : C.red, fontFamily: FM }}>{cell.up ? "+" : ""}{cell.change1d.toFixed(2)}% 1일</span>
             </div>
           ))}
         </div>
       </Card>
-      <Card>
+
+      {/* S4: Sentiment Pulse ────────────────────────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
+        <CardTitle right="시장 심리 지표">센티멘트 펄스</CardTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+          {sentimentPulse.map((s) => {
+            const val = s.raw != null ? s.fmt(s.raw) : s.fallback;
+            const [tagLabel, tagColor] = s.raw != null ? s.tag(s.raw) : ["—", C.t5];
+            return (
+              <div key={s.label} style={{ background: C.card2, border: `1px solid ${C.b2}`, borderRadius: 7, padding: "11px 13px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1px", color: C.t5 }}>{s.label}</span>
+                <span style={{ fontFamily: FM, fontSize: 18, fontWeight: 700, color: s.raw != null ? "#fff" : C.t5 }}>{val}</span>
+                <span style={{ fontSize: 9, color: C.t4, marginTop: -2 }}>{s.sub}</span>
+                <span style={{ display: "inline-flex", alignSelf: "flex-start", fontSize: 8.5, fontFamily: FA, color: tagColor, background: `${tagColor}1a`, border: `1px solid ${tagColor}40`, borderRadius: 3, padding: "2px 7px", letterSpacing: ".5px", marginTop: 2 }}>{tagLabel}</span>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* S5: Correlation Heatmap ────────────────────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
         <CardTitle right={cm ? "1년 롤링 · 대용지표" : "60일 롤링"}>자산 상관관계 히트맵</CardTitle>
         <div style={{ display: "grid", gridTemplateColumns: "60px repeat(5,1fr)", gap: 4, fontFamily: FM, fontSize: 10.5 }}>
           <span />
