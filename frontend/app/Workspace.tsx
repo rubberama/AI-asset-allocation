@@ -1737,7 +1737,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
   );
 }
 
-const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#00C805", KR_BOND: "#22D3EE", GLOBAL_BOND: "#60efb0", ALTERNATIVE: "#FBBF24" };
+const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#A855F7", KR_BOND: "#2DD4BF", GLOBAL_BOND: "#FB923C", ALTERNATIVE: "#FACC15" };
 const Q_MOCK: any[] = [
   ["연준 의사록 — 도비시 기조 확인", "관련도 0.91", "감성 +0.6", C.up],
   ["반도체 수출 3개월 연속 증가", "관련도 0.84", "감성 +0.5", C.up],
