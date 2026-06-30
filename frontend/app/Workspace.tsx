@@ -482,8 +482,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     }
   };
 
-  // Demo auto-runs a sample optimization on mount; new-user mode starts empty (no input yet).
-  useEffect(() => { if (!isNew) runSimulation(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Entry is a clean chat — no auto-run, no scripted analyst messages. A run only
+  // happens when the user chats a view/"run" or hits 다시 최적화. (Right-panel tabs
+  // fall back to their demo/mock data until a real run populates `sim`.)
   const hasRun = !!sim || running || liveTrace.length > 0;
 
   // Keep the conversation pinned to the latest message / streamed token.
@@ -612,8 +613,8 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                 : "안녕하세요. 오늘 시장을 어떻게 보고 계신가요? 편하게 말씀해 주시면 Ben(마켓)과 매크로 데스크가 근거를 모으고, 제가 최종 검토해 배분으로 옮겨드리겠습니다."}
             </Msg>
 
-            {/* user bubble (last-run view) */}
-            {viewText && (
+            {/* user bubble (last-run view) — only after a real run, never on entry */}
+            {hasRun && viewText && (
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
               </div>
@@ -633,36 +634,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               )
             )}
 
-            {(!isNew || hasRun) && (<>
-            {/* Ben */}
-            <Msg who="Ben" role="마켓 인텔리전스 애널리스트" avatarColor={C.cyan} avatarBg="rgba(34,211,238,.12)" avatarBorder="rgba(34,211,238,.35)">
-              <span>뉴스 <b style={{ color: "#fff" }}>12</b>건 · 리서치 <b style={{ color: "#fff" }}>5</b>건 · 회원님 업로드 <b style={{ color: "#fff" }}>2</b>건을 검토했습니다. 해외주식 우위 의견을 <b style={{ color: C.cyan }}>뒷받침하는 근거</b>가 우세합니다.</span>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-                <SrcRow tag="뉴스" text="엔비디아 실적 서프라이즈 — AI 설비투자 지속" score="+0.71" sc={C.up} />
-                <SrcRow tag="리서치" text="미 연준 2026 금리 인하 사이클 진입 전망" score="+0.74" sc={C.up} />
-                <SrcRow tag="내 자산" tagCyan text="KB증권 2026 자산시장 전망.pdf" score="중립" sc="#888" />
-              </div>
-              <DeskBtn>마켓 인텔리전스 열기 →</DeskBtn>
-            </Msg>
-
-            {/* Jerry */}
-            <Msg who="Jerry" role="선임 PM · 매크로 데스크" avatarColor={C.amber}>
-              매크로 데스크의 강세·약세 논쟁을 종합했습니다.
-              <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 10 }}>
-                <BullBear kind="BULL" color={C.up} bg="rgba(34,197,94,.05)" bd="rgba(34,197,94,.18)" text="금리 인하 + 글로벌 이익 모멘텀 → 위험자산, 특히 해외주식에 우호적." />
-                <BullBear kind="BEAR" color={C.red} bg="rgba(239,68,68,.05)" bd="rgba(239,68,68,.18)" text="VIX 23.4 · 원화 약세 지속 → 변동성·환헤지 비용이 상단을 제한." />
-              </div>
-              <div style={{ fontSize: 12.5, lineHeight: 1.6, color: C.t1, borderLeft: `2px solid ${C.amber}`, paddingLeft: 11, marginTop: 10 }}><b style={{ color: "#fff" }}>하우스 뷰:</b> 금리 하락 우세 — 채권 비중 소폭 확대, 단 위험 고조 레짐을 반영해 강도는 절제.</div>
-              <DeskBtn>매크로 대시보드 열기 →</DeskBtn>
-            </Msg>
-
-            {/* Chris synthesis → signals */}
-            <Msg who="Chris" role="PM · 검토" avatarColor={C.white}>
-              <span>Ben의 근거와 매크로 하우스 뷰를 종합해 <b style={{ color: "#fff" }}>두 가지 신호</b>로 확정했어요. 위 빌더에서 직접 보정하실 수 있습니다.</span>
-              <SignalCard idx="신호 01" tag="REL" tagBg={C.violet} title="상대 우위 뷰" a="해외주식" aCol={C.violet} b="국내주식" bCol={C.blue} mid="▸" val="+5.0%" conf={68} confCol={C.violet} left="우위" right="열위" />
-              <SignalCard idx="신호 02" tag="ABS" tagBg={C.green} title="금리 하락 → 채권 강세" a="해외채권" aCol={C.green2} b="국내채권" bCol={C.green} mid="·" val="+2.2%" conf={55} confCol={C.green} left="강세" right="약세" />
-            </Msg>
-
+            {/* Run artifacts — only after a REAL optimization runs. No scripted/hardcoded
+                analyst chatter on entry; live persona replies come from the chat thread above. */}
+            {hasRun && (<>
             {/* reasoning trace */}
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <Avatar color={C.violet} small>∑</Avatar>

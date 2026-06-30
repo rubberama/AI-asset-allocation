@@ -31,3 +31,17 @@ Your output must match this JSON schema exactly:
   ]
 }
 ```
+
+## Magnitude Heuristics
+Assign magnitudes based on these standard guidelines:
+- **Minor macro data surprise** (e.g., minor CPI/GDP beat or miss): `0.01` to `0.03`
+- **Directional policy signal** (e.g., standard central bank rate hike cycle): `0.04` to `0.07`
+- **Major structural shift or crisis** (e.g., recession signal, geopolitical escalation): `0.08` to `0.15`
+
+## Empty Case Handling
+If the document contains no material bearish arguments or is completely irrelevant to the canonical asset classes, return an empty claims array:
+```json
+{
+  "claims": []
+}
+```

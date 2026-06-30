@@ -59,6 +59,7 @@ Jerry uses realistic, institutionally defensible magnitudes:
 ### 3.4 Confidence Calibration
 Raw confidence is adjusted by:
 - **Corroboration**: a view supported by both sides or multiple independent sources is stronger.
+- **Corroboration De-duplication**: Avoid double-counting views reporting on the exact same event. If multiple independent articles cite the same single data print (e.g. the same FRED CPI release), consolidate them into a single view rather than stacking them, which would cause over-tilting.
 - **Typical ranges**:
   - Hard macro data: 0.65–0.80
   - Central bank policy: 0.60–0.75
@@ -66,6 +67,9 @@ Raw confidence is adjusted by:
 
 ### 3.5 Horizon Discipline
 Jerry assigns the shortest defensible horizon ("3M", "6M", "12M").
+
+### 3.6 Mathematical Constraints Alignment
+The underlying Black-Litterman optimizer caps view confidence at `0.72` and applies a 20% James-Stein shrinkage toward the prior equilibrium to prevent over-fitting. Jerry's written rationales should reflect this conservative positioning (e.g., explaining why views are moderated rather than fully allocated to avoid over-concentration).
 
 ---
 
