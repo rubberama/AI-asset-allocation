@@ -1018,10 +1018,9 @@ function riskFromSim(sim: any): [string, string, string][] | null {
 }
 function devFromSim(sim: any) {
   const opt = sim?.optimized_weights, mkt = sim?.market_weights; if (!opt || !mkt) return null;
-  return ASSET_ORDER.filter((a) => a in opt).map((a) => {
-    const dpp = ((opt[a] || 0) - (mkt[a] || 0)) * 100; const up = dpp >= 0;
-    return { n: ASSET_KR[a], c: up ? C.up : C.red, h: `${Math.min(48, Math.abs(dpp) * 8)}%`, up, v: `${up ? "+" : "−"}${Math.abs(dpp).toFixed(1)}`, pos: (up ? { top: 6 } : { bottom: 6 }) as React.CSSProperties };
-  });
+  return ASSET_ORDER.filter((a) => a in opt).map((a) => ({
+    n: ASSET_KR[a], dpp: ((opt[a] || 0) - (mkt[a] || 0)) * 100,
+  }));
 }
 function buildFrontier(sim: any) {
   const ef = sim?.efficient_frontier;
@@ -1177,11 +1176,11 @@ function CardTitle({ children, right }: { children: React.ReactNode; right?: Rea
 }
 
 const DEV_MOCK = [
-  { n: "해외주식", c: C.up, h: "38%", up: true, v: "+4.8", pos: { top: 6 } as React.CSSProperties },
-  { n: "국내주식", c: C.red, h: "30%", up: false, v: "−3.6", pos: { bottom: 24 } as React.CSSProperties },
-  { n: "국내채권", c: C.up, h: "13%", up: true, v: "+1.4", pos: { top: 48 } as React.CSSProperties },
-  { n: "해외채권", c: C.up, h: "16%", up: true, v: "+1.7", pos: { top: 44 } as React.CSSProperties },
-  { n: "대체투자", c: C.red, h: "36%", up: false, v: "−4.3", pos: { bottom: 20 } as React.CSSProperties },
+  { n: "해외주식", dpp: 4.8 },
+  { n: "국내주식", dpp: -3.6 },
+  { n: "국내채권", dpp: 1.4 },
+  { n: "해외채권", dpp: 1.7 },
+  { n: "대체투자", dpp: -4.3 },
 ];
 
 function FrontierTab({ sim }: { sim: any }) {
@@ -1234,17 +1233,35 @@ function FrontierTab({ sim }: { sim: any }) {
         </Card>
       </div>
       <Card>
-        <CardTitle>BL 가중치 시장 편차 (pp)</CardTitle>
-        <div style={{ position: "relative", height: 150, display: "flex", alignItems: "center", gap: 26, padding: "0 8px" }}>
-          <div style={{ position: "absolute", left: 8, right: 8, top: "50%", height: 1, background: "#262626" }} />
-          {DEV.map((d) => (
-            <div key={d.n} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", position: "relative" }}>
-              <div style={{ width: 38, background: d.c, height: d.h, ...(d.up ? { alignSelf: "flex-end", marginBottom: 75 } : { marginTop: 75 }) }} />
-              <span style={{ position: "absolute", bottom: 8, fontSize: 10, color: "#aaa" }}>{d.n}</span>
-              <span style={{ position: "absolute", ...d.pos, fontSize: 10, fontFamily: FM, color: d.c }}>{d.v}</span>
+        <CardTitle right="시장 비중 대비 ± 퍼센트포인트">BL 가중치 시장 편차 (pp)</CardTitle>
+        {(() => {
+          const PLOT = 150, HALF = PLOT / 2, W = 34;
+          const MAXBAR = HALF - 24; // leave headroom for the value label above the bar tip
+          const maxDev = Math.max(1, ...DEV.map((d) => Math.abs(d.dpp)));
+          return (
+            <div>
+              <div style={{ position: "relative", height: PLOT, display: "flex", gap: 26, padding: "0 8px" }}>
+                {/* zero baseline = market weight */}
+                <div style={{ position: "absolute", left: 8, right: 8, top: HALF, height: 1, background: "#2c2c2c" }} />
+                <span style={{ position: "absolute", left: 8, top: HALF - 13, fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t5 }}>시장 비중</span>
+                {DEV.map((d) => {
+                  const up = d.dpp >= 0;
+                  const col = up ? C.up : C.red;
+                  const h = Math.max(2, (Math.abs(d.dpp) / maxDev) * MAXBAR);
+                  return (
+                    <div key={d.n} style={{ flex: 1, position: "relative" }}>
+                      <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", width: W, background: col, borderRadius: 2, height: h, transformOrigin: up ? "bottom" : "top", animation: "growUp .6s cubic-bezier(.2,.7,.2,1) both", ...(up ? { bottom: HALF } : { top: HALF }) }} />
+                      <span style={{ position: "absolute", left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontFamily: FM, fontWeight: 600, color: col, ...(up ? { bottom: HALF + h + 3 } : { top: HALF + h + 3 }) }}>{up ? "+" : "−"}{Math.abs(d.dpp).toFixed(1)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 26, padding: "9px 8px 0" }}>
+                {DEV.map((d) => (<span key={d.n} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "#aaa" }}>{d.n}</span>))}
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })()}
       </Card>
     </div>
   );
