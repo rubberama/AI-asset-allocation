@@ -1,0 +1,295 @@
+# Minimalist Login Portal Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the current landing page at `frontend/app/page.tsx` with a premium, minimalist login portal featuring clean inputs, error messages, and a fast demo sign-in option redirecting to `/workspace`.
+
+**Architecture:** Implement standard React inputs and state variables for `emailOrId`, `password`, and `error`. Use Next.js `useRouter` to handle redirection. Build a centered, glassmorphic login card with standard styling tokens and smooth radial glow backdrops.
+
+**Tech Stack:** React, Next.js (App Router), TypeScript.
+
+## Global Constraints
+* ONLY modify the landing page at `frontend/app/page.tsx`. Do NOT modify any other files in the workspace.
+* Keep the code clean, modular, and perform a successful Next.js production build (`npm run build`) to verify compilation.
+
+---
+
+### Task 1: Replace Landing Page with Minimalist Login Portal
+
+Replace the entire landing page with a minimalist centered login card featuring credential validation, a fast-entry demo login button, and router-based redirection.
+
+**Files:**
+* Modify: `C:/Users/hyunjaekim/Desktop/Etacolla/AI-asset-allocation/frontend/app/page.tsx`
+
+**Interfaces:**
+* Consumes: `useRouter` from `next/navigation`
+* Produces: Centered login portal at `/` redirecting to `/workspace` upon login.
+
+- [ ] **Step 1: Write the login portal implementation**
+
+Replace the contents of `C:/Users/hyunjaekim/Desktop/Etacolla/AI-asset-allocation/frontend/app/page.tsx` with the following code:
+```tsx
+"use client";
+
+import Link from "next/link";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+
+// Design constants aligned with DESIGN.md and Workspace.tsx
+const C = {
+  bg: "#000",
+  white: "#fff",
+  t3: "#9a9a9a",
+  t4: "#6a6a6a",
+  b1: "#161616",
+  b2: "#1c1c1c",
+  b3: "#242424",
+  violet: "#A78BFA",
+  green: "#34D399",
+  green2: "#6EE7B7",
+  blue: "#3B82F6",
+  amber: "#FBBF24",
+  red: "#EF4444",
+};
+
+const FA = "'Archivo',sans-serif";
+const FP = "'Pretendard',sans-serif";
+
+export default function LoginPage() {
+  const router = useRouter();
+  const [emailOrId, setEmailOrId] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailOrId.trim()) {
+      setError("사원번호 또는 이메일을 입력하세요.");
+      return;
+    }
+    if (!password.trim()) {
+      setError("비밀번호를 입력하세요.");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    // Simulate auth lag and redirect
+    setTimeout(() => {
+      setLoading(false);
+      router.push("/workspace");
+    }, 600);
+  };
+
+  const handleDemoLogin = () => {
+    setLoading(true);
+    setError("");
+    setTimeout(() => {
+      setLoading(false);
+      router.push("/workspace");
+    }, 300);
+  };
+
+  return (
+    <div
+      style={{
+        background: C.bg,
+        color: C.white,
+        fontFamily: FP,
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      <style jsx global>{`
+        @keyframes subtlePulse {
+          0%, 100% { opacity: 0.15; transform: scale(1); }
+          50% { opacity: 0.35; transform: scale(1.08); }
+        }
+        input {
+          outline: none;
+          transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input:focus {
+          border-color: ${C.violet} !important;
+          box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.2);
+        }
+      `}</style>
+
+      {/* Background Glow Mesh behind the card */}
+      <div
+        style={{
+          position: "absolute",
+          width: "480px",
+          height: "480px",
+          borderRadius: "50%",
+          background: `radial-gradient(circle, rgba(167,139,250,0.18) 0%, rgba(0,0,0,0) 70%)`,
+          filter: "blur(60px)",
+          pointerEvents: "none",
+          animation: "subtlePulse 6s infinite ease-in-out",
+          zIndex: 1,
+        }}
+      />
+
+      {/* LOGIN CARD */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "380px",
+          border: `1px solid ${C.b1}`,
+          background: "#030303",
+          borderRadius: 16,
+          padding: "36px",
+          boxShadow: "0 25px 50px -12px rgba(0,0,0,0.9)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 24,
+          position: "relative",
+          zIndex: 5,
+          margin: "20px",
+        }}
+      >
+        {/* Branding Header */}
+        <div style={{ textAlign: "center" }}>
+          <span style={{ fontSize: 9.5, fontFamily: FA, color: C.t4, letterSpacing: "2.5px", fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>NPS QUANT LABS</span>
+          <h1 style={{ fontFamily: FA, fontSize: "28px", fontWeight: 800, letterSpacing: "-1px", color: C.white, margin: 0, textTransform: "uppercase" }}>Etacolla</h1>
+          <span style={{ fontSize: 11.5, color: C.t3, marginTop: 4, display: "block" }}>자산배분 플랫폼 / 포털 인증</span>
+        </div>
+
+        {/* Login Form */}
+        <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {error && (
+            <div style={{ fontSize: 11, color: C.red, background: "rgba(239, 68, 68, 0.08)", border: `1px solid rgba(239, 68, 68, 0.25)`, padding: "10px 12px", borderRadius: 6 }}>
+              {error}
+            </div>
+          )}
+
+          {/* Email input */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>사원번호 또는 이메일</label>
+            <input
+              type="text"
+              placeholder="e.g. employee@nps.or.kr"
+              value={emailOrId}
+              onChange={(e) => setEmailOrId(e.target.value)}
+              style={{
+                background: "#080808",
+                border: `1px solid ${C.b2}`,
+                color: C.white,
+                padding: "12px 14px",
+                borderRadius: 8,
+                fontSize: 12.5,
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          {/* Password input */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>비밀번호</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                background: "#080808",
+                border: `1px solid ${C.b2}`,
+                color: C.white,
+                padding: "12px 14px",
+                borderRadius: 8,
+                fontSize: 12.5,
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          {/* Submit Button */}
+          <button
+            id="btn-login-submit"
+            type="submit"
+            disabled={loading}
+            style={{
+              fontFamily: FA,
+              fontWeight: 700,
+              fontSize: 12.5,
+              letterSpacing: "1.5px",
+              background: C.white,
+              color: C.bg,
+              border: "none",
+              padding: "14px 20px",
+              borderRadius: 8,
+              cursor: loading ? "wait" : "pointer",
+              transition: "transform 0.15s, opacity 0.15s",
+              marginTop: 6,
+              opacity: loading ? 0.75 : 1,
+            }}
+            onMouseOver={(e) => { if (!loading) e.currentTarget.style.transform = "scale(1.02)"; }}
+            onMouseOut={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+          >
+            {loading ? "인증 처리 중..." : "포털 로그인"}
+          </button>
+        </form>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "6px 0" }}>
+          <div style={{ height: 1, background: C.b1, flex: 1 }} />
+          <span style={{ fontSize: 9.5, color: C.t4, letterSpacing: "1px", textTransform: "uppercase" }}>OR</span>
+          <div style={{ height: 1, background: C.b1, flex: 1 }} />
+        </div>
+
+        {/* Demo Fast Access Button */}
+        <button
+          id="btn-login-demo"
+          onClick={handleDemoLogin}
+          disabled={loading}
+          style={{
+            fontFamily: FA,
+            fontWeight: 700,
+            fontSize: 12.5,
+            letterSpacing: "1px",
+            background: "transparent",
+            color: C.green,
+            border: `1px solid rgba(52, 211, 153, 0.3)`,
+            padding: "14px 20px",
+            borderRadius: 8,
+            cursor: loading ? "wait" : "pointer",
+            transition: "background-color 0.15s, transform 0.15s",
+            opacity: loading ? 0.75 : 1,
+          }}
+          onMouseOver={(e) => { if (!loading) { e.currentTarget.style.backgroundColor = "rgba(52, 211, 153, 0.04)"; e.currentTarget.style.transform = "scale(1.02)"; } }}
+          onMouseOut={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.transform = "scale(1)"; }}
+        >
+          데모 계정으로 바로 시작 (DEMO) →
+        </button>
+      </div>
+
+      {/* Footer Branding */}
+      <span style={{ fontSize: 10, color: C.t4, fontFamily: FA, position: "absolute", bottom: 20, zIndex: 5 }}>
+        CONFIDENTIAL · NPS INTERNAL USE ONLY
+      </span>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 2: Run Next.js build to verify compilation**
+
+Run:
+```powershell
+npm run build
+```
+Expected: Compiles with 0 warnings or errors.
+
+- [ ] **Step 3: Commit login portal**
+
+```bash
+git add frontend/app/page.tsx
+git commit -m "feat: replace landing page with minimalist login portal"
+```
