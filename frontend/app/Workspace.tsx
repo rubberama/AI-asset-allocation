@@ -11,6 +11,9 @@
  * Styles are copied verbatim from the .dc.html inline styles (colors, sizes, spacing, radii).
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { 
+  TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation
+} from "lucide-react";
 
 const API_BASE = "http://localhost:8000";
 
@@ -141,7 +144,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     for (const [label, key] of spec) {
       const d = macro[key];
       if (d && typeof d.current === "number") {
-        const chg = typeof d.change_5d === "number" ? d.change_5d : 0;
+        const chg = typeof d.change_1d === "number" ? d.change_1d : 0;
         out.push([label, fmtQuote(key, d.current), `${chg >= 0 ? "▲" : "▼"}${Math.abs(chg)}%`, chg >= 0 ? C.up : C.red]);
       }
     }
@@ -842,6 +845,58 @@ function attribFromSim(sim: any) {
     };
   });
 }
+// ── Conversation desk: derive the three analyst bubbles from the live run ────
+// Ben (market intel): how many sources fed the run + the dominant view direction + source rows.
+function benFromSim(sim: any, attached: any[], intel: any[], views: any[]) {
+  if (!sim) return null;
+  if (!views.length && !attached.length) return null;
+  const cat = (x: any) => String(x?.category || "").toUpperCase();
+  const newsN = intel.filter((x) => cat(x) === "NEWS").length;
+  const resN = intel.filter((x) => cat(x) === "RESEARCH").length;
+  const attN = attached.length;
+  const mag = (v: any) => Math.abs((v.view_type === "relative" ? v.outperformance : v.expected_return) || 0) * (v.confidence || 0.5);
+  const ranked = [...views].sort((a, b) => mag(b) - mag(a));
+  const top = ranked[0];
+  let dir: { asset: string; pos: boolean } | null = null;
+  if (top) dir = top.view_type === "relative"
+    ? { asset: ASSET_KR[top.asset1] || top.asset1, pos: (top.outperformance || 0) >= 0 }
+    : { asset: ASSET_KR[top.asset] || top.asset, pos: (top.expected_return || 0) >= 0 };
+  const rows: { tag: string; text: string; score: string; sc: string; tagCyan?: boolean }[] = [];
+  attached.slice(0, 3).forEach((a) => {
+    const c = cat(a); const conf = a.ai_interpretation?.confidence;
+    rows.push({ tag: c === "RESEARCH" ? "리서치" : c === "NEWS" ? "뉴스" : "첨부", tagCyan: true, text: a.title || "첨부 자료", score: typeof conf === "number" ? `${Math.round(conf * 100)}%` : "참고", sc: "#888" });
+  });
+  for (const v of ranked) {
+    if (rows.length >= 3) break;
+    const m = (v.view_type === "relative" ? v.outperformance : v.expected_return) || 0;
+    rows.push({ tag: "뷰", text: String(v.thesis || (v.sources || [])[0] || "추출된 투자 뷰").slice(0, 52), score: `${m >= 0 ? "+" : ""}${(m * 100).toFixed(1)}%`, sc: m >= 0 ? C.up : C.red });
+  }
+  return { newsN, resN, attN, dir, rows };
+}
+// Jerry (macro PM): bull thesis vs top risk → house view, straight from pm_memo.
+function jerryFromSim(sim: any) {
+  const pm = sim?.pm_memo;
+  const thesis = pm?.investment_thesis_summary;
+  if (!thesis || /disabled|API key|being integrated/i.test(thesis)) return null; // skip fallback sentinels → use mock
+  const risks: string[] = Array.isArray(pm.key_risks_considered) ? pm.key_risks_considered : [];
+  const sentiment = String(pm.macro_regime_sentiment || "NEUTRAL").toUpperCase();
+  const sentLabel = sentiment === "RISK-OFF" ? "위험 회피 · RISK-OFF" : sentiment === "RISK-ON" ? "위험 선호 · RISK-ON" : "중립 · NEUTRAL";
+  const sentColor = sentiment === "RISK-OFF" ? C.red : sentiment === "RISK-ON" ? C.up : C.amber;
+  return { bull: thesis, bear: risks[0] || "추가 변동성 및 추정오차에 유의.", bear2: risks[1] || "", advice: pm.strategic_positioning_advice || "", sentLabel, sentColor };
+}
+// Chris (synthesis): one signal card per parsed view — the same data that drives the chips.
+function chrisSignalsFromViews(views: any[]) {
+  if (!views.length) return null;
+  return views.slice(0, 4).map((v, i) => {
+    const idx = `신호 ${String(i + 1).padStart(2, "0")}`;
+    if (v.view_type === "relative") {
+      const op = v.outperformance || 0; const pos = op >= 0;
+      return { idx, tag: "REL", tagBg: C.violet, title: "상대 우위 뷰", a: ASSET_KR[v.asset1] || v.asset1, aCol: C.violet, b: ASSET_KR[v.asset2] || v.asset2, bCol: C.blue, mid: "▸", val: `${pos ? "+" : "−"}${Math.abs(op * 100).toFixed(1)}%`, conf: Math.round((v.confidence || 0) * 100), confCol: C.violet, left: pos ? "우위" : "열위", right: pos ? "열위" : "우위" };
+    }
+    const er = v.expected_return || 0; const pos = er >= 0;
+    return { idx, tag: "ABS", tagBg: C.green, title: pos ? "절대 강세 뷰" : "절대 약세 뷰", a: ASSET_KR[v.asset] || v.asset, aCol: C.green2, b: pos ? "강세 전망" : "약세 전망", bCol: pos ? C.up : C.red, mid: "·", val: `${pos ? "+" : "−"}${Math.abs(er * 100).toFixed(1)}%`, conf: Math.round((v.confidence || 0) * 100), confCol: C.green, left: pos ? "강세" : "약세", right: pos ? "약세" : "강세" };
+  });
+}
 function riskFromSim(sim: any): [string, string, string][] | null {
   const m = sim?.risk_metrics; if (!m) return null;
   const rf = sim.risk_free_rate || 0.035; const vol = m.volatility || 1e-6;
@@ -1256,7 +1311,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
   const vix = macro?.VIX;
   const regimeCards = [
     { l: "감지된 시장 레짐", v: macro ? regimeLabel : "위험 고조", vc: macro ? regimeColor : C.amber, d: REGIME_DESC[regime] || "RISK-OFF · 주식 비중 확대에 신중" },
-    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_5d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_5d >= 0 ? C.red : C.up) : C.red, d: "장기 평균 상회" },
+    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_1d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_1d >= 0 ? C.red : C.up) : C.red, d: "장기 평균 상회" },
     { l: "위험회피 배율 λ", v: REGIME_LAMBDA[regime] || "1.25×", vc: C.white, d: "방어적 배분으로 상향" },
   ];
 
@@ -1264,7 +1319,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
     ? MACRO_IND_SPEC.flatMap(([label, key]) => {
         const d = macro[key];
         if (!d || typeof d.current !== "number") return [];
-        const up = (d.change_5d ?? 0) >= 0;
+        const up = (d.change_1d ?? 0) >= 0;
         return [[label, fmtQuote(key, d.current), up ? "▲" : "▼", up ? C.up : C.red]] as [string, string, string, string][];
       })
     : (MACRO_IND as [string, string, string, string][]);
@@ -1662,9 +1717,182 @@ function ReportTab({ sim }: { sim: any }) {
 }
 
 function GuideTab({ onNavigate, runSimulation, running }: { onNavigate: (t: string) => void; runSimulation: () => void; running: boolean }) {
+  const [activeStep, setActiveStep] = useState<number>(1);
+
+  const steps = [
+    {
+      id: 1,
+      tab: "매크로",
+      title: "매크로 국면 분석",
+      desc: "VIX 지수, 거시경제 성장 및 인플레이션 지표를 검토하여 하락/상승 레짐을 파악합니다.",
+      tip: "현재 위기(CRISIS) 또는 위험 고조 레짐일 경우 리스크 혐오도(λ) 계수가 자동으로 상향 조정됩니다.",
+      actionText: "매크로 대시보드 검토 →",
+      icon: TrendingUp,
+    },
+    {
+      id: 2,
+      tab: "인텔리전스",
+      title: "실시간 뉴스 & 정보 수집",
+      desc: "시장 리포트, 뉴스 기사, 웹 기사 URL 또는 PDF 문서를 수집하여 감성지수 신호를 인출합니다.",
+      tip: "수집된 뉴스는 Ben(AI 애널리스트)이 읽어 드래그 앤 드롭으로 대화에 증거로 첨부할 수 있습니다.",
+      actionText: "인텔리전스 기사 수집 →",
+      icon: Newspaper,
+    },
+    {
+      id: 3,
+      tab: "리서치",
+      title: "하우스 논거 구축",
+      desc: "인텔리전스를 바탕으로 최종 하우스 뷰(수익률 전망치, 신뢰도) 논거 카드를 리서치 파이프라인에 구축합니다.",
+      tip: "'BUILD HOUSE THESES' 버튼을 실행하면 수집된 뉴스를 바탕으로 AI가 투자 신호 카드를 자동 합성합니다.",
+      actionText: "리서치 파이프라인 확인 →",
+      icon: FileText,
+    },
+    {
+      id: 4,
+      tab: "시뮬레이션",
+      title: "블랙-리터만 최적화",
+      desc: "작성한 투자 의견과 하우스 신호를 결합하여 블랙-리터만 모델과 앙상블 MVO 알고리즘을 구동합니다.",
+      tip: "대화창 상단의 '▶ 다시 최적화' 버튼 또는 아래 단축 실행 버튼으로 수시로 시뮬레이션할 수 있습니다.",
+      actionText: running ? "최적화 연산 중..." : "최적화 엔진 다시 구동 ▶",
+      icon: Cpu,
+      isAction: true,
+    },
+    {
+      id: 5,
+      tab: "배분",
+      title: "결과 및 보고서 검토",
+      desc: "최적화된 포트폴리오 비중, 리스크 공헌도, 효율적 프론티어 곡선과 PM 최종 보고서를 최종 검토합니다.",
+      tip: "배분 탭에서 prior(기존 비중) 대비 변동사항을 확인하고, 리포트 탭에서 최종 승인용 PDF 가안을 검토하세요.",
+      actionText: "배분 비중 결과 검토 →",
+      icon: CheckCircle2,
+    },
+  ];
+
+  const current = steps.find(s => s.id === activeStep) || steps[0];
+  const StepIcon = current.icon;
+
   return (
-    <div style={{ color: "#fff", padding: "10px" }}>
-      <h3>Guide Tab Stub</h3>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Header card */}
+      <div style={{ background: "linear-gradient(135deg, #050505 0%, #0a0a0a 100%)", border: `1px solid ${C.b1}`, padding: "20px 24px", borderRadius: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <BookOpen size={16} style={{ color: C.violet }} />
+          <h3 style={{ fontSize: 14, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", margin: 0, textTransform: "uppercase" }}>Etacolla Terminal Operational Guide</h3>
+        </div>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, lineHeight: 1.5 }}>
+          본 플랫폼은 퀀트 모델링(Black-Litterman)과 거시지표 분석을 결합하여 NPS 포트폴리오 최적 배분을 산출합니다.<br />
+          아래의 5단계 순차적 워크플로우를 따라 시스템을 조작해 보세요.
+        </p>
+      </div>
+
+      {/* Chevron progress bar */}
+      <div style={{ display: "flex", border: `1px solid ${C.b1}`, background: "#030303", borderRadius: 8, overflow: "hidden" }}>
+        {steps.map((s, idx) => {
+          const isActive = s.id === activeStep;
+          const isCompleted = s.id < activeStep;
+          return (
+            <div
+              key={s.id}
+              onClick={() => setActiveStep(s.id)}
+              style={{
+                flex: 1,
+                padding: "12px 10px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 5,
+                cursor: "pointer",
+                background: isActive ? "#09090b" : "transparent",
+                borderRight: idx < steps.length - 1 ? `1px solid ${C.b1}` : "none",
+                transition: "background .15s",
+                opacity: isActive ? 1 : 0.6,
+              }}
+              onMouseOver={(e) => { if (!isActive) e.currentTarget.style.opacity = "0.9"; }}
+              onMouseOut={(e) => { if (!isActive) e.currentTarget.style.opacity = "0.6"; }}
+            >
+              <span style={{ fontSize: 9, fontFamily: FA, fontWeight: 800, color: isActive ? C.violet : isCompleted ? C.green : C.t4 }}>
+                STEP 0{s.id}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: isActive ? 700 : 500, color: isActive ? "#fff" : C.t3, textAlign: "center", whiteSpace: "nowrap" }}>
+                {s.title.split(" ")[0]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Step details Card */}
+      <div style={{ background: C.card, border: `1px solid ${C.b1}`, borderRadius: 10, padding: 24, display: "flex", gap: 20 }}>
+        <div style={{ width: 44, height: 44, borderRadius: 8, background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.b2}`, flexShrink: 0 }}>
+          <StepIcon size={20} style={{ color: C.violet }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 10, fontFamily: FA, fontWeight: 800, color: C.violet, background: `${C.violet}1a`, border: `1px solid ${C.violet}33`, padding: "2px 6px", borderRadius: 3 }}>
+              PHASE 0{current.id}
+            </span>
+            <h4 style={{ fontSize: 13, fontWeight: 600, color: "#fff", margin: 0 }}>{current.title}</h4>
+          </div>
+          <p style={{ fontSize: 12.5, color: C.t2, lineHeight: 1.6, margin: "0 0 16px 0" }}>{current.desc}</p>
+
+          {/* Pro tip box */}
+          <div style={{ background: "#050505", borderLeft: `2px solid ${C.amber}`, padding: "10px 14px", borderRadius: "0 6px 6px 0", marginBottom: 20 }}>
+            <span style={{ fontSize: 9, fontFamily: FA, fontWeight: 800, color: C.amber, display: "block", marginBottom: 3, letterSpacing: "1px" }}>OPERATIONAL PRO-TIP</span>
+            <span style={{ fontSize: 11.5, color: C.t3, lineHeight: 1.5 }}>{current.tip}</span>
+          </div>
+
+          {/* Action button */}
+          {current.isAction ? (
+            <button
+              onClick={() => { runSimulation(); }}
+              disabled={running}
+              style={{
+                fontFamily: FA,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "1px",
+                background: C.white,
+                color: "#000",
+                border: "none",
+                padding: "10px 18px",
+                borderRadius: 6,
+                cursor: running ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Navigation size={12} />
+              {current.actionText}
+            </button>
+          ) : (
+            <button
+              onClick={() => { onNavigate(current.tab); }}
+              style={{
+                fontFamily: FA,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "1px",
+                background: "transparent",
+                color: C.white,
+                border: `1px solid ${C.b3}`,
+                padding: "10px 18px",
+                borderRadius: 6,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "background .15s",
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.background = "#111"; }}
+              onMouseOut={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <Navigation size={12} />
+              {current.actionText}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

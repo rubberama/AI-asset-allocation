@@ -231,17 +231,8 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
             # Estimate risk aversion if not provided
             risk_aversion = request.risk_aversion
             if risk_aversion is None:
-                w_assets = list(market_weights.keys())
-                w_arr = np.array([market_weights[a] for a in w_assets])
-                Sigma_m = np.zeros((len(w_assets), len(w_assets)))
-                for i, a1 in enumerate(w_assets):
-                    for j, a2 in enumerate(w_assets):
-                        Sigma_m[i, j] = covariance[a1][a2]
-                sigma_m_sq = float(np.dot(w_arr, np.dot(Sigma_m, w_arr)))
-                if sigma_m_sq > 1e-8:
-                    risk_aversion = 0.06 / sigma_m_sq
-                else:
-                    risk_aversion = 2.5
+                risk_aversion = _estimate_risk_aversion(market_weights, covariance)
+                risk_aversion = risk_aversion * _regime_lambda_multiplier(macro_context)
             
             # Estimate tau if not provided — use He-Litterman (1999) standard of 0.05
             tau = request.tau

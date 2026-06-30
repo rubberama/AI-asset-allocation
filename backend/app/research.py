@@ -19,12 +19,13 @@ logger = logging.getLogger(__name__)
 
 # Macro taxonomy: keywords that, when present, raise a document's relevance to a sleeve.
 ASSET_KEYWORDS: Dict[str, List[str]] = {
-    "KR_STOCK": ["korea", "korean", "kospi", "won", "samsung", "seoul", "bank of korea", "kr equity",
-                 "ewy", "korean trade", "household credit", "ecos",
-                 "semiconductor", "chip", "dram", "memory chip", "hbm", "sk hynix", "export"],
-    "GLOBAL_STOCK": ["equity", "equities", "stock", "s&p", "nasdaq", "earnings", "tech", "ai",
+    "KR_STOCK": ["korea", "korean", "kospi", "won", "bank of korea", "kr equity",
+                 "ewy", "korean trade", "household credit", "ecos", "export",
+                 "gdp growth", "trade balance", "export growth", "corporate earnings"],
+    "GLOBAL_STOCK": ["equity", "equities", "s&p", "nasdaq", "earnings",
                      "global growth", "msci", "wall street", "e-mini s&p",
-                     "semiconductor", "chip", "nvidia", "memory chip"],
+                     "corporate margins", "equity risk premium", "earnings growth",
+                     "fiscal stimulus", "liquidity cycle", "capex cycle"],
     "KR_BOND": ["korea", "korean", "bank of korea", "won", "kr bond", "korea bond", "ktb",
                 "mpb", "bok rate", "monetary policy board", "bank of korea minutes"],
     "GLOBAL_BOND": ["treasury", "yield", "bond", "duration", "fed funds", "interest rate", "rate cut",
@@ -182,7 +183,7 @@ RESEARCH_GRADE_SOURCES = {
     "NBER", "WorldBank", "IMF", "BIS",
 }
 # A NEWS doc needs at least this relevance to one sleeve to count as "carrying a macro signal".
-MACRO_SIGNAL_THRESHOLD = 0.33
+MACRO_SIGNAL_THRESHOLD = 0.50
 
 
 def is_macro_relevant(doc: Dict[str, Any]) -> bool:

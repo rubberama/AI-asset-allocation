@@ -53,6 +53,12 @@ def fetch_macro_context() -> dict:
                     prev_val = closes[0]
                     change_pct = round(((current_val / prev_val) - 1) * 100, 2) if prev_val != 0 else 0.0
                     
+                    if len(closes) >= 2:
+                        prev_val_1d = closes[-2]
+                        change_1d = round(((current_val / prev_val_1d) - 1) * 100, 2) if prev_val_1d != 0 else 0.0
+                    else:
+                        change_1d = 0.0
+                    
                     history_points = [{"date": d, "value": round(val, 2)} for d, val in zip(dates, closes)]
                     
                     indicators[key] = {
@@ -60,6 +66,7 @@ def fetch_macro_context() -> dict:
                         "ticker": t_info["ticker"],
                         "current": current_val,
                         "change_5d": change_pct,
+                        "change_1d": change_1d,
                         "history": history_points,
                         "category": t_info["category"]
                     }
@@ -83,12 +90,14 @@ def fetch_macro_context() -> dict:
                 })
             
             change_5d = round(history_spread[-1]["value"] - history_spread[0]["value"], 2)
+            change_1d = round(history_spread[-1]["value"] - history_spread[-2]["value"], 2) if len(history_spread) >= 2 else 0.0
             
             indicators["YIELD_SPREAD"] = {
                 "name": "US 10Y - 3M Sovereign Yield Spread",
                 "ticker": "SPREAD",
                 "current": spread,
                 "change_5d": change_5d,
+                "change_1d": change_1d,
                 "history": history_spread,
                 "category": "YIELD_CURVE"
             }
@@ -160,7 +169,7 @@ def format_macro_context_for_llm(indicators: dict) -> str:
     
     for key, data in indicators.items():
         if isinstance(data, dict) and "current" in data:
-            lines.append(f"- {data['name']} ({key}): {data['current']} (5D Change: {data.get('change_5d', 0)}%)")
+            lines.append(f"- {data['name']} ({key}): {data['current']} (YoY Change: {data.get('change_5d', 0)}%, 1D Change: {data.get('change_1d', 0)}%)")
             
     if "market_regime" in indicators:
         lines.append(f"- Detected Market Regime: {indicators['market_regime']}")
