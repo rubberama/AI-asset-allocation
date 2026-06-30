@@ -1534,7 +1534,7 @@ function YieldCurveChart({ macro }: { macro: any }) {
     ? [{ label: "3M", rate: 5.27 }, { label: "5Y", rate: 4.21 }, { label: "10Y", rate: 4.18 }, { label: "30Y", rate: 4.41 }]
     : curvePts;
 
-  const W = 260, H = 90, PL = 30, PR = 8, PT = 12, PB = 22;
+  const W = 420, H = 190, PL = 42, PR = 14, PT = 20, PB = 34;
   const iW = W - PL - PR, iH = H - PT - PB;
   const rates = pts.map(p => p.rate);
   const mn = Math.min(...rates) - 0.15, mx = Math.max(...rates) + 0.15, rng = mx - mn || 1;
@@ -1547,27 +1547,27 @@ function YieldCurveChart({ macro }: { macro: any }) {
   const pathStr = pts.map((p, i) => `${tx(i)},${ty(p.rate)}`).join(" ");
 
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>미국 국채 수익률 곡선</span>
         {inverted && <span style={{ fontSize: 8, fontFamily: FA, color: C.red, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "2px 7px", borderRadius: 3, letterSpacing: ".5px" }}>역전 · 침체 경보</span>}
         {!useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>실시간</span>}
         {useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>예시</span>}
       </div>
-      <svg width={W} height={H} style={{ display: "block" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", flex: 1, minHeight: 0 }}>
         {[mn + rng * 0.1, mn + rng * 0.5, mn + rng * 0.9].map((v, i) => (
           <g key={i}>
             <line x1={PL} y1={ty(v)} x2={W - PR} y2={ty(v)} stroke="#1c1c1c" strokeWidth={1} />
-            <text x={PL - 4} y={ty(v) + 3.5} fill="#444" fontSize={7} textAnchor="end" fontFamily={FM}>{v.toFixed(1)}</text>
+            <text x={PL - 5} y={ty(v) + 3.5} fill="#444" fontSize={9} textAnchor="end" fontFamily={FM}>{v.toFixed(1)}</text>
           </g>
         ))}
         <polygon points={`${tx(0)},${PT + iH} ${pathStr} ${tx(pts.length - 1)},${PT + iH}`} fill={col} fillOpacity={0.08} />
-        <polyline points={pathStr} fill="none" stroke={col} strokeWidth={1.5} strokeLinejoin="round" />
+        <polyline points={pathStr} fill="none" stroke={col} strokeWidth={2} strokeLinejoin="round" />
         {pts.map((p, i) => (
           <g key={p.label}>
-            <circle cx={tx(i)} cy={ty(p.rate)} r={3} fill={col} />
-            <text x={tx(i)} y={ty(p.rate) - 6} fill={col} fontSize={7.5} textAnchor="middle" fontFamily={FM}>{p.rate.toFixed(2)}</text>
-            <text x={tx(i)} y={H - 5} fill="#555" fontSize={7.5} textAnchor="middle" fontFamily={FM}>{p.label}</text>
+            <circle cx={tx(i)} cy={ty(p.rate)} r={4} fill={col} />
+            <text x={tx(i)} y={ty(p.rate) - 9} fill={col} fontSize={10} textAnchor="middle" fontFamily={FM}>{p.rate.toFixed(2)}</text>
+            <text x={tx(i)} y={H - 8} fill="#555" fontSize={10} textAnchor="middle" fontFamily={FM}>{p.label}</text>
           </g>
         ))}
       </svg>
@@ -1669,7 +1669,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
 
       {/* S2: Yield Curve + Key Rates ────────────────────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12 }}>
-        <Card style={{ padding: "14px 18px" }}>
+        <Card style={{ padding: "14px 18px", display: "flex", flexDirection: "column" }}>
           <YieldCurveChart macro={macro} />
         </Card>
         <Card style={{ padding: "14px 16px", display: "flex", flexDirection: "column" }}>
