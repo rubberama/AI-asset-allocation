@@ -109,19 +109,19 @@ const TRACE_STEPS = [
 
 // allocation rows: [name, color, optW%, deltaPP, prior, post, bardelta]
 const ALLOC = [
-  { name: "해외주식", color: C.violet, w: 39.5, d: 4.8, bench: 34.7 },
-  { name: "국내주식", color: C.blue, w: 17.2, d: -3.6, bench: 20.8 },
-  { name: "국내채권", color: C.green, w: 24.5, d: 1.4, bench: 23.1 },
-  { name: "해외채권", color: C.green2, w: 9.1, d: 1.7, bench: 7.4 },
-  { name: "대체투자", color: C.amber, w: 9.7, d: -4.3, bench: 14.0 },
+  { name: "해외주식", color: "#A855F7", w: 39.5, d: 4.8, bench: 34.7 },
+  { name: "국내주식", color: "#3B82F6", w: 17.2, d: -3.6, bench: 20.8 },
+  { name: "국내채권", color: "#2DD4BF", w: 24.5, d: 1.4, bench: 23.1 },
+  { name: "해외채권", color: "#FB923C", w: 9.1, d: 1.7, bench: 7.4 },
+  { name: "대체투자", color: "#FACC15", w: 9.7, d: -4.3, bench: 14.0 },
 ];
 
 const ATTRIB = [
-  { name: "해외주식", color: C.violet, prior: "7.90%", post: "9.18%", delta: "+1.28", dc: C.up, why: "상대 우위 뷰 · 신뢰도 68%", src: "엔비디아 실적 서프라이즈 · Reuters ↗", tag: "뉴스", tagDark: true },
-  { name: "국내주식", color: C.blue, prior: "6.40%", post: "5.72%", delta: "−0.68", dc: C.red, why: "상대 열위 (해외주식 반대편)", src: "원/달러 1,380원 돌파 · 연합인포맥스 ↗", tag: "뉴스", tagDark: true },
-  { name: "국내채권", color: C.green, prior: "3.30%", post: "3.71%", delta: "+0.41", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
-  { name: "해외채권", color: C.green2, prior: "3.60%", post: "3.97%", delta: "+0.37", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
-  { name: "대체투자", color: C.amber, prior: "5.10%", post: "5.10%", delta: "—", dc: C.t6, why: "시장 균형 유지 (적용된 뷰 없음)", src: "", tag: "", tagDark: false },
+  { name: "해외주식", color: "#A855F7", prior: "7.90%", post: "9.18%", delta: "+1.28", dc: C.up, why: "상대 우위 뷰 · 신뢰도 68%", src: "엔비디아 실적 서프라이즈 · Reuters ↗", tag: "뉴스", tagDark: true },
+  { name: "국내주식", color: "#3B82F6", prior: "6.40%", post: "5.72%", delta: "−0.68", dc: C.red, why: "상대 열위 (해외주식 반대편)", src: "원/달러 1,380원 돌파 · 연합인포맥스 ↗", tag: "뉴스", tagDark: true },
+  { name: "국내채권", color: "#2DD4BF", prior: "3.30%", post: "3.71%", delta: "+0.41", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
+  { name: "해외채권", color: "#FB923C", prior: "3.60%", post: "3.97%", delta: "+0.37", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
+  { name: "대체투자", color: "#FACC15", prior: "5.10%", post: "5.10%", delta: "—", dc: C.t6, why: "시장 균형 유지 (적용된 뷰 없음)", src: "", tag: "", tagDark: false },
 ];
 
 const RISK = [
@@ -726,7 +726,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1px", color: C.t5, marginRight: 2 }}>고려사항</span>
                 {considerations.map((c) => (
-                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 230, fontSize: 10, color: C.violet, background: "rgba(167,139,250,.08)", border: "1px solid rgba(167,139,250,.3)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
+                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 230, fontSize: 10, color: C.green, background: "rgba(0,200,5,.08)", border: "1px solid rgba(0,200,5,.25)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↑ {c.label}</span>
                     <span onClick={() => removeConsideration(c.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
                   </span>
@@ -1169,22 +1169,22 @@ function AllocationTab({ sim }: { sim: any }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: "0 0 30px", width: 30, height: 150, position: "relative" }}>
+          <div style={{ flex: "0 0 30px", width: 30, height: 180, position: "relative" }}>
             {["50%", "40", "30", "20", "10", "0"].map((y, i) => (
-              <span key={y} style={{ position: "absolute", right: 3, top: i * 30, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
+              <span key={y} style={{ position: "absolute", right: 3, top: i * 36, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
             ))}
           </div>
-          <div style={{ flex: 1, height: 150, position: "relative" }}>
-            {[0, 30, 60, 90, 120, 150].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 150 ? "#262626" : "#141414" }} />))}
+          <div style={{ flex: 1, height: 180, position: "relative" }}>
+            {[0, 36, 72, 108, 144, 180].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 180 ? "#262626" : "#141414" }} />))}
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: 26, padding: "0 6px" }}>
               {alloc.map((a) => (
-                <div key={a.name} className="etc-bar" style={{ flex: 1, height: 150, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
-                  <div className="etc-tip" style={{ opacity: 0, transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 130, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
+                <div key={a.name} className="etc-bar" style={{ flex: 1, height: 180, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
+                  <div className="etc-tip" style={{ opacity: 0, transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 158, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
                     <span style={{ color: "#888" }}>벤치</span> {a.bench}% <span style={{ color: C.t6 }}>→</span> <span style={{ color: "#fff" }}>{a.w}%</span> <span style={{ color: a.d >= 0 ? C.up : C.red }}>{a.d >= 0 ? "▲" : "▼"}{Math.abs(a.d)}</span>
                   </div>
-                  <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 5, alignItems: "flex-end", height: 150, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
-                    <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 150 }} />
-                    <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 150 }} />
+                  <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 5, alignItems: "flex-end", height: 180, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
+                    <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 180 }} />
+                    <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 180 }} />
                   </div>
                 </div>
               ))}
@@ -1638,15 +1638,31 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
           ))}
         </div>
         <div style={{ borderTop: `1px solid ${C.b2}`, padding: "10px 18px 12px" }}>
-          <div style={{ position: "relative", height: 3, background: `linear-gradient(to right, ${C.green} 0%, #cfcfcf 33%, ${C.amber} 66%, ${C.red} 100%)`, borderRadius: 2, marginBottom: 8 }}>
-            {regimeIdx >= 0 && (
-              <div style={{ position: "absolute", left: `${(regimeIdx / (REGIME_ORDER_LIST.length - 1)) * 100}%`, top: "50%", transform: "translate(-50%, -50%)", width: 10, height: 10, borderRadius: "50%", background: REGIME_COLORS_SEQ[regimeIdx], border: "2px solid #000", boxShadow: `0 0 6px ${REGIME_COLORS_SEQ[regimeIdx]}` }} />
-            )}
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            {REGIME_ORDER_LIST.map((r, i) => (
-              <span key={r} style={{ fontSize: 7.5, fontFamily: FA, letterSpacing: ".3px", color: i === regimeIdx ? REGIME_COLORS_SEQ[i] : C.t5, fontWeight: i === regimeIdx ? 700 : 400 }}>{REGIME_KR_SHORT[r]}</span>
-            ))}
+          <div style={{ display: "flex", gap: 3 }}>
+            {REGIME_ORDER_LIST.map((r, i) => {
+              const active = i === regimeIdx;
+              const col = REGIME_COLORS_SEQ[i];
+              const isFirst = i === 0;
+              const isLast = i === REGIME_ORDER_LIST.length - 1;
+              return (
+                <div key={r} style={{
+                  flex: 1,
+                  height: 40,
+                  borderRadius: isFirst ? "5px 2px 2px 5px" : isLast ? "2px 5px 5px 2px" : 2,
+                  background: active ? `${col}1f` : `${col}08`,
+                  border: `1px solid ${active ? col + "90" : col + "22"}`,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  boxShadow: active ? `0 0 14px ${col}30` : "none",
+                }}>
+                  <div style={{ width: 5, height: 5, borderRadius: "50%", background: active ? col : col + "40" }} />
+                  <span style={{ fontSize: 9, fontFamily: FA, letterSpacing: ".5px", fontWeight: active ? 700 : 400, color: active ? col : col + "55" }}>{REGIME_KR_SHORT[r]}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </Card>
@@ -1897,11 +1913,11 @@ function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectPr
 }
 
 const REPORT_MOCK_ROWS = [
-  { name: "해외주식", color: C.violet, w: 39.5, d: 4.8, bench: 34.7 },
-  { name: "국내주식", color: C.blue, w: 17.2, d: -3.6, bench: 20.8 },
-  { name: "국내채권", color: C.green, w: 24.5, d: 1.4, bench: 23.1 },
-  { name: "해외채권", color: C.green2, w: 9.1, d: 1.7, bench: 7.4 },
-  { name: "대체투자", color: C.amber, w: 9.7, d: -4.3, bench: 14.0 },
+  { name: "해외주식", color: "#A855F7", w: 39.5, d: 4.8, bench: 34.7 },
+  { name: "국내주식", color: "#3B82F6", w: 17.2, d: -3.6, bench: 20.8 },
+  { name: "국내채권", color: "#2DD4BF", w: 24.5, d: 1.4, bench: 23.1 },
+  { name: "해외채권", color: "#FB923C", w: 9.1, d: 1.7, bench: 7.4 },
+  { name: "대체투자", color: "#FACC15", w: 9.7, d: -4.3, bench: 14.0 },
 ];
 const SOURCES_MOCK: [string, string, string, string, string][] = [
   ["리서치", "fill", "미 연준 2026 금리 인하 전망 · NPS 하우스뷰", "74%", C.up],
