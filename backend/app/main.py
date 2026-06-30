@@ -23,6 +23,7 @@ from app.black_litterman import run_black_litterman
 from app.optimizer import optimize_portfolio, run_efficient_frontier
 from app.stress_test import run_monte_carlo_simulation, run_historical_stress_test
 from app.market_intelligence import fetch_market_intelligence
+from app.persona_chat import classify_chat_intent, chat_with_persona_stream
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,16 @@ class SimulateRequest(BaseModel):
     max_deviation: Optional[float] = Field(None, description="Maximum deviation limit relative to benchmark weights, e.g., 0.1 for 10%")
     risk_aversion: Optional[float] = Field(None, description="Risk aversion coefficient (lambda). If None, estimated dynamically.")
     tau: Optional[float] = Field(None, description="Uncertainty scaling factor (tau). If None, estimated dynamically.")
+
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., description="Message text")
+
+class ChatRequest(BaseModel):
+    persona: str = Field("chris", description="Which desk persona answers: chris | jerry | ben")
+    message: str = Field(..., description="The user's latest chat message")
+    history: List[ChatMessage] = Field(default_factory=list, description="Prior turns this session")
+    context: Optional[Dict[str, Any]] = Field(None, description="Live app-state snapshot (sim/macro/intel/attached/considerations)")
 
 class StressTestRequest(BaseModel):
     weights: Dict[str, float] = Field(..., description="Portfolio weights mapping")
@@ -175,6 +186,37 @@ def get_nps_weights(db: Session = Depends(get_db)):
 import json
 import asyncio
 from fastapi.responses import StreamingResponse
+
+
+@app.post("/chat")
+async def chat(request: ChatRequest):
+    """
+    Conversational desk chat. Classifies the user's message (view / question / run),
+    then streams the chosen persona's in-character answer. NDJSON stream:
+      {"type": "intent", "intent": "...", "summary": "...", "run_params": {...}}
+      {"type": "token", "chunk": "..."}   (repeated)
+      {"type": "done"}
+    The frontend captures "view" messages as considerations and fires the optimizer
+    on "run"; the persona answer streams for all three intents.
+    """
+    history = [m.model_dump() for m in request.history]
+
+    async def event_generator():
+        try:
+            intent = await classify_chat_intent(request.message, history)
+            yield json.dumps({"type": "intent", **intent}, ensure_ascii=False) + "\n"
+            async for evt in chat_with_persona_stream(
+                request.persona, request.message, history, request.context
+            ):
+                yield json.dumps(evt, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+        except Exception as e:
+            logger.error(f"/chat error: {e}", exc_info=True)
+            yield json.dumps({"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다.)"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
 
 @app.post("/simulate")
 async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)):

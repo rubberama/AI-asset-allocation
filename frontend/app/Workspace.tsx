@@ -47,6 +47,14 @@ const FP = "'Pretendard',sans-serif";
 // Column alignment is preserved via fontVariantNumeric:"tabular-nums" on the root.
 const FM = FP;
 
+// The three desk personas you can address in the left chat. `key` is sent to
+// the backend /chat endpoint; the rest drive avatar colour + name/role labels.
+const PERSONA_META: Record<"chris" | "jerry" | "ben", { name: string; role: string; color: string; bg?: string; border?: string }> = {
+  chris: { name: "Chris", role: "PM · 최고투자전략가", color: C.white },
+  jerry: { name: "Jerry", role: "선임 PM · 매크로 데스크", color: C.amber },
+  ben: { name: "Ben", role: "마켓 인텔리전스 애널리스트", color: C.cyan, bg: "rgba(34,211,238,.12)", border: "rgba(34,211,238,.35)" },
+};
+
 const TICKER = [
   ["KOSPI", "2,610", "▼0.8%", C.red], ["S&P 500", "5,420", "▲0.4%", C.up],
   ["NASDAQ", "17,330", "▲0.6%", C.up], ["다우", "38,900", "▲0.2%", C.up],
@@ -166,6 +174,15 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [refreshProgress, setRefreshProgress] = useState<{ phase: string; items: string[] } | null>(null);
   const [ingesting, setIngesting] = useState(false);
   const [dragOverChat, setDragOverChat] = useState(false);
+
+  // ── Live persona chat (left desk is now an AI chatbot) ───────────────────────
+  // persona = whom you're addressing; chatMsgs = the live thread (multi-turn);
+  // considerations = market views captured from chat that fold into the next run.
+  const [persona, setPersona] = useState<"chris" | "jerry" | "ben">("chris");
+  const [chatMsgs, setChatMsgs] = useState<any[]>([]);
+  const [considerations, setConsiderations] = useState<any[]>([]);
+  const [chatBusy, setChatBusy] = useState(false);
+  const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
   const attachSource = (item: any) => { if (item) setAttached((p) => (p.some((a) => a.id === item.id) ? p : [...p, item])); };
   const detachSource = (id: string) => setAttached((p) => p.filter((a) => a.id !== id));
@@ -340,14 +357,20 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
 
   const runSimulation = async (text?: string) => {
     const vt = (text ?? viewText).trim();
-    if ((!vt && attached.length === 0) || running) return;
-    setViewText(vt);
+    if ((!vt && attached.length === 0 && considerations.length === 0) || running) return;
+    if (vt) setViewText(vt);
     setRunning(true); setLiveTrace(""); setLoadingStep(0); setParsedViews([]);
-    // Fold any chat-attached market-intel sources into the view as structured references
-    // ("[Source - Title]: summary") — the view-parsing prompt cites these directly.
-    const composed = attached.length
-      ? `${vt}\n\n--- [첨부된 마켓 인텔리전스] ---\n${attached.map((a) => `[${a.source || a.author || "출처"} - ${a.title}]: ${a.ai_interpretation?.summary || a.content || ""}`).join("\n")}`.trim()
-      : vt;
+    // Fold the live view + any chat-captured considerations + attached intel sources into
+    // a single view_text — the /simulate view-parsing prompt cites these directly.
+    const composed = [
+      vt,
+      considerations.length
+        ? `--- [사용자 고려사항] ---\n${considerations.map((c) => `• ${c.text}`).join("\n")}`
+        : "",
+      attached.length
+        ? `--- [첨부된 마켓 인텔리전스] ---\n${attached.map((a) => `[${a.source || a.author || "출처"} - ${a.title}]: ${a.ai_interpretation?.summary || a.content || ""}`).join("\n")}`
+        : "",
+    ].filter(Boolean).join("\n\n").trim();
     try {
       const res = await fetch(API_BASE + "/simulate", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -379,11 +402,85 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     } catch { /* offline → tabs keep mock */ } finally { setRunning(false); }
   };
 
-  const submitDraft = () => { const t = draft.trim(); if ((!t && attached.length === 0) || running) return; setDraft(""); runSimulation(t); };
+  // ── Send a chat message to the chosen persona (streams the reply via /chat) ──
+  // The backend classifies intent: a market VIEW is captured as a consideration;
+  // a RUN command fires the optimizer after the reply; a QUESTION just answers.
+  const sendChat = async () => {
+    const text = draft.trim();
+    if (!text || chatBusy || running) return;
+    setDraft("");
+    const meta = PERSONA_META[persona];
+    const botId = "b" + Date.now() + Math.random().toString(36).slice(2, 6);
+    const history = chatMsgs.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
+    setChatMsgs((prev) => [
+      ...prev,
+      { id: "u" + botId, role: "user", content: text },
+      { id: botId, role: "persona", persona, who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border, content: "", streaming: true },
+    ]);
+    setChatBusy(true);
+    const context = {
+      sim: sim
+        ? {
+            optimized_weights: sim.optimized_weights,
+            benchmark_weights: sim.benchmark_portfolio?.weights ?? sim.benchmark_weights,
+            risk_metrics: sim.risk_metrics,
+            parsed_views: sim.parsed_views,
+            posterior_returns: sim.posterior_returns,
+          }
+        : null,
+      macro,
+      intel: intel.slice(0, 6).map((i: any) => ({ title: i.title })),
+      attached: attached.map((a) => ({ source: a.source, title: a.title, content: a.content, ai_interpretation: a.ai_interpretation })),
+      considerations: considerations.map((c) => c.text),
+    };
+    let shouldRun = false;
+    try {
+      const res = await fetch(API_BASE + "/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona, message: text, history, context }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("no stream");
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "intent") {
+              if (evt.intent === "view") {
+                const label = (evt.summary && evt.summary.trim()) || text.slice(0, 40);
+                setConsiderations((prev) => (prev.some((c) => c.text === text) ? prev : [...prev, { id: "c" + botId, label, text }]));
+              } else if (evt.intent === "run") {
+                shouldRun = true;
+              }
+            } else if (evt.type === "token" && evt.chunk) {
+              setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content + evt.chunk } : m)));
+            }
+          } catch { /* skip partial */ }
+        }
+      }
+    } catch {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(연결 오류로 답변을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
+    } finally {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
+      setChatBusy(false);
+      if (shouldRun) runSimulation();
+    }
+  };
 
   // Demo auto-runs a sample optimization on mount; new-user mode starts empty (no input yet).
   useEffect(() => { if (!isNew) runSimulation(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const hasRun = !!sim || running || liveTrace.length > 0;
+
+  // Keep the conversation pinned to the latest message / streamed token.
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length]);
 
   // reasoning-trace typing loop (mirrors ReasoningTrace.dc.html)
   useEffect(() => {
@@ -508,11 +605,25 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                 : "안녕하세요. 오늘 시장을 어떻게 보고 계신가요? 편하게 말씀해 주시면 Ben(마켓)과 매크로 데스크가 근거를 모으고, 제가 최종 검토해 배분으로 옮겨드리겠습니다."}
             </Msg>
 
-            {/* user bubble */}
+            {/* user bubble (last-run view) */}
             {viewText && (
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
               </div>
+            )}
+
+            {/* ── live persona chat thread (multi-turn Q&A + view capture) ── */}
+            {chatMsgs.map((m) =>
+              m.role === "user" ? (
+                <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{m.content}</div>
+                </div>
+              ) : (
+                <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
+                  <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
+                  {m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />}
+                </Msg>
+              )
             )}
 
             {(!isNew || hasRun) && (<>
@@ -608,21 +719,40 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                 ))}
               </div>
             )}
+            {/* captured considerations — fold into the next optimization run */}
+            {considerations.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1px", color: C.t5, marginRight: 2 }}>고려사항</span>
+                {considerations.map((c) => (
+                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 230, fontSize: 10, color: C.violet, background: "rgba(167,139,250,.08)", border: "1px solid rgba(167,139,250,.3)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↑ {c.label}</span>
+                    <span onClick={() => removeConsideration(c.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* persona selector — choose who you're addressing */}
             <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
-              {["이번 주 뉴스 반영", "리스크 한도 조정", "자료 업로드"].map((p) => (
-                <span key={p} style={{ fontSize: 10, color: C.t3, border: `1px solid ${C.b3}`, borderRadius: 13, padding: "4px 10px", cursor: "pointer" }}>{p}</span>
-              ))}
+              {(["chris", "jerry", "ben"] as const).map((key) => {
+                const meta = PERSONA_META[key];
+                const active = persona === key;
+                return (
+                  <span key={key} onClick={() => setPersona(key)} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 600, cursor: "pointer", color: active ? "#000" : meta.color, background: active ? meta.color : "transparent", border: `1px solid ${active ? meta.color : C.b3}`, borderRadius: 13, padding: "4px 10px" }}>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: active ? "#000" : meta.color }} />@{meta.name}
+                  </span>
+                );
+              })}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.chip, border: `1px solid ${C.b4}`, borderRadius: 10, padding: "10px 12px" }}>
               <input
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitDraft(); } }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
                 disabled={running}
-                placeholder={running ? "최적화 중… 잠시만 기다려 주세요" : "시장에 대한 생각을 입력하세요…"}
+                placeholder={running ? "최적화 중… 잠시만 기다려 주세요" : chatBusy ? `${PERSONA_META[persona].name}이(가) 답변 중…` : `${PERSONA_META[persona].name}에게 질문하거나 시장 의견을 남겨보세요…`}
                 style={{ flex: 1, fontSize: 12.5, color: "#eee", background: "transparent", border: "none", outline: "none", fontFamily: FP }}
               />
-              <div onClick={submitDraft} style={{ width: 28, height: 28, borderRadius: 7, background: draft.trim() && !running ? "#fff" : "#333", display: "flex", alignItems: "center", justifyContent: "center", color: draft.trim() && !running ? "#000" : "#777", fontSize: 13, cursor: draft.trim() && !running ? "pointer" : "default", flex: "0 0 auto" }}>↑</div>
+              <div onClick={sendChat} style={{ width: 28, height: 28, borderRadius: 7, background: draft.trim() && !running && !chatBusy ? "#fff" : "#333", display: "flex", alignItems: "center", justifyContent: "center", color: draft.trim() && !running && !chatBusy ? "#000" : "#777", fontSize: 13, cursor: draft.trim() && !running && !chatBusy ? "pointer" : "default", flex: "0 0 auto" }}>↑</div>
             </div>
           </div>
         </div>

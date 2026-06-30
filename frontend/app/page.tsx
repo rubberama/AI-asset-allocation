@@ -111,7 +111,9 @@ export default function LoginPage() {
           width: "100%",
           maxWidth: "380px",
           border: `1px solid ${C.b1}`,
-          background: "#030303",
+          background: "rgba(3, 3, 3, 0.75)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
           borderRadius: 16,
           padding: "36px",
           boxShadow: "0 25px 50px -12px rgba(0,0,0,0.9)",
@@ -127,7 +129,7 @@ export default function LoginPage() {
         <div style={{ textAlign: "center" }}>
           <span style={{ fontSize: 9.5, fontFamily: FA, color: C.t4, letterSpacing: "2.5px", fontWeight: 700, textTransform: "uppercase", display: "block", marginBottom: 6 }}>NPS QUANT LABS</span>
           <h1 style={{ fontFamily: FA, fontSize: "28px", fontWeight: 800, letterSpacing: "-1px", color: C.white, margin: 0, textTransform: "uppercase" }}>Etacolla</h1>
-          <span style={{ fontSize: 11.5, color: C.t3, marginTop: 4, display: "block" }}>자산배분 플랫폼 / 포털 인증</span>
+          <span style={{ fontSize: 11.5, color: C.t3, marginTop: 4, display: "block" }}>Quant Labs Portal / 자산배분 시스템</span>
         </div>
 
         {/* Login Form */}
@@ -140,9 +142,12 @@ export default function LoginPage() {
 
           {/* Email input */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>사원번호 또는 이메일</label>
+            <label htmlFor="login-email" style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>사원번호 또는 이메일</label>
             <input
+              id="login-email"
+              name="email"
               type="text"
+              autoComplete="username"
               placeholder="e.g. employee@nps.or.kr"
               value={emailOrId}
               onChange={(e) => setEmailOrId(e.target.value)}
@@ -161,9 +166,12 @@ export default function LoginPage() {
 
           {/* Password input */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>비밀번호</label>
+            <label htmlFor="login-password" style={{ fontSize: 10.5, fontWeight: 600, color: "#8a8a8a" }}>비밀번호</label>
             <input
+              id="login-password"
+              name="password"
               type="password"
+              autoComplete="current-password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -216,6 +224,7 @@ export default function LoginPage() {
         {/* Demo Fast Access Button */}
         <button
           id="btn-login-demo"
+          type="button"
           onClick={handleDemoLogin}
           disabled={loading}
           style={{
