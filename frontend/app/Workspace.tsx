@@ -65,14 +65,24 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.4";
+const APP_VERSION = "0.8.5";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.5",
+    date: "2026-07-02",
+    title: "매크로 탭 새로고침 기능 추가",
+    current: true,
+    items: [
+      "매크로 탭 헤더에 '↻ 매크로 새로고침' 버튼과 '마지막 업데이트' 시각 추가 — 이전에는 페이지 로드 시 한 번만 지표를 가져와 값이 오래돼도 새 데이터를 보려면 새로고침(F5)해야 했음",
+      "백엔드는 이미 지원하던 GET /macro-data?refresh=true(캐시 우회, 실시간 재조회)를 프론트에서 처음으로 연결",
+      "새로고침 실패 시(백엔드 연결 불가 등) 조용히 넘어가지 않고 오류 배너로 표시",
+    ],
+  },
   {
     version: "0.8.4",
     date: "2026-07-01",
     title: "뉴스 디제스트 저장 실패 시 정직하게 실패 표시 (production time 버그 수정)",
-    current: true,
     items: [
       "뉴스 새로고침이 DB 저장에 실패해도(동시 요청으로 인한 'database is locked') '새 기사 N건 반영'이라고 거짓 성공을 보고하던 문제 수정 — 이제 저장이 실제로 실패하면 오류를 표시하고, 카드의 '분석 발행 시각'은 실제로 저장된 순간만 반영",
       "SQLite를 WAL 모드로 전환 + 잠금 대기시간 30초로 확장 — 여러 요청이 동시에 쓰기를 시도해도 잠금 충돌로 조용히 저장이 취소되는 일을 방지",
@@ -399,6 +409,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // When down we show a banner instead of silently falling back to mock data.
   const [backendUp, setBackendUp] = useState<boolean | null>(null);
   const [intelNotice, setIntelNotice] = useState<string>("");
+  const [macroRefreshing, setMacroRefreshing] = useState(false);
+  const [macroUpdatedAt, setMacroUpdatedAt] = useState<Date | null>(null);
+  const [macroNotice, setMacroNotice] = useState<string>("");
 
   useEffect(() => {
     let reachable = false;
@@ -410,7 +423,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       return null;
     };
     (async () => {
-      const m = await getJson("/macro-data"); if (m?.data) setMacro(m.data);
+      const m = await getJson("/macro-data"); if (m?.data) { setMacro(m.data); setMacroUpdatedAt(new Date()); }
       const i = await getJson("/market-intelligence"); if (Array.isArray(i?.data)) setIntel(i.data);
       const q = await getJson("/research/queue?limit=12"); if (Array.isArray(q?.data)) setQueue(q.data);
       const t = await getJson("/theses"); if (Array.isArray(t?.data)) setHouseTheses(t.data);
@@ -418,6 +431,24 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       setBackendUp(reachable);
     })();
   }, []);
+
+  // Manual refresh for the 매크로 tab — re-fetches live indicators from the backend
+  // (bypassing its cache) instead of relying on the initial page-load snapshot.
+  const refreshMacro = async () => {
+    if (macroRefreshing) return;
+    setMacroRefreshing(true);
+    setMacroNotice("");
+    try {
+      const r = await fetch(API_BASE + "/macro-data?refresh=true");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (j?.data) { setMacro(j.data); setMacroUpdatedAt(new Date()); }
+      else setMacroNotice("⚠ 새로고침 응답에 데이터가 없습니다.");
+    } catch (e: any) {
+      setBackendUp(false);
+      setMacroNotice(`⚠ 새로고침 실패: 백엔드에 연결할 수 없습니다 (${API_BASE}). 서버가 실행 중인지 확인하세요.`);
+    } finally { setMacroRefreshing(false); }
+  };
 
   const regime: string = macro?.market_regime || "ELEVATED_RISK";
   const [regimeLabel, regimeColor] = REGIME_MAP[regime] || ["—", C.t3];
@@ -1763,7 +1794,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "리스크" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <RiskTab sim={activeSim} />)}
             {tab === "프론티어" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <FrontierTab sim={activeSim} />)}
             {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
-            {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
+            {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} onRefresh={refreshMacro} refreshing={macroRefreshing} updatedAt={macroUpdatedAt} notice={macroNotice} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
             {tab === "리포트" && <ReportTab reports={reports} openReport={openReport} running={running} reportLoading={reportLoading} onOpen={openReportDetail} onDelete={deleteReport} onBack={() => setOpenReport(null)} />}
             {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
@@ -2699,7 +2730,10 @@ const REGIME_ORDER_LIST = ["LOW_VOL", "NORMAL", "ELEVATED_RISK", "CRISIS"] as co
 const REGIME_COLORS_SEQ = [C.green, "#cfcfcf", C.amber, C.red];
 const REGIME_KR_SHORT: Record<string, string> = { LOW_VOL: "저위험", NORMAL: "정상", ELEVATED_RISK: "위험 고조", CRISIS: "위기" };
 
-function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; regime: string; regimeLabel: string; regimeColor: string }) {
+function MacroTab({ macro, regime, regimeLabel, regimeColor, onRefresh, refreshing, updatedAt, notice }: {
+  macro: any; regime: string; regimeLabel: string; regimeColor: string;
+  onRefresh: () => void; refreshing: boolean; updatedAt: Date | null; notice?: string;
+}) {
   const vix = macro?.VIX;
   const yieldSpread = macro?.YIELD_SPREAD;
 
@@ -2743,6 +2777,20 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* header — manual refresh, since indicators are only fetched on page load otherwise */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
+          <span style={{ fontFamily: FA, fontWeight: 700, fontSize: 16, letterSpacing: ".5px" }}>매크로</span>
+          <span style={{ fontSize: 11.5, color: "#666" }}>{updatedAt ? `마지막 업데이트 · ${fmtKST(updatedAt.toISOString())}` : "실시간 지표"}</span>
+        </div>
+        <button onClick={onRefresh} disabled={refreshing} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: refreshing ? C.t5 : "#000", background: refreshing ? C.b3 : C.green, border: "none", padding: "7px 12px", borderRadius: 5, cursor: refreshing ? "wait" : "pointer" }}>{refreshing ? "새로고침 중…" : "↻ 매크로 새로고침"}</button>
+      </div>
+
+      {/* result/error notice from the last refresh — never fail silently */}
+      {!refreshing && notice && (
+        <div style={{ border: `1px solid ${notice.startsWith("⚠") ? C.red : C.b3}`, background: notice.startsWith("⚠") ? "rgba(255,80,0,.10)" : C.panel2, color: notice.startsWith("⚠") ? "#ffb088" : C.t2, borderRadius: 8, padding: "9px 13px", fontSize: 11.5, fontFamily: FM }}>{notice}</div>
+      )}
 
       {/* S1: Regime Dashboard ──────────────────────────────────────────────── */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
