@@ -65,14 +65,22 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.0";
+const APP_VERSION = "0.8.1";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.1",
+    date: "2026-07-01",
+    title: "새 디제스트 카드 강조 스타일 완화",
+    current: true,
+    items: [
+      "마켓 인텔리전스 카드의 'NEW' 표시를 초록 테두리(전체 보더 + 좌측 3px 강조선)에서 배지 하나로 단순화 — 카드 전체를 감싸던 초록 아웃라인이 과하다는 피드백 반영",
+    ],
+  },
   {
     version: "0.8.0",
     date: "2026-07-01",
     title: "프론티어·리스크 탭 전면 개편 · 리포트 열람 시 데이터 불일치 수정",
-    current: true,
     items: [
       "프론티어 탭: 저활용 차트 3개 → 인터랙티브 효율적 프론티어 1개로 개편 — 축 눈금 추가, 점 클릭 시 해당 지점의 실제 자산배분 확인 가능(그동안 버려지던 프론티어 배분 데이터 활용), 최소분산·최대샤프 지점 표시",
       "리스크 탭: '추후 연결' 플레이스홀더였던 자리를 실제 몬테카를로 수익률 분포(VaR·CVaR·평균 기준선 포함)와 역사적 위기 시나리오(코로나19·GFC·2022 금리인상 등 5종, 현재 포트폴리오 기준 손실 추정)로 완성 — 백엔드가 이미 계산해 두고도 화면에 쓰이지 않던 데이터를 연결",
@@ -2501,7 +2509,7 @@ function IntelTab({ intel, onOpen, seenIds, onAttach, onDelete, onRefresh, refre
               onDragStart={(e) => { if (c.raw) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", c.raw.id); } }}
               onClick={() => c.raw && onOpen(c.raw)}
               title={c.raw ? "클릭: 상세 보기 · 드래그: 채팅에 추가" : undefined}
-              style={{ border: `1px solid ${c.isNew ? C.green : c.border}`, borderLeft: c.isNew ? `3px solid ${C.green}` : `1px solid ${c.border}`, background: C.card, borderRadius: 9, padding: 16, cursor: c.raw ? "pointer" : "default", transition: "border-color .12s" }}
+              style={{ border: `1px solid ${c.border}`, background: C.card, borderRadius: 9, padding: 16, cursor: c.raw ? "pointer" : "default", transition: "border-color .12s" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                 <Tag kind={c.tag} style={c.tagStyle} />
