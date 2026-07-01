@@ -65,14 +65,25 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.7.2";
+const APP_VERSION = "0.7.3";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.7.3",
+    date: "2026-07-01",
+    title: "대시보드 Q&A 막다른 길 해소 · Jerry 리서치 실행 버튼 · 대화가 항상 프로세스로 안내",
+    current: true,
+    items: [
+      "'대시보드 수치가 궁금하신가요?' 이후 막혀있던 흐름 수정 — Ben/Jerry가 답한 뒤 계속 질문하거나(Ben↔Jerry 선택) 다음 단계로 진행할 수 있는 선택지 재제공",
+      "Jerry의 '매크로 심층 리서치'가 이제 채팅 내 실행 버튼(매크로 리서치 수집 및 논거구축 실행)으로 동작 — 무엇을 할지 먼저 설명하고, 버튼 클릭 시 수집→논거구축을 실제로 실행, 완료 후 요약 보고",
+      "Jerry 리서치 완료 후, Ben의 뉴스·기사 디제스트를 아직 쓰지 않았다면 이를 제안하고 '내 자료 첨부'(보유 자산 업로드) 기능도 함께 안내",
+      "데스크 챗의 모든 답변이 우리 데이터·근거로 정확히 답한 뒤, 상황에 맞게 다음 단계(다른 페르소나에게 묻기, 근거 첨부, 최적화 실행, 결과·리포트 확인 등)로 자연스럽게 안내",
+    ],
+  },
   {
     version: "0.7.2",
     date: "2026-07-01",
     title: "상충되는 근거 처리 개선 — 뷰 파싱이 정직해짐",
-    current: true,
     items: [
       "뉴스·리서치 출처가 서로 반대 방향을 가리킬 때, 한쪽만 골라 인용하던 문제 수정",
       "뷰의 '논거(thesis)'가 상충되는 신호를 명시적으로 인정하고, 어느 쪽을 왜 더 무겁게 봤는지 설명",
@@ -378,12 +389,20 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // or starts typing their own message.
   const [briefDone, setBriefDone] = useState(false);
   const [entryChoice, setEntryChoice] = useState<null | "ben-digest" | "jerry-deepdive" | "ask-ben" | "typed">(null);
+  // The "대시보드 수치가 궁금하신가요?" path used to be a dead end — Ben would answer
+  // once and the user had no way back into the guided flow. This re-shows a small
+  // hand-off after every answer while in that mode (entryChoice === "ask-ben") and no
+  // run has started yet, so the user can keep asking (Ben OR Jerry) or move forward.
+  const [macroQaFollow, setMacroQaFollow] = useState(false);
   // Ben's post-digest hand-off state machine: hidden → boxes (A/B) → include|ask → hidden.
   const [benFollow, setBenFollow] = useState<"hidden" | "boxes" | "include" | "ask">("hidden");
   const [benSelected, setBenSelected] = useState<string[]>([]); // checked digest ids in the include checklist
   // View → Run bridge (stage B→C): once evidence is gathered, the desk guides the
   // user to form/confirm a view, then run the optimizer. "form" shows the bridge.
   const [viewFlow, setViewFlow] = useState<"hidden" | "form">("hidden");
+  // Shows the "매크로 리서치 수집 및 논거구축 실행" action button after Jerry explains
+  // the deep-dive pipeline, until the user clicks it (or it's dismissed by a run).
+  const [jerryResearchPrompt, setJerryResearchPrompt] = useState(false);
   // Optimization settings the user chooses in the run step (fed to /simulate).
   const [optimizer, setOptimizer] = useState<"ensemble" | "markowitz" | "risk_parity" | "hrp">("ensemble");
   const [maxDeviation, setMaxDeviation] = useState(0.05); // δ cap vs NPS benchmark
@@ -538,10 +557,13 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const t = await fetch(API_BASE + "/theses"); if (t.ok) { const j = await t.json(); if (Array.isArray(j?.data)) setHouseTheses(j.data); }
     } catch { /* ignore */ }
   };
-  const runCollect = async () => {
+  const runCollect = async (opts?: { onActivity?: (label: string) => void }) => {
+    const onActivity = typeof opts?.onActivity === "function" ? opts.onActivity : undefined;
     setCollecting(true);
     setCollectProgress({ phase: "연결 중…", items: [] });
+    onActivity?.("FRED 지표·뉴스·리서치 소스에 연결하고 있습니다…");
     const items: string[] = [];
+    let totalInStore = 0, collectedNow = 0, ok = false;
     try {
       const res = await fetch(API_BASE + "/research/collect-stream");
       if (!res.body) throw new Error("no stream");
@@ -558,25 +580,32 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            if (evt.type === "phase") setCollectProgress({ phase: evt.msg || "", items: [...items] });
-            else if (evt.type === "source") { items.push(`⬡ ${evt.name} · ${evt.count}건`); setCollectProgress({ phase: "수집 중…", items: [...items] }); }
-            else if (evt.type === "done") { const s = evt.summary || {}; setResearchMsg(`✓ 수집 완료 — 저장소 ${s.total_in_store ?? 0}건 (이번 ${s.collected_now ?? 0}건)`); }
+            if (evt.type === "phase") { setCollectProgress({ phase: evt.msg || "", items: [...items] }); if (evt.msg) onActivity?.(String(evt.msg)); }
+            else if (evt.type === "source") { items.push(`⬡ ${evt.name} · ${evt.count}건`); setCollectProgress({ phase: "수집 중…", items: [...items] }); onActivity?.(`${evt.name} 자료를 수집하고 있습니다…`); }
+            else if (evt.type === "done") { const s = evt.summary || {}; totalInStore = s.total_in_store ?? 0; collectedNow = s.collected_now ?? 0; ok = true; setResearchMsg(`✓ 수집 완료 — 저장소 ${totalInStore}건 (이번 ${collectedNow}건)`); }
             else if (evt.type === "error") setResearchMsg(`수집 오류: ${evt.msg}`);
           } catch { /* skip */ }
         }
       }
       await refetchResearch();
     } catch { setResearchMsg("수집 중 오류가 발생했습니다."); } finally { setCollecting(false); setCollectProgress(null); }
+    return { ok, totalInStore, collectedNow };
   };
-  const buildTheses = async () => {
+  const buildTheses = async (opts?: { onActivity?: (label: string) => void }) => {
+    const onActivity = typeof opts?.onActivity === "function" ? opts.onActivity : undefined;
     setBuildingTheses(true);
     setResearchMsg("Nemotron Super가 Bull·Bear 논거를 추출하고 하우스 뷰로 통합하는 중… (최대 2분)");
+    onActivity?.("수집한 자료로 Bull·Bear 논거를 추출하고 하우스 뷰로 통합하는 중입니다… (최대 2분)");
+    let count = 0, ok = false;
     try {
       const r = await fetch(API_BASE + "/thesis/build", { method: "POST" });
       const j = await r.json().catch(() => ({}));
-      if (Array.isArray(j?.data) && j.data.length) { setHouseTheses(j.data); setResearchMsg(`✓ ${j.data.length}개의 하우스 뷰를 생성했습니다. 카드를 채팅으로 끌어다 놓으세요.`); }
-      else { await refetchResearch(); setResearchMsg(j.detail || "하우스 뷰 생성에 실패했습니다. 먼저 '수집'을 실행했는지 확인하세요."); }
+      if (Array.isArray(j?.data) && j.data.length) {
+        setHouseTheses(j.data); count = j.data.length; ok = true;
+        setResearchMsg(`✓ ${count}개의 하우스 뷰를 생성했습니다. 카드를 채팅으로 끌어다 놓으세요.`);
+      } else { await refetchResearch(); setResearchMsg(j.detail || "하우스 뷰 생성에 실패했습니다. 먼저 '수집'을 실행했는지 확인하세요."); }
     } catch { setResearchMsg("하우스 뷰 생성 중 오류가 발생했습니다."); } finally { setBuildingTheses(false); }
+    return { ok, count };
   };
   const attachThesis = (t: any) => {
     const key = t.asset || t.asset1;
@@ -737,6 +766,10 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
       setChatBusy(false);
       if (shouldRun) runSimulation();
+      // Re-offer the hand-off once an answer lands in "ask about the dashboard" mode,
+      // so asking Ben/Jerry a macro question isn't a dead end — the user gets a way
+      // back into the guided flow (or to keep asking) after every reply.
+      else if (entryChoice === "ask-ben" && !sim && !running) setMacroQaFollow(true);
     }
   };
 
@@ -753,6 +786,10 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const userInteractedRef = useRef(false);
   const welcomedRef = useRef(false);
   const briefedRef = useRef(false);
+  // Tracks whether the user has ever run Ben's real news/article digest pipeline —
+  // used to nudge them toward it if they've gone deep on Jerry's macro side but
+  // never touched the news/asset-upload side.
+  const benEverUsedRef = useRef(false);
 
   // Seed Chris's greeting (static — a greeting needs no AI). Idempotent.
   const seedChrisWelcome = () => {
@@ -896,6 +933,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   };
   const runBenDigest = async () => {
     if (chatBusy) return;
+    benEverUsedRef.current = true;
     setEntryChoice("ben-digest");
     setPersona("ben");
     setTab("인텔리전스");
@@ -970,12 +1008,65 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     if (!sim && !running) setViewFlow("form"); // after the explanation, offer the run bridge
   };
   // 2) Let Jerry run a deeper macro research deep-dive (research feature).
+  // Explains the pipeline first, then shows a real action button — clicking it
+  // actually runs collect → thesis-build (not just "go do it yourself in the tab"),
+  // with a live status on Jerry's bubble, and a summary once it's fully done.
   const chooseJerryDeepDive = () => {
     setEntryChoice("jerry-deepdive");
     setPersona("jerry");
     setTab("리서치");
     pushPersonaMsg("jerry",
-      "매크로를 더 깊이 파고들어 보겠습니다. 리서치 탭에서 '수집'을 실행하면 FRED 지표와 뉴스, 리서치 자료를 모아 자산군별로 정리하고, 이를 근거로 하우스 뷰(테제)를 구성합니다. 준비되시면 리서치 탭에서 시작하실 수 있습니다.");
+      "매크로를 더 깊이 파고들어 보겠습니다. 먼저 FRED 지표·뉴스·리서치 자료를 수집하고, 이를 자산군별 Bull·Bear 논거로 정리해 하우스 뷰(테제)를 구성하겠습니다. 아래 버튼을 누르시면 바로 시작하겠습니다.");
+    setJerryResearchPrompt(true);
+  };
+  const jerryResearchSummary = (c: { ok: boolean; totalInStore: number; collectedNow: number }, t: { ok: boolean; count: number }) => {
+    const lines: string[] = [];
+    lines.push(
+      c.ok
+        ? `FRED 지표·뉴스·리서치 자료를 수집했습니다 — 저장소 총 ${c.totalInStore}건 (이번에 새로 ${c.collectedNow}건 추가).`
+        : "자료 수집 중 문제가 있었지만, 기존에 저장된 자료로 계속 진행했습니다."
+    );
+    lines.push(
+      t.ok
+        ? `이를 바탕으로 자산군별 Bull·Bear 논거를 분석해 하우스 뷰(테제) ${t.count}건을 구성했습니다.`
+        : "다만 하우스 뷰 생성에는 실패했습니다 — 잠시 후 리서치 탭에서 '논거 구축'을 다시 시도해 주세요."
+    );
+    if (t.ok) lines.push("리서치 탭에서 각 테제의 근거를 확인하실 수 있고, '하우스 뷰 채택'으로 바로 최적화에 반영하실 수 있습니다.");
+    // Jerry's side covers macro/FRED/house research — if the user has never actually
+    // run Ben's news/article digest, nudge them toward the other half of the evidence
+    // (and the user-asset-upload feature) instead of assuming macro alone is enough.
+    if (!benEverUsedRef.current) {
+      lines.push("다만 지금까지는 매크로·리서치 근거만 반영했습니다. Ben에게 최신 뉴스·기사 디제스트도 요청해 보시고, 인텔리전스 탭의 '📎 내 자료 첨부'로 보유하신 리포트나 자산 자료를 직접 업로드해 보시면 더 폭넓은 근거로 배분을 검토할 수 있습니다.");
+    }
+    return lines.join("\n\n");
+  };
+  // Fires when the user clicks the "매크로 리서치 수집 및 논거구축 실행" action button:
+  // runs the REAL collect + thesis-build pipeline (not a canned reply), with Jerry's
+  // bubble on a live "thinking" status mirroring each stage, then a summary on completion.
+  const runJerryResearch = async () => {
+    if (chatBusy || collecting || buildingTheses) return;
+    setJerryResearchPrompt(false);
+    setPersona("jerry");
+    setTab("리서치");
+    const meta = PERSONA_META.jerry;
+    const botId = "jerry-research-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "jerry",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "", status: "FRED 지표·뉴스·리서치 소스에 연결하고 있습니다…", streaming: true, thinking: true,
+    }]);
+    setChatBusy(true);
+    const setStatus = (label: string) => setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, status: label } : m)));
+    let collectRes = { ok: false, totalInStore: 0, collectedNow: 0 };
+    let thesesRes = { ok: false, count: 0 };
+    try {
+      collectRes = await runCollect({ onActivity: setStatus });
+      thesesRes = await buildTheses({ onActivity: setStatus });
+    } catch { /* summary below reflects whatever succeeded */ }
+    const text = jerryResearchSummary(collectRes, thesesRes);
+    setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: text, status: undefined, streaming: false, thinking: false } : m)));
+    setChatBusy(false);
+    if (thesesRes.ok && !sim && !running) setViewFlow("form"); // theses are ready — offer the run bridge
   };
   // 3) Ask Ben to explain any number on the macro dashboard.
   const chooseAskBen = () => {
@@ -1288,6 +1379,35 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                   <div onClick={runPriorOnly} style={{ cursor: "pointer", textAlign: "center", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "10px", marginTop: 2 }}>뷰 없이 기준 비중으로 실행 →</div>
                 )}
               </div>
+            )}
+
+            {/* The "대시보드 수치가 궁금하신가요?" path used to be a dead end — this
+                re-offers a hand-off after every Ben/Jerry answer while in that mode,
+                so the user can keep asking (either persona) or move into the guided
+                flow instead of getting stuck. */}
+            {macroQaFollow && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>이어서 더 살펴보시겠어요?</div>
+                {[
+                  { on: () => { setMacroQaFollow(false); setPersona("jerry"); setTimeout(() => chatInputRef.current?.focus(), 50); }, t: "Jerry에게 물어보기", d: "같은 지표를 매크로 PM 관점에서 다시 설명해 드립니다." },
+                  { on: () => { setMacroQaFollow(false); runBenDigest(); }, t: "Ben에게 자산·뉴스 디제스트 요청", d: "최신 뉴스를 새로고침해 분석하고, 그 결과를 요약해 드립니다." },
+                  { on: () => { setMacroQaFollow(false); chooseJerryDeepDive(); }, t: "Jerry의 매크로 심층 리서치", d: "FRED·뉴스·리서치를 수집해 하우스 뷰(테제)까지 이어지는 딥다이브를 진행합니다." },
+                ].map((o, i) => (
+                  <div key={i} onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Jerry's deep-dive action button — explained first, then a real trigger
+                for the collect → thesis-build pipeline (not a "go do it yourself"). */}
+            {jerryResearchPrompt && (
+              <div onClick={runJerryResearch} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: C.amber, borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>▶ 매크로 리서치 수집 및 논거구축 실행</div>
             )}
 
             {/* Run artifacts — only after a REAL optimization runs, and anchored right

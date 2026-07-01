@@ -195,6 +195,19 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
     """
     profile = PERSONA_PROFILES.get(persona, PERSONA_PROFILES["chris"])
     ctx_str = _format_chat_context(persona, context)
+    has_run = bool((context or {}).get("sim"))
+    next_step_rule = (
+        (
+            "이미 최적화가 실행되어 결과가 나온 상태입니다 — 답변 끝에 짧게 한 문장으로, "
+            "배분·리스크·프론티어 결과나 PM 리포트를 함께 살펴보시라고 안내하거나, "
+            "필요하면 새로운 의견으로 다시 최적화할 수 있음을 알려 주세요."
+        ) if has_run else (
+            "아직 최적화가 실행되지 않은 상태입니다 — 답변 끝에 짧게 한 문장으로, 자연스럽게 다음 단계로 "
+            "이어질 수 있도록 안내하세요 (예: 다른 페르소나에게 더 물어보기, 근거를 대화에 첨부하기, "
+            "지금까지의 의견으로 최적화를 실행해 보기 등 상황에 맞는 것 하나). 매번 판에 박힌 문구를 "
+            "반복하지 말고, 질문의 맥락에 맞게 자연스럽게 제안하세요."
+        )
+    )
 
     system_prompt = (
         profile["persona"] + "\n\n"
@@ -209,6 +222,8 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
         + "실제 수치가 있으면 그 수치를 근거로 구체적으로 설명하고, 추측한 숫자를 지어내지 마세요. "
         + "사용자가 시장에 대한 견해를 밝히면, 그 견해에 대해 동료처럼 논평하고 함의를 짚어 주세요 "
         + "(그 견해는 시스템이 별도로 '고려사항'으로 기록합니다).\n\n"
+        + "진행 안내 규칙 (중요): 질문에는 항상 위 'LIVE 상태'(우리 데이터·근거·수치)만으로 정확히 답하세요. "
+        + "그 다음 " + next_step_rule + "\n\n"
         + "=== LIVE 상태 ===\n" + ctx_str
         + "\n\n다시 한 번 강조합니다: 반드시 한국어(한글)로만, 처음부터 끝까지 답하세요. "
         + "다른 언어를 섞으면 안 됩니다."
