@@ -65,14 +65,23 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.5";
+const APP_VERSION = "0.8.6";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.6",
+    date: "2026-07-02",
+    title: "추론 트레이스를 채팅 밖 좌측 드로어로 이동",
+    current: true,
+    items: [
+      "추론 트레이스 카드가 대화창 안에 메시지처럼 끼어 있어 어색하다는 피드백 반영 — CHANGELOG와 동일한 탭+슬라이드 패턴으로 좌측 가장자리 드로어로 분리",
+      "분석 실행이 시작되면 자동으로 튀어나와 추론 중임을 보여주고, 완료 후 몇 초 뒤 탭으로 다시 접힘 — 탭은 계속 남아 있어 언제든 클릭해 다시 열람 가능",
+    ],
+  },
   {
     version: "0.8.5",
     date: "2026-07-02",
     title: "매크로 탭 새로고침 기능 추가",
-    current: true,
     items: [
       "매크로 탭 헤더에 '↻ 매크로 새로고침' 버튼과 '마지막 업데이트' 시각 추가 — 이전에는 페이지 로드 시 한 번만 지표를 가져와 값이 오래돼도 새 데이터를 보려면 새로고침(F5)해야 했음",
       "백엔드는 이미 지원하던 GET /macro-data?refresh=true(캐시 우회, 실시간 재조회)를 프론트에서 처음으로 연결",
