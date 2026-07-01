@@ -65,14 +65,22 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.1";
+const APP_VERSION = "0.8.2";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.2",
+    date: "2026-07-01",
+    title: "마켓 인텔리전스 카드 3열 레이아웃",
+    current: true,
+    items: [
+      "마켓 인텔리전스(뉴스·리서치) 카드 그리드를 2열 → 3열로 변경 — 스크롤을 덜 하고 더 많은 카드를 한눈에 확인",
+    ],
+  },
   {
     version: "0.8.1",
     date: "2026-07-01",
     title: "새 디제스트 카드 강조 스타일 완화",
-    current: true,
     items: [
       "마켓 인텔리전스 카드의 'NEW' 표시를 초록 테두리(전체 보더 + 좌측 3px 강조선)에서 배지 하나로 단순화 — 카드 전체를 감싸던 초록 아웃라인이 과하다는 피드백 반영",
     ],
@@ -2501,7 +2509,7 @@ function IntelTab({ intel, onOpen, seenIds, onAttach, onDelete, onRefresh, refre
           </div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           {cards.map((c, i) => (
             <div
               key={i}
