@@ -65,14 +65,24 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.5.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.5.0",
+    date: "2026-07-01",
+    title: "실행 설정 · 첨부 정리 · 완료 타이밍",
+    current: true,
+    items: [
+      "최적화 실행 전 최적화 방식(앙상블·MVO·리스크패리티·HRP)과 이탈 한도 δ(±3/5/10%p)를 직접 선택",
+      "Chris의 완료 메시지를 최적화가 실제로 끝난 뒤에만 표시 (실행 중 조기 노출 수정)",
+      "첨부 자료를 '첨부 N건' 접이식 요약으로 정리 — 세로로 쌓여 공간을 잡아먹던 문제 해결",
+    ],
+  },
   {
     version: "0.4.0",
     date: "2026-07-01",
     title: "뷰→실행 브리지 (리포트로 가는 길)",
-    current: true,
     items: [
       "디제스트 반영 후 '뷰 정하기' 단계로 연결 — 직접 뷰 입력 / 하우스 뷰(리서치) 채택 / 뷰 없이 기준 비중",
       "'이 뷰로 최적화 실행' 버튼으로 Black-Litterman 최적화를 바로 실행 → 배분·리스크·프론티어·PM 리포트 생성",
@@ -324,6 +334,10 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // View → Run bridge (stage B→C): once evidence is gathered, the desk guides the
   // user to form/confirm a view, then run the optimizer. "form" shows the bridge.
   const [viewFlow, setViewFlow] = useState<"hidden" | "form">("hidden");
+  // Optimization settings the user chooses in the run step (fed to /simulate).
+  const [optimizer, setOptimizer] = useState<"ensemble" | "markowitz" | "risk_parity" | "hrp">("ensemble");
+  const [maxDeviation, setMaxDeviation] = useState(0.05); // δ cap vs NPS benchmark
+  const [attachOpen, setAttachOpen] = useState(false); // attached-sources tray expanded?
   const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
@@ -540,7 +554,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     try {
       const res = await fetch(API_BASE + "/simulate", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ view_text: composed, optimizer: "ensemble", max_deviation: 0.05 }),
+        body: JSON.stringify({ view_text: composed, optimizer, max_deviation: maxDeviation }),
       });
       const reader = res.body?.getReader();
       if (!reader) return;
@@ -1166,6 +1180,33 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                     <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
                   </div>
                 ))}
+
+                {/* Run settings the user chooses before executing. */}
+                <div style={{ background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 9, marginTop: 2 }}>
+                  <div>
+                    <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: C.t5, marginBottom: 6 }}>최적화 방식</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                      {([["ensemble", "앙상블"], ["markowitz", "MVO"], ["risk_parity", "리스크패리티"], ["hrp", "HRP"]] as const).map(([k, label]) => {
+                        const on = optimizer === k;
+                        return (
+                          <span key={k} onClick={() => setOptimizer(k)} style={{ cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: on ? "#000" : C.t3, background: on ? C.white : "transparent", border: `1px solid ${on ? C.white : C.b4}`, borderRadius: 7, padding: "5px 10px" }}>{label}</span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: C.t5, marginBottom: 6 }}>이탈 한도 δ · 벤치마크(NPS) 대비 최대 조정폭</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                      {[0.03, 0.05, 0.10].map((d) => {
+                        const on = Math.abs(maxDeviation - d) < 1e-6;
+                        return (
+                          <span key={d} onClick={() => setMaxDeviation(d)} style={{ cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: on ? "#000" : C.t3, background: on ? C.green : "transparent", border: `1px solid ${on ? C.green : C.b4}`, borderRadius: 7, padding: "5px 12px" }}>±{Math.round(d * 100)}%p</span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
                 {considerations.length + attached.length > 0 ? (
                   <div onClick={runWithViews} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: C.green, borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>▶ 이 뷰로 최적화 실행 · 반영 {considerations.length + attached.length}건</div>
                 ) : (
@@ -1176,8 +1217,8 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
 
             {/* Run artifacts — only after a REAL optimization runs. No scripted/hardcoded
                 analyst chatter on entry; live persona replies come from the chat thread above. */}
-            {hasRun && (<>
-            {/* reasoning trace */}
+            {hasRun && (
+            /* reasoning trace */
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <Avatar color={C.violet} small>∑</Avatar>
               <div style={{ flex: 1 }}>
@@ -1220,24 +1261,41 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               </div>
             </div>
 
-            {/* Chris final */}
-            <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
-              <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 전체 결과와 제 IC 메모는 오른쪽 탭에서 확인하세요.</span>
-              <button style={{ alignSelf: "flex-start", fontFamily: FA, fontWeight: 700, fontSize: 10, letterSpacing: "1px", background: "#fff", color: "#000", border: "none", padding: "8px 14px", borderRadius: 6, cursor: "pointer", marginTop: 10 }} onClick={() => setTab("리포트")}>PM 최종 리포트 →</button>
-            </Msg>
-            </>)}
+            )}
+
+            {/* Chris reports back to chat only once the run has FULLY completed
+                (sim received + not running) — never mid-reasoning. */}
+            {sim && !running && (
+              <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
+                <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 전체 결과와 제 IC 메모는 오른쪽 탭에서 확인하세요.</span>
+                <button style={{ alignSelf: "flex-start", fontFamily: FA, fontWeight: 700, fontSize: 10, letterSpacing: "1px", background: "#fff", color: "#000", border: "none", padding: "8px 14px", borderRadius: 6, cursor: "pointer", marginTop: 10 }} onClick={() => setTab("리포트")}>PM 최종 리포트 →</button>
+              </Msg>
+            )}
           </div>
 
           {/* composer */}
           <div style={{ flex: "0 0 auto", borderTop: `1px solid #141414`, padding: "11px 16px 13px" }}>
+            {/* Attached sources — a compact one-line summary that expands into a
+                scrollable tray, so many sources don't stack up and eat the composer. */}
             {attached.length > 0 && (
-              <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
-                {attached.map((a) => (
-                  <span key={a.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 250, fontSize: 10, color: C.cyan, background: "rgba(34,211,238,.08)", border: "1px solid rgba(34,211,238,.3)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📎 {a.title}</span>
-                    <span onClick={() => detachSource(a.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
+              <div style={{ marginBottom: 9 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10.5 }}>
+                  <span onClick={() => setAttachOpen((o) => !o)} style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", color: C.cyan, background: "rgba(34,211,238,.08)", border: "1px solid rgba(34,211,238,.3)", borderRadius: 13, padding: "4px 10px" }}>
+                    <span style={{ transform: attachOpen ? "rotate(90deg)" : "none", transition: "transform .15s", fontSize: 8 }}>▶</span>
+                    📎 첨부 자료 {attached.length}건
                   </span>
-                ))}
+                  <span onClick={() => { setAttached([]); setAttachOpen(false); }} style={{ cursor: "pointer", color: C.t4, fontSize: 10 }}>모두 지우기</span>
+                </div>
+                {attachOpen && (
+                  <div className="etc-scroll" style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 7, maxHeight: 132, overflowY: "auto", paddingRight: 2 }}>
+                    {attached.map((a) => (
+                      <span key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: C.cyan, background: "rgba(34,211,238,.06)", border: "1px solid rgba(34,211,238,.22)", borderRadius: 8, padding: "5px 9px" }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>📎 {a.title}</span>
+                        <span onClick={() => detachSource(a.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {/* captured considerations — fold into the next optimization run */}
