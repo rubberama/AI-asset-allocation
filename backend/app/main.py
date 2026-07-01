@@ -941,6 +941,16 @@ def list_simulations(db: Session = Depends(get_db)):
         logger.error(f"Failed to fetch simulations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/simulations/{simulation_id}")
+def delete_simulation(simulation_id: int, db: Session = Depends(get_db)):
+    """Delete a single past simulation/report."""
+    sim = db.query(Simulation).filter(Simulation.id == simulation_id).first()
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    db.delete(sim)
+    db.commit()
+    return {"status": "ok", "deleted": simulation_id}
+
 @app.get("/simulations/{simulation_id}")
 def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
     """

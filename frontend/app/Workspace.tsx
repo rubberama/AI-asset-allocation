@@ -65,14 +65,22 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.2";
+const APP_VERSION = "0.8.3";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.3",
+    date: "2026-07-01",
+    title: "생성된 리포트 삭제 기능",
+    current: true,
+    items: [
+      "리포트 카드에 삭제(✕) 버튼 추가 — 확인 팝업 후 삭제, DB에서도 영구 삭제(/simulations/{id} DELETE)",
+    ],
+  },
   {
     version: "0.8.2",
     date: "2026-07-01",
     title: "마켓 인텔리전스 카드 3열 레이아웃",
-    current: true,
     items: [
       "마켓 인텔리전스(뉴스·리서치) 카드 그리드를 2열 → 3열로 변경 — 스크롤을 덜 하고 더 많은 카드를 한눈에 확인",
     ],
@@ -515,6 +523,18 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const r = await fetch(API_BASE + "/market-intelligence/" + encodeURIComponent(id), { method: "DELETE" });
       if (!r.ok) throw new Error("delete failed");
     } catch { setIntel(prev); }
+  };
+
+  // Delete a generated report (confirm first; optimistic, rolls back on failure).
+  const deleteReport = async (id: number) => {
+    if (!window.confirm("이 리포트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) return;
+    const prev = reports;
+    setReports((p) => p.filter((r: any) => r.id !== id));
+    if (openReport?.simulation_id === id) setOpenReport(null);
+    try {
+      const r = await fetch(API_BASE + "/simulations/" + id, { method: "DELETE" });
+      if (!r.ok) throw new Error("delete failed");
+    } catch { setReports(prev); }
   };
 
   // Delete an individual house thesis
@@ -1736,7 +1756,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
             {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
-            {tab === "리포트" && <ReportTab reports={reports} openReport={openReport} running={running} reportLoading={reportLoading} onOpen={openReportDetail} onBack={() => setOpenReport(null)} />}
+            {tab === "리포트" && <ReportTab reports={reports} openReport={openReport} running={running} reportLoading={reportLoading} onOpen={openReportDetail} onDelete={deleteReport} onBack={() => setOpenReport(null)} />}
             {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
             {tab === "설정" && <ConfigTab />}
           </div>
@@ -3019,17 +3039,26 @@ const SOURCES_MOCK: [string, string, string, string, string][] = [
 
 // ── Report tab: a 4-column grid of past reports; selecting one shows the full
 // report (ReportDoc). A loading card appears while a new one is being generated.
-function ReportCard({ r, onClick }: { r: any; onClick: () => void }) {
+function ReportCard({ r, onClick, onDelete }: { r: any; onClick: () => void; onDelete: (id: number) => void }) {
   const date = (r.created_at || "").slice(0, 10);
   const opt = (r.optimizer || "ensemble").toUpperCase();
+  const [hover, setHover] = useState(false);
   return (
     <div onClick={onClick}
-      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 128, transition: "border-color .15s" }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b2)}>
+      style={{ position: "relative", cursor: "pointer", background: C.panel2, border: `1px solid ${hover ? C.cyan : C.b2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 128, transition: "border-color .15s" }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}>
+      <span
+        onClick={(e) => { e.stopPropagation(); onDelete(r.id); }}
+        title="리포트 삭제"
+        style={{ position: "absolute", top: 8, right: 8, width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: C.t4, borderRadius: 4, opacity: hover ? 1 : 0, transition: "opacity .15s, color .15s, background .15s" }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = C.red; e.currentTarget.style.background = "rgba(239,68,68,.12)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = C.t4; e.currentTarget.style.background = "transparent"; }}>
+        ✕
+      </span>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontSize: 9, fontFamily: FM, color: C.t5 }}>#{r.id} · {date}</span>
-        <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t3, border: `1px solid ${C.b4}`, borderRadius: 3, padding: "2px 5px" }}>{opt}</span>
+        <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t3, border: `1px solid ${C.b4}`, borderRadius: 3, padding: "2px 5px", marginRight: 14 }}>{opt}</span>
       </div>
       <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.title || "무제 리포트"}</span>
       <span style={{ marginTop: "auto", fontSize: 9.5, color: C.green, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px" }}>리포트 열기 →</span>
@@ -3046,9 +3075,9 @@ function LoadingReportCard() {
     </div>
   );
 }
-function ReportTab({ reports, openReport, running, reportLoading, onOpen, onBack }: {
+function ReportTab({ reports, openReport, running, reportLoading, onOpen, onDelete, onBack }: {
   reports: any[]; openReport: any | null; running: boolean; reportLoading: boolean;
-  onOpen: (id: number) => void; onBack: () => void;
+  onOpen: (id: number) => void; onDelete: (id: number) => void; onBack: () => void;
 }) {
   if (openReport) {
     return (
@@ -3069,7 +3098,7 @@ function ReportTab({ reports, openReport, running, reportLoading, onOpen, onBack
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
           {running && <LoadingReportCard />}
-          {reports.map((r) => (<ReportCard key={r.id} r={r} onClick={() => onOpen(r.id)} />))}
+          {reports.map((r) => (<ReportCard key={r.id} r={r} onClick={() => onOpen(r.id)} onDelete={onDelete} />))}
         </div>
       )}
     </div>
