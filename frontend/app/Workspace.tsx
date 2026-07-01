@@ -65,14 +65,23 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.8.3";
+const APP_VERSION = "0.8.4";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.4",
+    date: "2026-07-01",
+    title: "뉴스 디제스트 저장 실패 시 정직하게 실패 표시 (production time 버그 수정)",
+    current: true,
+    items: [
+      "뉴스 새로고침이 DB 저장에 실패해도(동시 요청으로 인한 'database is locked') '새 기사 N건 반영'이라고 거짓 성공을 보고하던 문제 수정 — 이제 저장이 실제로 실패하면 오류를 표시하고, 카드의 '분석 발행 시각'은 실제로 저장된 순간만 반영",
+      "SQLite를 WAL 모드로 전환 + 잠금 대기시간 30초로 확장 — 여러 요청이 동시에 쓰기를 시도해도 잠금 충돌로 조용히 저장이 취소되는 일을 방지",
+    ],
+  },
   {
     version: "0.8.3",
     date: "2026-07-01",
     title: "생성된 리포트 삭제 기능",
-    current: true,
     items: [
       "리포트 카드에 삭제(✕) 버튼 추가 — 확인 팝업 후 삭제, DB에서도 영구 삭제(/simulations/{id} DELETE)",
     ],

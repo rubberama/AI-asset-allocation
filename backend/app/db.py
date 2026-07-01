@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, text
+from sqlalchemy import create_engine, event, Column, Integer, String, DateTime, JSON, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import DATABASE_URL
 
@@ -86,9 +86,24 @@ class Thesis(Base):
     status = Column(String, default="draft", nullable=False)  # draft | approved | rejected
 
 
-# Connect arguments needed for sqlite concurrency
-connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+# Connect arguments needed for sqlite concurrency. `timeout` is how long a writer
+# waits on a locked db before raising "database is locked" -- several endpoints
+# (simulate, market-intelligence refresh) write concurrently under normal use,
+# so the pysqlite default of 5s was getting exceeded and silently dropping writes.
+connect_args = {"check_same_thread": False, "timeout": 30} if "sqlite" in DATABASE_URL else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
+
+if "sqlite" in DATABASE_URL:
+    # WAL lets readers and writers proceed concurrently instead of taking a
+    # database-wide lock for every write, which is what caused the "database is
+    # locked" failures under concurrent requests in the first place.
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():

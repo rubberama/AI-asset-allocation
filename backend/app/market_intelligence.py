@@ -807,6 +807,8 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
 
     # -- Phase 5: Commit to DB --
     yield {"type": "phase", "phase": "saving", "msg": f"Saving {len(all_theses)} theses to database..."}
+    saved = False
+    save_error = None
     if all_theses:
         try:
             db.query(MarketIntelligence).filter(
@@ -831,12 +833,22 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
                 )
                 db.add(db_item)
             db.commit()
+            saved = True
         except Exception as e:
-            logger.error(f"Failed to commit theses in stream: {e}")
+            # Without this, a failed commit (e.g. "database is locked" from a
+            # concurrent writer) was rolled back silently and the code below
+            # still reported the stale, unchanged feed as a fresh success --
+            # the digest cards kept their old "production time" while the UI
+            # claimed new articles had just been reflected.
+            logger.error(f"Failed to commit theses in stream: {e}", exc_info=True)
             db.rollback()
+            save_error = str(e)
+
+    if save_error:
+        yield {"type": "error", "msg": f"분석 결과 저장에 실패했습니다: {save_error}"}
 
     final_data = _serialize_feed(db.query(MarketIntelligence).all())
-    yield {"type": "result", "data": final_data, "new_count": len(all_theses)}
+    yield {"type": "result", "data": final_data, "new_count": len(all_theses) if saved else 0}
 
 
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:
