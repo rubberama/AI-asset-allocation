@@ -65,14 +65,23 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.7.0";
+const APP_VERSION = "0.7.1";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.7.1",
+    date: "2026-07-01",
+    title: "새 대화 완전 초기화 · 대화 순서 고정",
+    current: true,
+    items: [
+      "「새 대화」가 이전 실행의 뷰·추론 트레이스·리포트를 완전히 초기화 — 하드코딩된 것처럼 남아있던 이전 뷰 문구 제거",
+      "추론 트레이스·PM 완료 메시지가 실행 시점에 맞춰 대화 순서대로 배치 — 리포트 완성 후 던진 질문이 항상 맨 아래에 표시(중간 삽입 문제 수정)",
+    ],
+  },
   {
     version: "0.7.0",
     date: "2026-07-01",
     title: "리포트 정합성 · 출처 정독 · 실행 설정 반영",
-    current: true,
     items: [
       "리포트를 결과 탭 맨 앞으로 이동 · 최적화 실행 시 리포트 탭으로 전환해 생성 로딩을 바로 확인",
       "리포트 제목을 서술형 요약으로 변경(기존 부제 → 제목)",
@@ -313,6 +322,11 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [parsedViews, setParsedViews] = useState<any[]>([]);
   const [liveTrace, setLiveTrace] = useState("");
   const [loadingStep, setLoadingStep] = useState(0);
+  // Anchors the reasoning-trace/completion block at the point in chatMsgs where the
+  // run was fired, so anything the user asks AFTERWARD renders below it, not above
+  // (these artifacts are keyed off `sim`/`running`, not chatMsgs, so without an
+  // anchor they'd stay glued to the very bottom forever). null = no run yet.
+  const [runAnchor, setRunAnchor] = useState<number | null>(null);
   const [attached, setAttached] = useState<any[]>([]);       // intel sources attached to the chat
   const [intelOpen, setIntelOpen] = useState<any | null>(null); // intel item shown in popup
   // Track which intel items the user has opened, so new/unopened ones can be badged.
@@ -577,6 +591,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     const vt = (text ?? viewText).trim();
     if ((!vt && attached.length === 0 && considerations.length === 0) || running) return;
     if (vt) setViewText(vt);
+    setRunAnchor(chatMsgs.length); // pin the trace/completion block right after the thread so far
     setTab("리포트"); setOpenReport(null); // show the report tab (loading card) while it generates
     setRunning(true); setLiveTrace(""); setLoadingStep(0); setParsedViews([]);
     // Fold the live view + any chat-captured considerations + attached intel sources into
@@ -791,7 +806,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
 
   // Reset the desk conversation and replay onboarding from the top.
   const startNewChat = () => {
-    if (chatBusy) return; // don't reset while a persona is actively working
+    if (chatBusy || running) return; // don't reset while a persona/run is actively working
     setChatMsgs([]);
     setConsiderations([]);
     setEntryChoice(null);
@@ -800,6 +815,17 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     setBenSelected([]);
     setViewFlow("hidden");
     setDraft("");
+    // Fully clear the previous run so nothing leaks into the fresh session —
+    // no stale view text, no old reasoning trace, no lingering report/attachments.
+    setSim(null);
+    setViewText("");
+    setParsedViews([]);
+    setLiveTrace("");
+    setLoadingStep(0);
+    setRunAnchor(null);
+    setAttached([]);
+    setAttachOpen(false);
+    setOpenReport(null);
     userInteractedRef.current = false;
     welcomedRef.current = true; // we re-seed manually below
     briefedRef.current = true;
@@ -990,6 +1016,33 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           { tag: "ABS", tagBg: C.green, text: "채권 강세 (금리↓)", val: "+2.2%", conf: "·55%" },
         ];
 
+  // One chat bubble — factored out so the thread can be split around `runAnchor`
+  // (rendered twice: messages before the run, then messages after it) without
+  // duplicating the JSX.
+  const renderChatMsg = (m: any) =>
+    m.role === "user" ? (
+      <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{m.content}</div>
+      </div>
+    ) : (
+      <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
+        <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
+        {m.thinking ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, color: m.color, fontSize: 11.5 }}>
+            <span style={{ display: "inline-flex", gap: 3 }}>
+              {[0, 1, 2].map((i) => (
+                <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: m.color, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />
+              ))}
+            </span>
+            <span style={{ color: C.t3 }}>{m.status || "분석 중…"}</span>
+          </span>
+        ) : (
+          m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
+        )}
+      </Msg>
+    );
+  const runBoundary = runAnchor ?? chatMsgs.length;
+
   return (
     <div style={{ width: "100%", height: "100vh", minHeight: 840, background: C.bg, color: C.white, fontFamily: FP, fontVariantNumeric: "tabular-nums", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style jsx global>{`
@@ -1080,9 +1133,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>{sim?.simulation_id ? `RUN #${sim.simulation_id}` : isNew ? "준비됨" : "RUN #248"}</span>
             <button
               onClick={startNewChat}
-              disabled={chatBusy}
+              disabled={chatBusy || running}
               title="대화를 처음부터 다시 시작합니다"
-              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: chatBusy ? C.t5 : "#cfcfcf", background: "transparent", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 6, cursor: chatBusy ? "default" : "pointer" }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: (chatBusy || running) ? C.t5 : "#cfcfcf", background: "transparent", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 6, cursor: (chatBusy || running) ? "default" : "pointer" }}
             >↻ 새 대화</button>
           </div>
 
@@ -1090,39 +1143,8 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {/* Chris's greeting is seeded into chatMsgs by the onboarding flow (so
                 「새 대화」 can fully reset the thread) — not hardcoded here. */}
 
-            {/* user bubble (last-run view) — only after a real run, never on entry */}
-            {hasRun && viewText && (
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
-              </div>
-            )}
-
-            {/* ── live persona chat thread (multi-turn Q&A + view capture) ── */}
-            {chatMsgs.map((m) =>
-              m.role === "user" ? (
-                <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{m.content}</div>
-                </div>
-              ) : (
-                <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
-                  <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
-                  {/* Working state (e.g. Ben running the news digest): animated dots + a
-                      live status label mirroring the actual pipeline stage. */}
-                  {m.thinking ? (
-                    <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, color: m.color, fontSize: 11.5 }}>
-                      <span style={{ display: "inline-flex", gap: 3 }}>
-                        {[0, 1, 2].map((i) => (
-                          <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: m.color, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />
-                        ))}
-                      </span>
-                      <span style={{ color: C.t3 }}>{m.status || "분석 중…"}</span>
-                    </span>
-                  ) : (
-                    m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
-                  )}
-                </Msg>
-              )
-            )}
+            {/* ── live persona chat thread, part 1: everything up to the run ── */}
+            {chatMsgs.slice(0, runBoundary).map(renderChatMsg)}
 
             {/* After Jerry's brief: three next-step hand-offs. Hidden once the user
                 picks one or starts typing their own message. */}
@@ -1256,9 +1278,15 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               </div>
             )}
 
-            {/* Run artifacts — only after a REAL optimization runs. No scripted/hardcoded
-                analyst chatter on entry; live persona replies come from the chat thread above. */}
-            {hasRun && (
+            {/* Run artifacts — only after a REAL optimization runs, and anchored right
+                where the run fired (runAnchor) so they sit in their correct chronological
+                spot instead of being glued to the bottom of the thread forever. */}
+            {runAnchor !== null && viewText && (
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
+              </div>
+            )}
+            {runAnchor !== null && hasRun && (
             /* reasoning trace */
             <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
               <Avatar color={C.violet} small>∑</Avatar>
@@ -1306,7 +1334,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
 
             {/* Chris reports back to chat only once the run has FULLY completed
                 (sim received + not running) — never mid-reasoning. */}
-            {sim && !running && (<>
+            {runAnchor !== null && sim && !running && (<>
               <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
                 <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 아래에서 결과를 함께 살펴보시죠.</span>
               </Msg>
@@ -1329,6 +1357,11 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                 <div onClick={() => { setTab("리포트"); if (sim) setOpenReport(sim); }} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: "#fff", borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>PM 최종 리포트 →</div>
               </div>
             </>)}
+
+            {/* ── live persona chat thread, part 2: anything asked AFTER the run
+                (e.g. a follow-up question about the report) — always renders below
+                the run artifacts above, never spliced in before them. ── */}
+            {chatMsgs.slice(runBoundary).map(renderChatMsg)}
           </div>
 
           {/* composer */}
