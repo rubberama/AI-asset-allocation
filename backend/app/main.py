@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 
 from app.db import init_db, get_db, Simulation, NpsSnapshot
 from app.config import DEFAULT_RISK_AVERSION, DEFAULT_TAU, DEFAULT_RISK_FREE_RATE
+from app import config
 from app.crawler import fetch_and_sync_nps_data
 from app.market_data import (
     fetch_market_data, fetch_risk_free_rate, regime_blended_covariance, _REGIME_STRESS_ALPHA,
@@ -23,7 +24,7 @@ from app.black_litterman import run_black_litterman
 from app.optimizer import optimize_portfolio, run_efficient_frontier
 from app.stress_test import run_monte_carlo_simulation, run_historical_stress_test
 from app.market_intelligence import fetch_market_intelligence
-from app.persona_chat import classify_chat_intent, chat_with_persona_stream
+from app.persona_chat import classify_chat_intent, chat_with_persona_stream, generate_daily_brief_stream
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +69,9 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's latest chat message")
     history: List[ChatMessage] = Field(default_factory=list, description="Prior turns this session")
     context: Optional[Dict[str, Any]] = Field(None, description="Live app-state snapshot (sim/macro/intel/attached/considerations)")
+
+class DailyBriefRequest(BaseModel):
+    macro: Optional[Dict[str, Any]] = Field(None, description="Macro indicator snapshot shown on the 매크로 tab (falls back to the server's cached context if omitted)")
 
 class StressTestRequest(BaseModel):
     weights: Dict[str, float] = Field(..., description="Portfolio weights mapping")
@@ -140,6 +144,7 @@ def _build_view_attribution(
                     "confidence": v.get("confidence", 0),
                     "thesis": v.get("thesis", ""),
                     "sources": v.get("sources", []),
+                    "conflicting_evidence": v.get("conflicting_evidence", ""),
                     "expected_return": v.get("expected_return"),
                     "outperformance": v.get("outperformance"),
                     "asset": v.get("asset"),
@@ -169,6 +174,39 @@ def _regime_lambda_multiplier(macro_context: Dict[str, Any]) -> float:
 @app.get("/")
 def read_root():
     return {"message": "NPS AI Black-Litterman Platform API is running!"}
+
+
+class ModelUpdate(BaseModel):
+    env: str    # which task to change (matches config.MODEL_TASKS[].env)
+    model: str  # the model id to switch it to
+
+
+@app.get("/config/models")
+def get_model_config():
+    """Which LLM each task is currently using, plus the switchable choices.
+    Reads live config so it always reflects what the desk is actually calling."""
+    tasks = [
+        {**t, "current": config.get_model(t["env"])}
+        for t in config.MODEL_TASKS
+    ]
+    return {"tasks": tasks, "choices": config.MODEL_CHOICES}
+
+
+@app.post("/config/models")
+def update_model_config(body: ModelUpdate):
+    """Switch the model for one task. Takes effect immediately (live) and is
+    persisted to backend/.env so it survives a restart."""
+    valid_envs = {t["env"] for t in config.MODEL_TASKS}
+    if body.env not in valid_envs:
+        raise HTTPException(status_code=400, detail=f"Unknown task: {body.env}")
+    if not body.model or not body.model.strip():
+        raise HTTPException(status_code=400, detail="Model id must not be empty")
+    try:
+        config.set_model(body.env, body.model.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"Model for {body.env} switched to {body.model.strip()}")
+    return {"ok": True, "env": body.env, "model": config.get_model(body.env)}
 
 @app.get("/nps")
 def get_nps_weights(db: Session = Depends(get_db)):
@@ -213,6 +251,39 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.error(f"/chat error: {e}", exc_info=True)
             yield json.dumps({"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다.)"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+@app.post("/desk/daily-brief")
+async def desk_daily_brief(request: DailyBriefRequest):
+    """
+    Streams Jerry's daily macro brief for the entry flow. The brief is grounded
+    ONLY in our macro indicators (the numbers on the 매크로 tab): the frontend
+    posts the snapshot it is rendering; if absent we fall back to the server's
+    cached/last-fetched macro context. NDJSON:
+      {"type": "token", "chunk": "..."}   (repeated)
+      {"type": "done"}
+    """
+    macro_context = request.macro
+    if not macro_context:
+        macro_context = get_last_macro_context()
+        if not macro_context:
+            try:
+                from app.macro_data import fetch_macro_context
+                macro_context = fetch_macro_context()
+            except Exception:
+                macro_context = {}
+
+    async def event_generator():
+        try:
+            async for evt in generate_daily_brief_stream(macro_context):
+                yield json.dumps(evt, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+        except Exception as e:
+            logger.error(f"/desk/daily-brief error: {e}", exc_info=True)
+            yield json.dumps({"type": "token", "chunk": "(브리핑 생성 중 오류가 발생했습니다.)"}, ensure_ascii=False) + "\n"
             yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
@@ -264,7 +335,7 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                     macro_context = fetch_macro_context()
                 except Exception:
                     macro_context = {}
-            pm_memo = await generate_pm_memo(parsed_views, macro_context)
+            pm_memo = await generate_pm_memo(parsed_views, macro_context, view_text=request.view_text)
             
             # 4. Compute/estimate lambda and tau, and run Black-Litterman
             yield json.dumps({"step": 4, "message": "시장 균형수익률(Prior)과 사용자 의견을 결합하여 Black-Litterman 사후 기대수익률을 산정하고 있습니다."}) + "\n"
@@ -417,7 +488,8 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                     "ai_commentary": ai_commentary,
                     "historical_stress_tests": historical_stress_tests,
                     "pm_memo": pm_memo,
-                    "min_variance_fallback": min_variance_fallback
+                    "min_variance_fallback": min_variance_fallback,
+                    "max_deviation": request.max_deviation
                 }
             )
             db.add(sim_record)
@@ -455,6 +527,7 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                 "historical_stress_tests": historical_stress_tests,
                 "pm_memo": pm_memo,
                 "min_variance_fallback": min_variance_fallback,
+                "max_deviation": request.max_deviation,
                 "covariance_regime": {
                     "regime": regime,
                     "stress_alpha": _REGIME_STRESS_ALPHA.get((regime or "NORMAL").upper(), 0.15),
@@ -539,8 +612,12 @@ async def refresh_market_intelligence_stream(db: Session = Depends(get_db)):
     from app.market_intelligence import sync_market_intelligence_with_progress
 
     async def event_generator():
-        async for event in sync_market_intelligence_with_progress(db, force=True):
-            yield f"data: {json.dumps(event)}\n\n"
+        try:
+            async for event in sync_market_intelligence_with_progress(db, force=True):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            logger.error(f"Market intelligence refresh stream failed: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'msg': str(e)})}\n\n"
         yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(
@@ -864,6 +941,16 @@ def list_simulations(db: Session = Depends(get_db)):
         logger.error(f"Failed to fetch simulations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/simulations/{simulation_id}")
+def delete_simulation(simulation_id: int, db: Session = Depends(get_db)):
+    """Delete a single past simulation/report."""
+    sim = db.query(Simulation).filter(Simulation.id == simulation_id).first()
+    if not sim:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    db.delete(sim)
+    db.commit()
+    return {"status": "ok", "deleted": simulation_id}
+
 @app.get("/simulations/{simulation_id}")
 def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
     """
@@ -922,7 +1009,8 @@ def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
             "ai_commentary": sim.risk_metrics.get("ai_commentary"),
             "historical_stress_tests": sim.risk_metrics.get("historical_stress_tests"),
             "pm_memo": sim.risk_metrics.get("pm_memo"),
-            "min_variance_fallback": sim.risk_metrics.get("min_variance_fallback", False)
+            "min_variance_fallback": sim.risk_metrics.get("min_variance_fallback", False),
+            "max_deviation": sim.risk_metrics.get("max_deviation")
         }
     except Exception as e:
         logger.error(f"Failed to fetch simulation detail: {e}")

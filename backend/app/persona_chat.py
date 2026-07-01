@@ -7,12 +7,14 @@ user message is a market VIEW (capture as a consideration), a general
 QUESTION (just answer), or a RUN command (fire the optimizer).
 """
 
+import asyncio
 import json
 import logging
 
 import httpx
 
-from app.config import OPENROUTER_API_KEY, OPENROUTER_API_URL, VIEW_PARSING_MODEL, REASONING_MODEL
+from app.config import OPENROUTER_API_KEY, OPENROUTER_API_URL
+from app import config  # VIEW_PARSING_MODEL / REASONING_MODEL read live for runtime switching (설정 tab)
 from app.llm import clean_and_parse_json
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,9 @@ PERSONA_PROFILES = {
             "You are Jerry, the Senior PM running the macro desk at Etacolla. You speak to "
             "rates, inflation, growth, central-bank policy, the market regime, and how the "
             "macro backdrop argues for or against risk assets. You weigh bull vs bear cases "
-            "and give a clear house view. You are seasoned and direct."
+            "and give a clear house view. You are seasoned and direct, but unfailingly "
+            "courteous — you always address the client in polite formal Korean (정중한 존댓말, "
+            "문장은 '~입니다 / ~합니다' 체로 끝맺습니다)."
         ),
     },
     "ben": {
@@ -77,10 +81,12 @@ def _format_chat_context(persona, context):
         if sim.get("posterior_returns"):
             parts.append("사후 기대수익률: " + json.dumps(sim["posterior_returns"], ensure_ascii=False))
 
-    if persona in ("jerry", "chris") and macro:
+    # Ben also gets the macro block so he can explain the numbers on the 매크로
+    # dashboard when the user asks him to clarify them.
+    if persona in ("jerry", "chris", "ben") and macro:
         parts.append("=== 매크로 상태 (LIVE) ===")
         parts.append("시장 레짐: " + str(macro.get("market_regime", "UNKNOWN")))
-        compact = {k: v for k, v in macro.items() if k in ("VIX", "US10Y", "DXY", "USD_KRW", "KOSPI", "SPY")}
+        compact = {k: v for k, v in macro.items() if k in ("VIX", "US10Y", "US3M", "YIELD_SPREAD", "DXY", "USD_KRW", "KOSPI", "SPY", "QQQ", "GOLD", "WTI")}
         if compact:
             parts.append("주요 지표: " + json.dumps(compact, ensure_ascii=False))
 
@@ -149,7 +155,7 @@ async def classify_chat_intent(message, history=None):
         "X-Title": "NPS Black-Litterman Platform",
     }
     payload = {
-        "model": VIEW_PARSING_MODEL,
+        "model": config.VIEW_PARSING_MODEL,
         "messages": [{"role": "system", "content": sys}, {"role": "user", "content": message}],
         "temperature": 0.0,
     }
@@ -189,16 +195,38 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
     """
     profile = PERSONA_PROFILES.get(persona, PERSONA_PROFILES["chris"])
     ctx_str = _format_chat_context(persona, context)
+    has_run = bool((context or {}).get("sim"))
+    next_step_rule = (
+        (
+            "이미 최적화가 실행되어 결과가 나온 상태입니다 — 답변 끝에 짧게 한 문장으로, "
+            "배분·리스크·프론티어 결과나 PM 리포트를 함께 살펴보시라고 안내하거나, "
+            "필요하면 새로운 의견으로 다시 최적화할 수 있음을 알려 주세요."
+        ) if has_run else (
+            "아직 최적화가 실행되지 않은 상태입니다 — 답변 끝에 짧게 한 문장으로, 자연스럽게 다음 단계로 "
+            "이어질 수 있도록 안내하세요 (예: 다른 페르소나에게 더 물어보기, 근거를 대화에 첨부하기, "
+            "지금까지의 의견으로 최적화를 실행해 보기 등 상황에 맞는 것 하나). 매번 판에 박힌 문구를 "
+            "반복하지 말고, 질문의 맥락에 맞게 자연스럽게 제안하세요."
+        )
+    )
 
     system_prompt = (
         profile["persona"] + "\n\n"
+        + "언어 규칙 (가장 중요): 답변은 처음부터 끝까지 반드시 한국어(한글)로만 작성합니다. "
+        + "영어·일본어·중국어 등 다른 언어의 문장이나 단어, 문자를 절대 섞지 마세요. 문장 중간에도 "
+        + "언어를 바꾸지 않습니다. 참고 자료가 영어로 되어 있어도 반드시 한국어로 바꿔서 설명하세요. "
+        + "단, 고유명사(기사 제목, 티커·지표 약어: VIX·DXY·SPY 등)는 원문 표기를 그대로 인용해도 됩니다. "
+        + "그 외 모든 설명 문장은 100% 한국어여야 합니다.\n\n"
         + "당신의 이름은 " + profile["name"] + ", 직책은 " + profile["role"] + "입니다. "
-        + "항상 한국어로, 1인칭으로, 페르소나를 유지하며 답하세요. 간결하고 전문적으로 "
+        + "1인칭으로, 페르소나를 유지하며 답하세요. 간결하고 전문적으로 "
         + "(보통 2~5문장), 마크다운 기호 없이 자연스러운 대화체로 답합니다. 아래 'LIVE 상태'에 "
         + "실제 수치가 있으면 그 수치를 근거로 구체적으로 설명하고, 추측한 숫자를 지어내지 마세요. "
         + "사용자가 시장에 대한 견해를 밝히면, 그 견해에 대해 동료처럼 논평하고 함의를 짚어 주세요 "
         + "(그 견해는 시스템이 별도로 '고려사항'으로 기록합니다).\n\n"
+        + "진행 안내 규칙 (중요): 질문에는 항상 위 'LIVE 상태'(우리 데이터·근거·수치)만으로 정확히 답하세요. "
+        + "그 다음 " + next_step_rule + "\n\n"
         + "=== LIVE 상태 ===\n" + ctx_str
+        + "\n\n다시 한 번 강조합니다: 반드시 한국어(한글)로만, 처음부터 끝까지 답하세요. "
+        + "다른 언어를 섞으면 안 됩니다."
     )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -209,6 +237,17 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": message})
 
+    async for evt in _stream_answer(messages, temperature=0.4):
+        yield evt
+
+
+async def _stream_answer(messages, temperature=0.4):
+    """
+    Stream an OpenRouter chat completion, emitting only the answer text with any
+    <think>…</think> spans the model embeds stripped out. Yields
+    {"type": "token", "chunk": "..."} events. Shared by the persona chat and the
+    Jerry daily-brief generator so think-stripping/error handling stay identical.
+    """
     if not OPENROUTER_API_KEY:
         yield {"type": "token", "chunk": "(오프라인 모드: LLM 키가 설정되지 않아 답변을 생성할 수 없습니다.)"}
         return
@@ -219,7 +258,7 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
         "HTTP-Referer": "https://github.com/google-antigravity/nps-black-litterman",
         "X-Title": "NPS Black-Litterman Platform",
     }
-    payload = {"model": REASONING_MODEL, "messages": messages, "stream": True, "temperature": 0.4}
+    payload = {"model": config.REASONING_MODEL, "messages": messages, "stream": True, "temperature": temperature}
 
     full = ""
     in_think = False
@@ -231,8 +270,13 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
             ) as response:
                 if response.status_code != 200:
                     body = await response.aread()
-                    logger.error("chat_with_persona_stream " + str(response.status_code) + ": " + str(body[:300]))
-                    yield {"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.)"}
+                    logger.error("_stream_answer " + str(response.status_code) + ": " + str(body[:300]))
+                    if response.status_code == 429:
+                        msg = ("(지금은 무료 AI 사용량 한도를 초과했습니다 — OpenRouter 무료 등급의 "
+                               "일일 한도에 도달했어요. 잠시 후(한도 초기화 시) 다시 시도하거나 크레딧을 추가해 주세요.)")
+                    else:
+                        msg = "(답변 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.)"
+                    yield {"type": "token", "chunk": msg}
                     return
                 async for raw_line in response.aiter_lines():
                     if not raw_line.startswith("data: "):
@@ -273,5 +317,137 @@ async def chat_with_persona_stream(persona, message, history=None, context=None)
                             in_think = False
                             last = end_idx + 8
     except Exception as e:
-        logger.error("chat_with_persona_stream error: " + str(e))
+        logger.error("_stream_answer error: " + str(e))
         yield {"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다.)"}
+
+
+def _cur(macro, key):
+    """Return (current, change_1d) for a macro indicator, or (None, None)."""
+    d = macro.get(key) if macro else None
+    if isinstance(d, dict):
+        return d.get("current"), d.get("change_1d")
+    return None, None
+
+
+def build_daily_brief_text(macro):
+    """
+    Build Jerry's daily macro brief deterministically from our own indicators.
+    Because the text is assembled in Python — not by an LLM — the tone (polite
+    '~입니다/합니다'), the labeled blank-line blocks, and above all the numbers are
+    guaranteed: every figure is copied straight from the macro snapshot, so the
+    brief cannot invent or web-source a value. Blocks are skipped when their data
+    is missing rather than fabricated.
+    """
+    if not macro or not any(isinstance(v, dict) and "current" in v for v in macro.values()):
+        return ("죄송합니다. 지금은 매크로 수치를 불러오지 못했습니다. 잠시 후 다시 시도해 주시면 "
+                "오늘의 브리핑을 준비하겠습니다.")
+
+    blocks = []
+
+    # ① 레짐
+    regime = macro.get("market_regime", "NORMAL")
+    regime_kr = macro.get("regime_kr") or "정상 시장 국면"
+    regime_note = {
+        "CRISIS": "위험 회피가 우선인 국면입니다",
+        "ELEVATED_RISK": "리스크 관리에 무게를 두어야 하는 국면입니다",
+        "LOW_VOL": "변동성이 낮아 비교적 안정적인 국면입니다",
+        "NORMAL": "특별한 스트레스 신호는 보이지 않습니다",
+    }.get(regime, "특별한 스트레스 신호는 보이지 않습니다")
+    blocks.append(f"레짐 · 오늘 시장은 {regime_kr}이며, {regime_note}.")
+
+    # ② 금리
+    us3m, _ = _cur(macro, "US3M")
+    us10y, _ = _cur(macro, "US10Y")
+    spread, _ = _cur(macro, "YIELD_SPREAD")
+    if us3m is not None and us10y is not None:
+        line = f"금리 · 미국 3개월물은 {us3m:.2f}%, 10년물은 {us10y:.2f}%입니다"
+        if spread is not None:
+            if spread < 0:
+                shape = "장단기 금리가 역전되어 경기 둔화 우려를 반영합니다"
+            elif spread < 0.5:
+                shape = "장단기 스프레드가 좁아 곡선이 완만합니다"
+            else:
+                shape = "곡선이 정상적으로 우상향하고 있습니다"
+            line += f". 10Y-3M 스프레드는 {spread:.2f}%p로, {shape}"
+        blocks.append(line + ".")
+
+    # ③ 달러·환율
+    dxy, _ = _cur(macro, "DXY")
+    krw, krw1 = _cur(macro, "USD_KRW")
+    if dxy is not None or krw is not None:
+        parts = []
+        if dxy is not None:
+            parts.append(f"달러인덱스는 {dxy:,.2f}")
+        if krw is not None:
+            parts.append(f"원/달러 환율은 {krw:,.1f}원")
+        line = "달러·환율 · " + ", ".join(parts) + "입니다"
+        if krw1 is not None:
+            tone = "약세" if krw1 > 0 else "강세" if krw1 < 0 else "보합"
+            line += f". 원화는 전일 대비 소폭 {tone}({krw1:+.2f}%)입니다"
+        blocks.append(line + ".")
+
+    # ④ 주식
+    kospi, k1 = _cur(macro, "KOSPI")
+    spy, s1 = _cur(macro, "SPY")
+    qqq, q1 = _cur(macro, "QQQ")
+    if kospi is not None or spy is not None:
+        parts = []
+        if kospi is not None:
+            parts.append(f"코스피는 {kospi:,.1f}" + (f"(전일 {k1:+.2f}%)" if k1 is not None else ""))
+        us = []
+        if spy is not None:
+            us.append(f"SPY {spy:,.2f}" + (f"({s1:+.2f}%)" if s1 is not None else ""))
+        if qqq is not None:
+            us.append(f"QQQ {qqq:,.2f}" + (f"({q1:+.2f}%)" if q1 is not None else ""))
+        if us:
+            parts.append("미국은 " + "·".join(us))
+        line = "주식 · " + ", ".join(parts) + "입니다"
+        if k1 is not None and s1 is not None:
+            line += ". 국내 증시는 미국 대비 " + ("상대적으로 부진합니다" if k1 < s1 else "견조한 흐름입니다")
+        blocks.append(line + ".")
+
+    # ⑤ 원자재·변동성
+    vix, _ = _cur(macro, "VIX")
+    move, _ = _cur(macro, "MOVE")
+    gold, _ = _cur(macro, "GOLD")
+    wti, _ = _cur(macro, "WTI")
+    parts = []
+    if vix is not None:
+        parts.append(f"VIX는 {vix:.2f}")
+    if move is not None:
+        parts.append(f"MOVE는 {move:.1f}")
+    if gold is not None:
+        parts.append(f"금은 {gold:,.1f}")
+    if wti is not None:
+        parts.append(f"WTI 유가는 {wti:,.2f}")
+    if parts:
+        line = "원자재·변동성 · " + ", ".join(parts) + "입니다"
+        if vix is not None:
+            line += ". " + ("주식 변동성은 낮은 편입니다" if vix < 20 else "주식 변동성이 높아 경계가 필요합니다")
+        blocks.append(line + ".")
+
+    # ⑥ 하우스 성향
+    lean = {
+        "CRISIS": "위험자산 비중을 방어적으로 축소하는 것을 우선합니다",
+        "ELEVATED_RISK": "위험자산은 신중하고 방어적으로 접근합니다",
+        "LOW_VOL": "위험자산에 대해 중립에서 소폭 선호이며, 선택적 비중 확대가 가능합니다",
+        "NORMAL": "위험자산에 대해 중립적이며, 선택적 비중 확대가 가능합니다",
+    }.get(regime, "위험자산에 대해 중립적입니다")
+    blocks.append(f"하우스 성향 · {lean}.")
+
+    blocks.append("이어서 무엇을 도와드릴까요? 아래에서 골라 주시면 바로 도와드리겠습니다.")
+    return "\n\n".join(blocks)
+
+
+async def generate_daily_brief_stream(macro_context):
+    """
+    Stream Jerry's daily macro brief. The text is built deterministically by
+    build_daily_brief_text (guaranteed polite tone / block formatting / real
+    numbers only), then emitted in small chunks so the UI keeps its live 'typing'
+    feel. Yields {"type": "token", "chunk": "..."} events.
+    """
+    text = build_daily_brief_text(macro_context)
+    step = 3
+    for i in range(0, len(text), step):
+        yield {"type": "token", "chunk": text[i:i + step]}
+        await asyncio.sleep(0.012)

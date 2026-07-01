@@ -11,17 +11,31 @@
  * Styles are copied verbatim from the .dc.html inline styles (colors, sizes, spacing, radii).
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { 
-  TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation
+import {
+  TrendingUp, Newspaper, Cpu, Play, ChevronRight, Info, FileText, CheckCircle2, BookOpen, Navigation, Settings, Check, AlertTriangle
 } from "lucide-react";
+import { EtacollaLogo } from "./EtacollaLogo";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "http://localhost:4500";
+
+// Format a UTC ISO timestamp (e.g. the AI's analysis-release time) as Korea Standard Time.
+// Returns "" for missing/unparseable input so the caller can fall back gracefully.
+function fmtKST(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {} as Record<string, string>);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} KST`;
+}
 
 // Regime → [short KR label, accent color], and the regime-scaled risk-aversion λ
 // (mirrors backend _regime_lambda_multiplier in main.py).
 const REGIME_MAP: Record<string, [string, string]> = {
-  CRISIS: ["위기", "#EF4444"], ELEVATED_RISK: ["위험 고조", "#FBBF24"],
-  NORMAL: ["정상", "#9a9a9a"], LOW_VOL: ["안정", "#34D399"],
+  CRISIS: ["위기", "#ff5000"], ELEVATED_RISK: ["위험 고조", "#FBBF24"],
+  NORMAL: ["정상", "#9a9a9a"], LOW_VOL: ["안정", "#00C805"],
 };
 const REGIME_LAMBDA: Record<string, string> = { CRISIS: "1.6×", ELEVATED_RISK: "1.25×", NORMAL: "1.0×", LOW_VOL: "0.9×" };
 
@@ -38,8 +52,8 @@ const C = {
   card: "#0a0a0a", card2: "#0c0c0c", chip: "#0b0b0b",
   b1: "#161616", b2: "#1c1c1c", b3: "#242424", b4: "#2a2a2a", b5: "#1e1e1e", b6: "#181818",
   white: "#fff", t1: "#d2d2d2", t2: "#cfcfcf", t3: "#9a9a9a", t4: "#6a6a6a", t5: "#5a5a5a", t6: "#555",
-  violet: "#A78BFA", green: "#34D399", green2: "#6EE7B7", blue: "#3B82F6",
-  amber: "#FBBF24", red: "#EF4444", up: "#22C55E", cyan: "#22D3EE", redL: "#FCA5A5",
+  violet: "#00C805", green: "#00C805", green2: "#21e000", blue: "#3B82F6",
+  amber: "#FBBF24", red: "#ff5000", up: "#00C805", cyan: "#22D3EE", redL: "#ff9166",
 };
 const FA = "'Archivo',sans-serif";
 const FP = "'Pretendard',sans-serif";
@@ -47,12 +61,228 @@ const FP = "'Pretendard',sans-serif";
 // Column alignment is preserved via fontVariantNumeric:"tabular-nums" on the root.
 const FM = FP;
 
+// ── Changelog ───────────────────────────────────────────────────────────────
+// Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
+// To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
+// move `current: true` to the new entry. This is the single source of truth.
+const APP_VERSION = "0.8.5";
+type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
+const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.5",
+    date: "2026-07-02",
+    title: "매크로 탭 새로고침 기능 추가",
+    current: true,
+    items: [
+      "매크로 탭 헤더에 '↻ 매크로 새로고침' 버튼과 '마지막 업데이트' 시각 추가 — 이전에는 페이지 로드 시 한 번만 지표를 가져와 값이 오래돼도 새 데이터를 보려면 새로고침(F5)해야 했음",
+      "백엔드는 이미 지원하던 GET /macro-data?refresh=true(캐시 우회, 실시간 재조회)를 프론트에서 처음으로 연결",
+      "새로고침 실패 시(백엔드 연결 불가 등) 조용히 넘어가지 않고 오류 배너로 표시",
+    ],
+  },
+  {
+    version: "0.8.4",
+    date: "2026-07-01",
+    title: "뉴스 디제스트 저장 실패 시 정직하게 실패 표시 (production time 버그 수정)",
+    items: [
+      "뉴스 새로고침이 DB 저장에 실패해도(동시 요청으로 인한 'database is locked') '새 기사 N건 반영'이라고 거짓 성공을 보고하던 문제 수정 — 이제 저장이 실제로 실패하면 오류를 표시하고, 카드의 '분석 발행 시각'은 실제로 저장된 순간만 반영",
+      "SQLite를 WAL 모드로 전환 + 잠금 대기시간 30초로 확장 — 여러 요청이 동시에 쓰기를 시도해도 잠금 충돌로 조용히 저장이 취소되는 일을 방지",
+    ],
+  },
+  {
+    version: "0.8.3",
+    date: "2026-07-01",
+    title: "생성된 리포트 삭제 기능",
+    items: [
+      "리포트 카드에 삭제(✕) 버튼 추가 — 확인 팝업 후 삭제, DB에서도 영구 삭제(/simulations/{id} DELETE)",
+    ],
+  },
+  {
+    version: "0.8.2",
+    date: "2026-07-01",
+    title: "마켓 인텔리전스 카드 3열 레이아웃",
+    items: [
+      "마켓 인텔리전스(뉴스·리서치) 카드 그리드를 2열 → 3열로 변경 — 스크롤을 덜 하고 더 많은 카드를 한눈에 확인",
+    ],
+  },
+  {
+    version: "0.8.1",
+    date: "2026-07-01",
+    title: "새 디제스트 카드 강조 스타일 완화",
+    items: [
+      "마켓 인텔리전스 카드의 'NEW' 표시를 초록 테두리(전체 보더 + 좌측 3px 강조선)에서 배지 하나로 단순화 — 카드 전체를 감싸던 초록 아웃라인이 과하다는 피드백 반영",
+    ],
+  },
+  {
+    version: "0.8.0",
+    date: "2026-07-01",
+    title: "프론티어·리스크 탭 전면 개편 · 리포트 열람 시 데이터 불일치 수정",
+    items: [
+      "프론티어 탭: 저활용 차트 3개 → 인터랙티브 효율적 프론티어 1개로 개편 — 축 눈금 추가, 점 클릭 시 해당 지점의 실제 자산배분 확인 가능(그동안 버려지던 프론티어 배분 데이터 활용), 최소분산·최대샤프 지점 표시",
+      "리스크 탭: '추후 연결' 플레이스홀더였던 자리를 실제 몬테카를로 수익률 분포(VaR·CVaR·평균 기준선 포함)와 역사적 위기 시나리오(코로나19·GFC·2022 금리인상 등 5종, 현재 포트폴리오 기준 손실 추정)로 완성 — 백엔드가 이미 계산해 두고도 화면에 쓰이지 않던 데이터를 연결",
+      "배분 비교(벤치마크 vs 최적화)와 BL 기대수익률 산출 근거를 나란히 배치 — 서로 다른 지표(비중 vs 기대수익률)임을 한눈에 알 수 있도록",
+      "배분/리스크/프론티어 탭이 리포트 히스토리에서 연 '지난 리포트'를 볼 때, 최신 실행이 아닌 그 리포트 자체의 데이터(뷰·출처 포함)를 정확히 표시하도록 수정 — 이전에는 지난 리포트를 열어도 최신 실행 데이터가 표시되어 '뷰 근거'가 실제 입력한 출처와 다르게 보이는 문제가 있었음",
+      "배분 비교 그래프의 호버 툴팁이 항상 숨겨진 채였던 CSS 버그 수정 — 벤치마크·최적화 수치와 차이가 정상적으로 표시됨",
+    ],
+  },
+  {
+    version: "0.7.4",
+    date: "2026-07-01",
+    title: "대시보드 Q&A 5초 무응답 시 Ben/Jerry 선택지 자동 제안",
+    items: [
+      "'대시보드 수치가 궁금하신가요?'로 진입한 뒤 5초간 아무 질문도 하지 않으면, Ben에게 계속 묻거나 Jerry에게 물어볼 수 있는 선택지를 자동으로 보여줌 — 빈 입력창 앞에서 다음에 뭘 해야 할지 몰라 멈추는 상황 방지",
+    ],
+  },
+  {
+    version: "0.7.3",
+    date: "2026-07-01",
+    title: "대시보드 Q&A 막다른 길 해소 · Jerry 리서치 실행 버튼 · 대화가 항상 프로세스로 안내",
+    items: [
+      "'대시보드 수치가 궁금하신가요?' 이후 막혀있던 흐름 수정 — Ben/Jerry가 답한 뒤 계속 질문하거나(Ben↔Jerry 선택) 다음 단계로 진행할 수 있는 선택지 재제공",
+      "Jerry의 '매크로 심층 리서치'가 이제 채팅 내 실행 버튼(매크로 리서치 수집 및 논거구축 실행)으로 동작 — 무엇을 할지 먼저 설명하고, 버튼 클릭 시 수집→논거구축을 실제로 실행, 완료 후 요약 보고",
+      "Jerry 리서치 완료 후, Ben의 뉴스·기사 디제스트를 아직 쓰지 않았다면 이를 제안하고 '내 자료 첨부'(보유 자산 업로드) 기능도 함께 안내",
+      "데스크 챗의 모든 답변이 우리 데이터·근거로 정확히 답한 뒤, 상황에 맞게 다음 단계(다른 페르소나에게 묻기, 근거 첨부, 최적화 실행, 결과·리포트 확인 등)로 자연스럽게 안내",
+    ],
+  },
+  {
+    version: "0.7.2",
+    date: "2026-07-01",
+    title: "상충되는 근거 처리 개선 — 뷰 파싱이 정직해짐",
+    items: [
+      "뉴스·리서치 출처가 서로 반대 방향을 가리킬 때, 한쪽만 골라 인용하던 문제 수정",
+      "뷰의 '논거(thesis)'가 상충되는 신호를 명시적으로 인정하고, 어느 쪽을 왜 더 무겁게 봤는지 설명",
+      "상충 신호가 있으면 확신도(confidence)를 서버에서 강제로 낮춤(최대 0.55) — 모델의 자체 신고에만 의존하지 않음",
+      "Jerry의 PM 메모가 상충 신호를 핵심 리스크(key_risks_considered)로 명시",
+      "리포트 '포지셔닝 논리' 표에 ⚠ 상충 신호 캡션 추가 — 근거가 만장일치가 아니었을 때 숨기지 않고 표시",
+    ],
+  },
+  {
+    version: "0.7.1",
+    date: "2026-07-01",
+    title: "새 대화 완전 초기화 · 대화 순서 고정",
+    items: [
+      "「새 대화」가 이전 실행의 뷰·추론 트레이스·리포트를 완전히 초기화 — 하드코딩된 것처럼 남아있던 이전 뷰 문구 제거",
+      "추론 트레이스·PM 완료 메시지가 실행 시점에 맞춰 대화 순서대로 배치 — 리포트 완성 후 던진 질문이 항상 맨 아래에 표시(중간 삽입 문제 수정)",
+    ],
+  },
+  {
+    version: "0.7.0",
+    date: "2026-07-01",
+    title: "리포트 정합성 · 출처 정독 · 실행 설정 반영",
+    items: [
+      "리포트를 결과 탭 맨 앞으로 이동 · 최적화 실행 시 리포트 탭으로 전환해 생성 로딩을 바로 확인",
+      "리포트 제목을 서술형 요약으로 변경(기존 부제 → 제목)",
+      "리포트에 실제 선택한 최적화 방식·이탈 한도 δ를 표시(하드코딩 δ 5% 제거)",
+      "리포트 '사용된 출처' 섹션이 분석에 인용된 모든 출처를 표시",
+      "PM 메모가 원문 뉴스·매크로 출처를 모두 정독하고 근거로 인용하도록 강화",
+    ],
+  },
+  {
+    version: "0.6.0",
+    date: "2026-07-01",
+    title: "리포트 히스토리 · 결과 둘러보기 · 실행 브리지 확대",
+    items: [
+      "리포트 탭을 생성된 리포트 목록(4열 카드 그리드)으로 개편 — 카드 선택 시 해당 리포트 표시, 생성 중에는 로딩 카드",
+      "지난 리포트를 DB(/simulations)에서 불러와 새로고침 후에도 유지",
+      "최적화 완료 후 '결과 둘러보기'(배분·리스크·프론티어) 안내와 PM 리포트 열기 (Stage D)",
+      "뷰→실행 브리지 진입점 확대: 채팅으로 뷰를 남기거나 특정 디제스트를 물어본 뒤에도 실행 브리지 표시",
+    ],
+  },
+  {
+    version: "0.5.0",
+    date: "2026-07-01",
+    title: "실행 설정 · 첨부 정리 · 완료 타이밍",
+    items: [
+      "최적화 실행 전 최적화 방식(앙상블·MVO·리스크패리티·HRP)과 이탈 한도 δ(±3/5/10%p)를 직접 선택",
+      "Chris의 완료 메시지를 최적화가 실제로 끝난 뒤에만 표시 (실행 중 조기 노출 수정)",
+      "첨부 자료를 '첨부 N건' 접이식 요약으로 정리 — 세로로 쌓여 공간을 잡아먹던 문제 해결",
+    ],
+  },
+  {
+    version: "0.4.0",
+    date: "2026-07-01",
+    title: "뷰→실행 브리지 (리포트로 가는 길)",
+    items: [
+      "디제스트 반영 후 '뷰 정하기' 단계로 연결 — 직접 뷰 입력 / 하우스 뷰(리서치) 채택 / 뷰 없이 기준 비중",
+      "'이 뷰로 최적화 실행' 버튼으로 Black-Litterman 최적화를 바로 실행 → 배분·리스크·프론티어·PM 리포트 생성",
+      "첨부된 디제스트·고려사항이 최적화 뷰로 반영되고, PM 리포트가 Ben(뉴스)·Jerry(매크로) 근거를 종합",
+    ],
+  },
+  {
+    version: "0.3.1",
+    date: "2026-07-01",
+    title: "데스크 챗 한국어 고정",
+    items: [
+      "데스크 챗 답변이 문장 중간에 일본어 등 다른 언어로 바뀌던 문제 수정 — 한국어(한글) 전용 규칙 강화 (고유명사·약어는 원문 허용)",
+    ],
+  },
+  {
+    version: "0.3.0",
+    date: "2026-07-01",
+    title: "새 대화 · Ben 디제스트 후속 흐름",
+    items: [
+      "「새 대화」 버튼으로 대화를 초기화하고 온보딩(Chris→Jerry 브리핑)을 처음부터 재생",
+      "채팅 스레드를 chatMsgs로 일원화(하드코딩 Chris 인사 제거) — 인사 중복 해소",
+      "Ben 디제스트 완료 후 후속 선택지 제공: 디제스트를 대화에 반영(체크리스트 선택) / 특정 디제스트 자세히 알아보기",
+      "특정 디제스트 선택 시 해당 자료를 첨부하고 Ben이 핵심·배분 함의를 설명(실시간 근거 기반)",
+      "Ben에게 매크로 컨텍스트를 제공해 디제스트·대시보드 질문에 함께 답변",
+      "디제스트 진행 상태를 한국어 단계 라벨로 표기",
+    ],
+  },
+  {
+    version: "0.2.0",
+    date: "2026-07-01",
+    title: "데스크 온보딩 플로우",
+    items: [
+      "접속 시 온보딩: Chris 인사 → 매크로 탭 자동 전환 → Jerry의 데일리 매크로 브리핑",
+      "Jerry 브리핑을 우리 데이터로만 결정적으로 생성(웹검색·수치 창작 없음) · 정중한 존댓말 · 블록 가독성",
+      "브리핑 후 3개 핸드오프 선택지(Ben 디제스트 / Jerry 심층 리서치 / 대시보드 수치 질문)",
+      "Ben 디제스트 버튼이 실제 뉴스 새로고침 파이프라인을 실행 · 진행 단계 미러링 'thinking' 애니메이션 · 완료 후 요약",
+      "Ben에게 매크로 지표 컨텍스트 제공(대시보드 수치 설명 가능)",
+      "백엔드 /desk/daily-brief 엔드포인트 · 스트리밍 코어(_stream_answer) 공용화",
+    ],
+  },
+  {
+    version: "0.1.0",
+    date: "2026-07-01",
+    title: "첫 태깅 빌드",
+    items: [
+      "Black-Litterman 자산배분 엔진 · 5개 자산군(국내·해외 주식, 국내·해외 채권, 대체)",
+      "마켓 인텔리전스 피드 + URL·PDF 리서치 인제스트",
+      "리서치 파이프라인 → House View(테제) 생성·신뢰도 보정",
+      "Chris·Jerry·Ben 데스크 챗 (페르소나 + 의도 분류 + 스트리밍)",
+      "데이터 클래스 기반 DB 리셋 도구(db_admin: ephemeral·user·all)",
+      "모델 라우팅을 Nemotron 3 Super로 이전 (제거된 owl-alpha 대응)",
+      "프론트엔드 :4000 / 백엔드 :4500 게이트웨이 정리",
+    ],
+  },
+];
+
 // The three desk personas you can address in the left chat. `key` is sent to
-// the backend /chat endpoint; the rest drive avatar colour + name/role labels.
-const PERSONA_META: Record<"chris" | "jerry" | "ben", { name: string; role: string; color: string; bg?: string; border?: string }> = {
-  chris: { name: "Chris", role: "PM · 최고투자전략가", color: C.white },
-  jerry: { name: "Jerry", role: "선임 PM · 매크로 데스크", color: C.amber },
-  ben: { name: "Ben", role: "마켓 인텔리전스 애널리스트", color: C.cyan, bg: "rgba(34,211,238,.12)", border: "rgba(34,211,238,.35)" },
+// the backend /chat endpoint; the rest drive avatar colour + name/role labels and short info.
+const PERSONA_META: Record<"chris" | "jerry" | "ben", { name: string; role: string; color: string; bg?: string; border?: string; desc: string; avatar: string }> = {
+  chris: {
+    name: "Chris",
+    role: "PM · 최고투자전략가",
+    color: C.white,
+    desc: "이 데스크의 최고투자전략가(PM)입니다. Ben의 분석과 Jerry의 매크로 의견을 수렴하여 최종 자산배분을 결정하고 실행합니다.",
+    avatar: "/chris.jpg"
+  },
+  jerry: {
+    name: "Jerry",
+    role: "선임 PM · 매크로 데스크",
+    color: C.amber,
+    desc: "자산배분 총괄 선임 PM입니다. 매크로 데스크를 담당하며, 주요 리스크 요인과 하우스 뷰(Bull/Bear 논거)를 검증하고 제안합니다.",
+    avatar: "/jerry.jpg"
+  },
+  ben: {
+    name: "Ben",
+    role: "마켓 인텔리전스 애널리스트",
+    color: C.cyan,
+    bg: "rgba(34,211,238,.12)",
+    border: "rgba(34,211,238,.35)",
+    desc: "마켓 인텔리전스 AI 애널리스트입니다. 수집된 시장 뉴스, 리서치 리포트, 기사를 분석하고 요약하여 자산배분 논거를 도출합니다.",
+    avatar: "/ben.jpg"
+  },
 };
 
 const TICKER = [
@@ -69,8 +299,8 @@ const TICKER = [
 // optimization outputs (results the desk produces from your view).
 const TAB_GROUPS: { label: string; tabs: string[] }[] = [
   { label: "입력", tabs: ["매크로", "인텔리전스", "리서치"] },
-  { label: "결과", tabs: ["배분", "리스크", "프론티어", "리포트"] },
-  { label: "시스템", tabs: ["가이드"] },
+  { label: "결과", tabs: ["리포트", "배분", "리스크", "프론티어"] },
+  { label: "시스템", tabs: ["가이드", "설정"] },
 ];
 
 const REASONING =
@@ -89,24 +319,75 @@ const TRACE_STEPS = [
 
 // allocation rows: [name, color, optW%, deltaPP, prior, post, bardelta]
 const ALLOC = [
-  { name: "해외주식", color: C.violet, w: 39.5, d: 4.8, bench: 34.7 },
-  { name: "국내주식", color: C.blue, w: 17.2, d: -3.6, bench: 20.8 },
-  { name: "국내채권", color: C.green, w: 24.5, d: 1.4, bench: 23.1 },
-  { name: "해외채권", color: C.green2, w: 9.1, d: 1.7, bench: 7.4 },
-  { name: "대체투자", color: C.amber, w: 9.7, d: -4.3, bench: 14.0 },
+  { name: "해외주식", color: "#A855F7", w: 39.5, d: 4.8, bench: 34.7 },
+  { name: "국내주식", color: "#3B82F6", w: 17.2, d: -3.6, bench: 20.8 },
+  { name: "국내채권", color: "#2DD4BF", w: 24.5, d: 1.4, bench: 23.1 },
+  { name: "해외채권", color: "#FB923C", w: 9.1, d: 1.7, bench: 7.4 },
+  { name: "대체투자", color: "#FACC15", w: 9.7, d: -4.3, bench: 14.0 },
 ];
 
 const ATTRIB = [
-  { name: "해외주식", color: C.violet, prior: "7.90%", post: "9.18%", delta: "+1.28", dc: C.up, why: "상대 우위 뷰 · 신뢰도 68%", src: "엔비디아 실적 서프라이즈 · Reuters ↗", tag: "뉴스", tagDark: true },
-  { name: "국내주식", color: C.blue, prior: "6.40%", post: "5.72%", delta: "−0.68", dc: C.red, why: "상대 열위 (해외주식 반대편)", src: "원/달러 1,380원 돌파 · 연합인포맥스 ↗", tag: "뉴스", tagDark: true },
-  { name: "국내채권", color: C.green, prior: "3.30%", post: "3.71%", delta: "+0.41", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
-  { name: "해외채권", color: C.green2, prior: "3.60%", post: "3.97%", delta: "+0.37", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
-  { name: "대체투자", color: C.amber, prior: "5.10%", post: "5.10%", delta: "—", dc: C.t6, why: "시장 균형 유지 (적용된 뷰 없음)", src: "", tag: "", tagDark: false },
+  { name: "해외주식", color: "#A855F7", prior: "7.90%", post: "9.18%", delta: "+1.28", dc: C.up, why: "상대 우위 뷰 · 신뢰도 68%", src: "엔비디아 실적 서프라이즈 · Reuters ↗", tag: "뉴스", tagDark: true },
+  { name: "국내주식", color: "#3B82F6", prior: "6.40%", post: "5.72%", delta: "−0.68", dc: C.red, why: "상대 열위 (해외주식 반대편)", src: "원/달러 1,380원 돌파 · 연합인포맥스 ↗", tag: "뉴스", tagDark: true },
+  { name: "국내채권", color: "#2DD4BF", prior: "3.30%", post: "3.71%", delta: "+0.41", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
+  { name: "해외채권", color: "#FB923C", prior: "3.60%", post: "3.97%", delta: "+0.37", dc: C.up, why: "금리 하락 → 채권 강세 · 신뢰도 55%", src: "미 연준 2026 금리 인하 · NPS 하우스뷰 ↗", tag: "리서치", tagDark: false },
+  { name: "대체투자", color: "#FACC15", prior: "5.10%", post: "5.10%", delta: "—", dc: C.t6, why: "시장 균형 유지 (적용된 뷰 없음)", src: "", tag: "", tagDark: false },
 ];
 
 const RISK = [
   ["기대수익률", "6.84%", C.white], ["변동성", "9.12%", C.white], ["샤프 비율", "0.61", C.white],
   ["95% VaR", "-13.7%", C.redL], ["95% CVaR", "-18.2%", C.redL], ["최대낙폭", "-22.4%", C.redL],
+];
+
+// Illustrative pre-run frontier: same shape as real efficient_frontier points
+// (return/volatility/weights), fed through the identical computeFrontierChart
+// scaling logic used for real data — no separately hand-tuned mock SVG path.
+const FRONTIER_MOCK_POINTS = [
+  { return: 0.041, volatility: 0.052, sharpe: 0.12, weights: { KR_BOND: 0.45, GLOBAL_BOND: 0.30, KR_STOCK: 0.10, GLOBAL_STOCK: 0.10, ALTERNATIVE: 0.05 } },
+  { return: 0.061, volatility: 0.081, sharpe: 0.32, weights: { KR_BOND: 0.28, GLOBAL_BOND: 0.18, KR_STOCK: 0.17, GLOBAL_STOCK: 0.29, ALTERNATIVE: 0.08 } },
+  { return: 0.0742, volatility: 0.1074, sharpe: 0.37, weights: { KR_BOND: 0.15, GLOBAL_BOND: 0.10, KR_STOCK: 0.20, GLOBAL_STOCK: 0.42, ALTERNATIVE: 0.13 } },
+  { return: 0.081, volatility: 0.132, sharpe: 0.35, weights: { KR_BOND: 0.08, GLOBAL_BOND: 0.05, KR_STOCK: 0.22, GLOBAL_STOCK: 0.50, ALTERNATIVE: 0.15 } },
+];
+const FRONTIER_MOCK_BM = { return: 0.048, volatility: 0.084 };
+const FRONTIER_MOCK_OP = { return: 0.0684, volatility: 0.0912 }; // matches the RISK mock exactly
+// Matches ALLOC's mock weights exactly, so the default (unselected) weight panel
+// agrees with the 배분 tab's own mock allocation.
+const FRONTIER_MOCK_OP_WEIGHTS: Record<string, number> = { GLOBAL_STOCK: 0.395, KR_STOCK: 0.172, KR_BOND: 0.245, GLOBAL_BOND: 0.091, ALTERNATIVE: 0.097 };
+
+// Illustrative Monte Carlo return distribution consistent with the RISK mock
+// numbers above (mean 6.84% / vol 9.12% / VaR -13.7% / CVaR -18.2%) — a plain
+// Gaussian shape is only for illustration pre-run, not a statistical claim.
+const HISTO_MOCK = (() => {
+  const mean = 0.0684, vol = 0.0912, var95 = -0.137, cvar95 = -0.182;
+  const bins = Array.from({ length: 40 }, (_, i) => {
+    const x = mean - 3 * vol + (i / 39) * 6 * vol;
+    const z = (x - mean) / vol;
+    return { x, y: Math.exp(-0.5 * z * z) };
+  });
+  const xs = bins.map((b) => b.x), ys = bins.map((b) => b.y);
+  return { bins, xMin: Math.min(...xs), xMax: Math.max(...xs), yMax: Math.max(...ys), var95, cvar95, mean };
+})();
+
+// Illustrative historical stress scenarios, using the real scenario names from
+// backend/app/stress_test.py. Contribution numbers are hand-computed as
+// FRONTIER_MOCK_OP_WEIGHTS × each scenario's real shock vector, so they sum
+// exactly to portfolioReturn — same relationship the real data has.
+const STRESS_MOCK = [
+  { nameKr: "코로나19 팬데믹 폭락 (2020.03)", portfolioReturn: -0.2140, contrib: [
+    { n: "해외주식", contribution: -0.1343 }, { n: "국내주식", contribution: -0.0602 }, { n: "국내채권", contribution: 0.0049 }, { n: "해외채권", contribution: 0.0027 }, { n: "대체투자", contribution: -0.0272 },
+  ]},
+  { nameKr: "글로벌 금융위기 (2008)", portfolioReturn: -0.3022, contrib: [
+    { n: "해외주식", contribution: -0.1975 }, { n: "국내주식", contribution: -0.0946 }, { n: "국내채권", contribution: 0.0196 }, { n: "해외채권", contribution: 0.0091 }, { n: "대체투자", contribution: -0.0388 },
+  ]},
+  { nameKr: "급격한 금리인상 사이클 (2022)", portfolioReturn: -0.1893, contrib: [
+    { n: "해외주식", contribution: -0.0790 }, { n: "국내주식", contribution: -0.0430 }, { n: "국내채권", contribution: -0.0245 }, { n: "해외채권", contribution: -0.0137 }, { n: "대체투자", contribution: -0.0291 },
+  ]},
+  { nameKr: "테이퍼 탠트럼 (2013)", portfolioReturn: -0.0671, contrib: [
+    { n: "해외주식", contribution: -0.0198 }, { n: "국내주식", contribution: -0.0138 }, { n: "국내채권", contribution: -0.0147 }, { n: "해외채권", contribution: -0.0073 }, { n: "대체투자", contribution: -0.0116 },
+  ]},
+  { nameKr: "유럽 재정위기 (2011)", portfolioReturn: -0.1126, contrib: [
+    { n: "해외주식", contribution: -0.0790 }, { n: "국내주식", contribution: -0.0310 }, { n: "국내채권", contribution: 0.0074 }, { n: "해외채권", contribution: 0.0046 }, { n: "대체투자", contribution: -0.0146 },
+  ]},
 ];
 
 export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
@@ -124,19 +405,50 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [collectProgress, setCollectProgress] = useState<{ phase: string; items: string[] } | null>(null);
   const [buildingTheses, setBuildingTheses] = useState(false);
   const [researchMsg, setResearchMsg] = useState("");
+  // Backend connectivity: null = unknown, true = reachable, false = down.
+  // When down we show a banner instead of silently falling back to mock data.
+  const [backendUp, setBackendUp] = useState<boolean | null>(null);
+  const [intelNotice, setIntelNotice] = useState<string>("");
+  const [macroRefreshing, setMacroRefreshing] = useState(false);
+  const [macroUpdatedAt, setMacroUpdatedAt] = useState<Date | null>(null);
+  const [macroNotice, setMacroNotice] = useState<string>("");
 
   useEffect(() => {
+    let reachable = false;
     const getJson = async (path: string) => {
-      try { const r = await fetch(API_BASE + path); if (r.ok) return await r.json(); } catch { /* offline → keep mock */ }
+      try {
+        const r = await fetch(API_BASE + path);
+        if (r.ok) { reachable = true; return await r.json(); }
+      } catch { /* network error → backend unreachable */ }
       return null;
     };
     (async () => {
-      const m = await getJson("/macro-data"); if (m?.data) setMacro(m.data);
+      const m = await getJson("/macro-data"); if (m?.data) { setMacro(m.data); setMacroUpdatedAt(new Date()); }
       const i = await getJson("/market-intelligence"); if (Array.isArray(i?.data)) setIntel(i.data);
       const q = await getJson("/research/queue?limit=12"); if (Array.isArray(q?.data)) setQueue(q.data);
       const t = await getJson("/theses"); if (Array.isArray(t?.data)) setHouseTheses(t.data);
+      const sm = await getJson("/simulations"); if (Array.isArray(sm)) setReports(sm);
+      setBackendUp(reachable);
     })();
   }, []);
+
+  // Manual refresh for the 매크로 tab — re-fetches live indicators from the backend
+  // (bypassing its cache) instead of relying on the initial page-load snapshot.
+  const refreshMacro = async () => {
+    if (macroRefreshing) return;
+    setMacroRefreshing(true);
+    setMacroNotice("");
+    try {
+      const r = await fetch(API_BASE + "/macro-data?refresh=true");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      if (j?.data) { setMacro(j.data); setMacroUpdatedAt(new Date()); }
+      else setMacroNotice("⚠ 새로고침 응답에 데이터가 없습니다.");
+    } catch (e: any) {
+      setBackendUp(false);
+      setMacroNotice(`⚠ 새로고침 실패: 백엔드에 연결할 수 없습니다 (${API_BASE}). 서버가 실행 중인지 확인하세요.`);
+    } finally { setMacroRefreshing(false); }
+  };
 
   const regime: string = macro?.market_regime || "ELEVATED_RISK";
   const [regimeLabel, regimeColor] = REGIME_MAP[regime] || ["—", C.t3];
@@ -168,8 +480,32 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [parsedViews, setParsedViews] = useState<any[]>([]);
   const [liveTrace, setLiveTrace] = useState("");
   const [loadingStep, setLoadingStep] = useState(0);
+  // Anchors the reasoning-trace/completion block at the point in chatMsgs where the
+  // run was fired, so anything the user asks AFTERWARD renders below it, not above
+  // (these artifacts are keyed off `sim`/`running`, not chatMsgs, so without an
+  // anchor they'd stay glued to the very bottom forever). null = no run yet.
+  const [runAnchor, setRunAnchor] = useState<number | null>(null);
   const [attached, setAttached] = useState<any[]>([]);       // intel sources attached to the chat
   const [intelOpen, setIntelOpen] = useState<any | null>(null); // intel item shown in popup
+  // Track which intel items the user has opened, so new/unopened ones can be badged.
+  // Persisted per-browser in localStorage (no per-user backend).
+  const [seenIntel, setSeenIntel] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("etacolla_seen_intel");
+      if (raw) setSeenIntel(new Set(JSON.parse(raw)));
+    } catch { /* ignore corrupt/unavailable storage */ }
+  }, []);
+  const markIntelSeen = (id: string) => {
+    if (!id) return;
+    setSeenIntel((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev); next.add(id);
+      try { localStorage.setItem("etacolla_seen_intel", JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const openIntel = (item: any) => { if (item?.id) markIntelSeen(item.id); setIntelOpen(item); };
   const [refreshingIntel, setRefreshingIntel] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<{ phase: string; items: string[] } | null>(null);
   const [ingesting, setIngesting] = useState(false);
@@ -179,9 +515,38 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // persona = whom you're addressing; chatMsgs = the live thread (multi-turn);
   // considerations = market views captured from chat that fold into the next run.
   const [persona, setPersona] = useState<"chris" | "jerry" | "ben">("chris");
+  const [hoveredPersona, setHoveredPersona] = useState<"chris" | "jerry" | "ben" | null>(null);
   const [chatMsgs, setChatMsgs] = useState<any[]>([]);
   const [considerations, setConsiderations] = useState<any[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
+  // Entry flow: once Jerry's brief finishes we offer three next-step choices.
+  // `entryChoice` (null = still offering) hides the chips once the user picks one
+  // or starts typing their own message.
+  const [briefDone, setBriefDone] = useState(false);
+  const [entryChoice, setEntryChoice] = useState<null | "ben-digest" | "jerry-deepdive" | "ask-ben" | "typed">(null);
+  // The "대시보드 수치가 궁금하신가요?" path used to be a dead end — Ben would answer
+  // once and the user had no way back into the guided flow. This re-shows a small
+  // hand-off after every answer while in that mode (entryChoice === "ask-ben") and no
+  // run has started yet, so the user can keep asking (Ben OR Jerry) or move forward.
+  const [macroQaFollow, setMacroQaFollow] = useState(false);
+  // Ben's post-digest hand-off state machine: hidden → boxes (A/B) → include|ask → hidden.
+  const [benFollow, setBenFollow] = useState<"hidden" | "boxes" | "include" | "ask">("hidden");
+  const [benSelected, setBenSelected] = useState<string[]>([]); // checked digest ids in the include checklist
+  // View → Run bridge (stage B→C): once evidence is gathered, the desk guides the
+  // user to form/confirm a view, then run the optimizer. "form" shows the bridge.
+  const [viewFlow, setViewFlow] = useState<"hidden" | "form">("hidden");
+  // Shows the "매크로 리서치 수집 및 논거구축 실행" action button after Jerry explains
+  // the deep-dive pipeline, until the user clicks it (or it's dismissed by a run).
+  const [jerryResearchPrompt, setJerryResearchPrompt] = useState(false);
+  // Optimization settings the user chooses in the run step (fed to /simulate).
+  const [optimizer, setOptimizer] = useState<"ensemble" | "markowitz" | "risk_parity" | "hrp">("ensemble");
+  const [maxDeviation, setMaxDeviation] = useState(0.05); // δ cap vs NPS benchmark
+  const [attachOpen, setAttachOpen] = useState(false); // attached-sources tray expanded?
+  // Report history: list from /simulations; openReport = the full detail being viewed.
+  const [reports, setReports] = useState<any[]>([]);
+  const [openReport, setOpenReport] = useState<any | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
   const attachSource = (item: any) => { if (item) setAttached((p) => (p.some((a) => a.id === item.id) ? p : [...p, item])); };
@@ -198,6 +563,18 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const r = await fetch(API_BASE + "/market-intelligence/" + encodeURIComponent(id), { method: "DELETE" });
       if (!r.ok) throw new Error("delete failed");
     } catch { setIntel(prev); }
+  };
+
+  // Delete a generated report (confirm first; optimistic, rolls back on failure).
+  const deleteReport = async (id: number) => {
+    if (!window.confirm("이 리포트를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) return;
+    const prev = reports;
+    setReports((p) => p.filter((r: any) => r.id !== id));
+    if (openReport?.simulation_id === id) setOpenReport(null);
+    try {
+      const r = await fetch(API_BASE + "/simulations/" + id, { method: "DELETE" });
+      if (!r.ok) throw new Error("delete failed");
+    } catch { setReports(prev); }
   };
 
   // Delete an individual house thesis
@@ -225,12 +602,24 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   };
 
   // Streaming refresh — live log (reading → selecting → analyzing) instead of blanking.
-  const refreshIntel = async () => {
+  // `onActivity` (optional) receives a coarse Korean stage label as the pipeline
+  // progresses, so callers (e.g. Ben's digest bubble) can animate a "thinking"
+  // status. Returns a summary of what actually happened so the caller can report it.
+  const refreshIntel = async (opts?: { onActivity?: (label: string) => void }) => {
+    let stage = "";
+    const setStage = (label: string) => { if (label && label !== stage) { stage = label; opts?.onActivity?.(label); } };
     setRefreshingIntel(true);
+    setIntelNotice("");
     setRefreshProgress({ phase: "연결 중…", items: [] });
+    setStage("최신 뉴스 소스에 연결하고 있습니다…");
     const items: string[] = [];
+    const analyzed: string[] = []; // titles of freshly-analyzed articles
+    let gotResult = false;   // did the backend send a final result?
+    let newCount = 0;        // how many freshly-analyzed theses were committed
+    let streamErr = "";      // explicit error reported by the backend
     try {
       const res = await fetch(API_BASE + "/market-intelligence/refresh-stream");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!res.body) throw new Error("no stream");
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -245,15 +634,26 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            if (evt.type === "phase") setRefreshProgress({ phase: evt.msg || "", items: [...items] });
-            else if (evt.type === "article_read") { items.push(`📰 ${evt.source} · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "article_selected") { items.push(`✓ 선택됨 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "article_analyzing" && evt.status === "done") { items.push(`⬡ 분석 완료 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "result" && Array.isArray(evt.data)) setIntel(evt.data);
+            if (evt.type === "phase") { setRefreshProgress({ phase: evt.msg || "", items: [...items] }); /* chat status stays Korean via the article stages below */ }
+            else if (evt.type === "article_read") { items.push(`📰 ${evt.source} · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("시장 뉴스를 읽고 있습니다…"); }
+            else if (evt.type === "article_selected") { items.push(`✓ 선택됨 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("관련 기사를 선별하고 있습니다…"); }
+            else if (evt.type === "article_analyzing" && evt.status === "done") { items.push(`⬡ 분석 완료 · ${evt.title}`); if (evt.title) analyzed.push(evt.title); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("선별한 기사를 분석하고 있습니다…"); }
+            else if (evt.type === "error") { streamErr = evt.msg || "백엔드 오류"; }
+            else if (evt.type === "result" && Array.isArray(evt.data)) { gotResult = true; newCount = typeof evt.new_count === "number" ? evt.new_count : -1; setIntel(evt.data); }
           } catch { /* skip malformed */ }
         }
       }
-    } catch { /* ignore */ } finally { setRefreshingIntel(false); setRefreshProgress(null); }
+      // Tell the user what actually happened instead of failing silently.
+      if (streamErr) setIntelNotice(`⚠ 새로고침 중 오류: ${streamErr}`);
+      else if (!gotResult) setIntelNotice("⚠ 새로고침이 완료되지 않았습니다 (백엔드 응답 없음). 백엔드 서버가 실행 중인지 확인하세요.");
+      else if (newCount === 0) setIntelNotice("분석된 새 기사가 없습니다 (모델이 결과를 반환하지 않음). 기존 인텔을 유지합니다.");
+      else if (newCount > 0) setIntelNotice(`✓ 새 기사 ${newCount}건을 분석해 반영했습니다.`);
+      return { ok: gotResult && !streamErr, gotResult, newCount, streamErr, analyzed };
+    } catch (e: any) {
+      setBackendUp(false);
+      setIntelNotice(`⚠ 새로고침 실패: 백엔드에 연결할 수 없습니다 (${API_BASE}). 서버가 실행 중인지 확인하세요.`);
+      return { ok: false, gotResult: false, newCount: 0, streamErr: "연결 실패", analyzed };
+    } finally { setRefreshingIntel(false); setRefreshProgress(null); }
   };
 
   // Analyze a user-supplied link or PDF into a new market-intel thesis.
@@ -304,10 +704,13 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const t = await fetch(API_BASE + "/theses"); if (t.ok) { const j = await t.json(); if (Array.isArray(j?.data)) setHouseTheses(j.data); }
     } catch { /* ignore */ }
   };
-  const runCollect = async () => {
+  const runCollect = async (opts?: { onActivity?: (label: string) => void }) => {
+    const onActivity = typeof opts?.onActivity === "function" ? opts.onActivity : undefined;
     setCollecting(true);
     setCollectProgress({ phase: "연결 중…", items: [] });
+    onActivity?.("FRED 지표·뉴스·리서치 소스에 연결하고 있습니다…");
     const items: string[] = [];
+    let totalInStore = 0, collectedNow = 0, ok = false;
     try {
       const res = await fetch(API_BASE + "/research/collect-stream");
       if (!res.body) throw new Error("no stream");
@@ -324,25 +727,32 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            if (evt.type === "phase") setCollectProgress({ phase: evt.msg || "", items: [...items] });
-            else if (evt.type === "source") { items.push(`⬡ ${evt.name} · ${evt.count}건`); setCollectProgress({ phase: "수집 중…", items: [...items] }); }
-            else if (evt.type === "done") { const s = evt.summary || {}; setResearchMsg(`✓ 수집 완료 — 저장소 ${s.total_in_store ?? 0}건 (이번 ${s.collected_now ?? 0}건)`); }
+            if (evt.type === "phase") { setCollectProgress({ phase: evt.msg || "", items: [...items] }); if (evt.msg) onActivity?.(String(evt.msg)); }
+            else if (evt.type === "source") { items.push(`⬡ ${evt.name} · ${evt.count}건`); setCollectProgress({ phase: "수집 중…", items: [...items] }); onActivity?.(`${evt.name} 자료를 수집하고 있습니다…`); }
+            else if (evt.type === "done") { const s = evt.summary || {}; totalInStore = s.total_in_store ?? 0; collectedNow = s.collected_now ?? 0; ok = true; setResearchMsg(`✓ 수집 완료 — 저장소 ${totalInStore}건 (이번 ${collectedNow}건)`); }
             else if (evt.type === "error") setResearchMsg(`수집 오류: ${evt.msg}`);
           } catch { /* skip */ }
         }
       }
       await refetchResearch();
     } catch { setResearchMsg("수집 중 오류가 발생했습니다."); } finally { setCollecting(false); setCollectProgress(null); }
+    return { ok, totalInStore, collectedNow };
   };
-  const buildTheses = async () => {
+  const buildTheses = async (opts?: { onActivity?: (label: string) => void }) => {
+    const onActivity = typeof opts?.onActivity === "function" ? opts.onActivity : undefined;
     setBuildingTheses(true);
     setResearchMsg("Nemotron Super가 Bull·Bear 논거를 추출하고 하우스 뷰로 통합하는 중… (최대 2분)");
+    onActivity?.("수집한 자료로 Bull·Bear 논거를 추출하고 하우스 뷰로 통합하는 중입니다… (최대 2분)");
+    let count = 0, ok = false;
     try {
       const r = await fetch(API_BASE + "/thesis/build", { method: "POST" });
       const j = await r.json().catch(() => ({}));
-      if (Array.isArray(j?.data) && j.data.length) { setHouseTheses(j.data); setResearchMsg(`✓ ${j.data.length}개의 하우스 뷰를 생성했습니다. 카드를 채팅으로 끌어다 놓으세요.`); }
-      else { await refetchResearch(); setResearchMsg(j.detail || "하우스 뷰 생성에 실패했습니다. 먼저 '수집'을 실행했는지 확인하세요."); }
+      if (Array.isArray(j?.data) && j.data.length) {
+        setHouseTheses(j.data); count = j.data.length; ok = true;
+        setResearchMsg(`✓ ${count}개의 하우스 뷰를 생성했습니다. 카드를 채팅으로 끌어다 놓으세요.`);
+      } else { await refetchResearch(); setResearchMsg(j.detail || "하우스 뷰 생성에 실패했습니다. 먼저 '수집'을 실행했는지 확인하세요."); }
     } catch { setResearchMsg("하우스 뷰 생성 중 오류가 발생했습니다."); } finally { setBuildingTheses(false); }
+    return { ok, count };
   };
   const attachThesis = (t: any) => {
     const key = t.asset || t.asset1;
@@ -355,10 +765,22 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     });
   };
 
+  // Report history helpers.
+  const refetchReports = async () => {
+    try { const r = await fetch(API_BASE + "/simulations"); if (r.ok) { const j = await r.json(); if (Array.isArray(j)) setReports(j); } } catch { /* offline */ }
+  };
+  const openReportDetail = async (id: number) => {
+    if (sim && sim.simulation_id === id) { setOpenReport(sim); return; } // already in memory
+    setReportLoading(true);
+    try { const r = await fetch(API_BASE + "/simulations/" + id); if (r.ok) setOpenReport(await r.json()); } catch { /* offline */ } finally { setReportLoading(false); }
+  };
+
   const runSimulation = async (text?: string) => {
     const vt = (text ?? viewText).trim();
     if ((!vt && attached.length === 0 && considerations.length === 0) || running) return;
     if (vt) setViewText(vt);
+    setRunAnchor(chatMsgs.length); // pin the trace/completion block right after the thread so far
+    setTab("리포트"); setOpenReport(null); // show the report tab (loading card) while it generates
     setRunning(true); setLiveTrace(""); setLoadingStep(0); setParsedViews([]);
     // Fold the live view + any chat-captured considerations + attached intel sources into
     // a single view_text — the /simulate view-parsing prompt cites these directly.
@@ -374,7 +796,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     try {
       const res = await fetch(API_BASE + "/simulate", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ view_text: composed, optimizer: "ensemble", max_deviation: 0.05 }),
+        body: JSON.stringify({ view_text: composed, optimizer, max_deviation: maxDeviation }),
       });
       const reader = res.body?.getReader();
       if (!reader) return;
@@ -399,25 +821,36 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           } catch { /* skip partial line */ }
         }
       }
-    } catch { /* offline → tabs keep mock */ } finally { setRunning(false); }
+    } catch { /* offline → tabs keep mock */ } finally { setRunning(false); refetchReports(); }
   };
 
   // ── Send a chat message to the chosen persona (streams the reply via /chat) ──
   // The backend classifies intent: a market VIEW is captured as a consideration;
   // a RUN command fires the optimizer after the reply; a QUESTION just answers.
-  const sendChat = async () => {
-    const text = draft.trim();
+  // `opts` lets callers send programmatically: `text` overrides the composer,
+  // `persona` overrides who answers, `extraAttach` guarantees a source is in the
+  // grounding context even if its attach state hasn't flushed yet (used by
+  // "ask about a specific digest").
+  const sendChat = async (opts?: { text?: string; persona?: "chris" | "jerry" | "ben"; extraAttach?: any }) => {
+    const text = (opts?.text ?? draft).trim();
     if (!text || chatBusy || running) return;
-    setDraft("");
-    const meta = PERSONA_META[persona];
+    const who = opts?.persona ?? persona;
+    userInteractedRef.current = true; // user took over → suppress any pending auto-brief
+    setEntryChoice((c) => c ?? "typed"); // hide the entry chips once the user acts
+    setBenFollow("hidden"); // and Ben's post-digest hand-off UI
+    if (opts?.text === undefined) setDraft("");
+    const meta = PERSONA_META[who];
     const botId = "b" + Date.now() + Math.random().toString(36).slice(2, 6);
     const history = chatMsgs.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
     setChatMsgs((prev) => [
       ...prev,
       { id: "u" + botId, role: "user", content: text },
-      { id: botId, role: "persona", persona, who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border, content: "", streaming: true },
+      { id: botId, role: "persona", persona: who, who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border, content: "", streaming: true },
     ]);
     setChatBusy(true);
+    const attachedForCtx = opts?.extraAttach
+      ? [opts.extraAttach, ...attached.filter((a) => a.id !== opts.extraAttach.id)]
+      : attached;
     const context = {
       sim: sim
         ? {
@@ -430,14 +863,14 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         : null,
       macro,
       intel: intel.slice(0, 6).map((i: any) => ({ title: i.title })),
-      attached: attached.map((a) => ({ source: a.source, title: a.title, content: a.content, ai_interpretation: a.ai_interpretation })),
+      attached: attachedForCtx.map((a) => ({ source: a.source, title: a.title, content: a.content, ai_interpretation: a.ai_interpretation })),
       considerations: considerations.map((c) => c.text),
     };
     let shouldRun = false;
     try {
       const res = await fetch(API_BASE + "/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona, message: text, history, context }),
+        body: JSON.stringify({ persona: who, message: text, history, context }),
       });
       const reader = res.body?.getReader();
       if (!reader) throw new Error("no stream");
@@ -457,6 +890,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               if (evt.intent === "view") {
                 const label = (evt.summary && evt.summary.trim()) || text.slice(0, 40);
                 setConsiderations((prev) => (prev.some((c) => c.text === text) ? prev : [...prev, { id: "c" + botId, label, text }]));
+                if (!sim && !running) setViewFlow("form"); // a captured view surfaces the run bridge
               } else if (evt.intent === "run") {
                 shouldRun = true;
               }
@@ -479,6 +913,10 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
       setChatBusy(false);
       if (shouldRun) runSimulation();
+      // Re-offer the hand-off once an answer lands in "ask about the dashboard" mode,
+      // so asking Ben/Jerry a macro question isn't a dead end — the user gets a way
+      // back into the guided flow (or to keep asking) after every reply.
+      else if (entryChoice === "ask-ben" && !sim && !running) setMacroQaFollow(true);
     }
   };
 
@@ -486,9 +924,324 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // happens when the user chats a view/"run" or hits 다시 최적화. (Right-panel tabs
   // fall back to their demo/mock data until a real run populates `sim`.)
   const hasRun = !!sim || running || liveTrace.length > 0;
+  // 배분/리스크/프론티어 must reflect whichever report the user is actually looking
+  // at. If a report is open (openReport, e.g. an older one picked from 리포트 탭
+  // history), show ITS data — not the live/latest `sim` — otherwise a user viewing
+  // an old report would see the current run's views/sources ("뷰 근거") instead of
+  // the ones that actually produced that report.
+  const activeSim = openReport || sim;
+
+  // ── Entry flow: Chris welcomes, then Jerry briefs the live macro numbers ─────
+  // Chris's greeting is static (a greeting needs no AI). Jerry's daily brief
+  // streams from /desk/daily-brief, grounded ONLY in the macro indicators we
+  // fetched — no web search, no invented figures. If the user starts chatting
+  // before the brief fires, we suppress it (userInteractedRef).
+  const userInteractedRef = useRef(false);
+  const welcomedRef = useRef(false);
+  const briefedRef = useRef(false);
+  // Tracks whether the user has ever run Ben's real news/article digest pipeline —
+  // used to nudge them toward it if they've gone deep on Jerry's macro side but
+  // never touched the news/asset-upload side.
+  const benEverUsedRef = useRef(false);
+
+  // Seed Chris's greeting (static — a greeting needs no AI). Idempotent.
+  const seedChrisWelcome = () => {
+    const meta = PERSONA_META.chris;
+    setChatMsgs((prev) =>
+      prev.some((m) => m.id === "welcome-chris")
+        ? prev
+        : [...prev, {
+            id: "welcome-chris", role: "persona", persona: "chris",
+            who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+            content: "안녕하세요, 에타콜라 데스크의 최고투자전략가 Chris입니다. 오늘도 함께 자산배분을 점검해 보시죠. 먼저 매크로 데스크의 Jerry가 우리 데이터로 오늘의 시장 숫자를 브리핑해 드리겠습니다.",
+            streaming: false,
+          }]
+    );
+  };
+
+  // Switch to the 매크로 tab and stream Jerry's daily brief (built from exactly
+  // our macro numbers) into a fresh bubble. Reveals the hand-off chips when done.
+  const runJerryBrief = async () => {
+    if (!macro) return;
+    setTab("매크로");
+    const meta = PERSONA_META.jerry;
+    const botId = "brief-jerry-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "jerry",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "", streaming: true,
+    }]);
+    setChatBusy(true);
+    try {
+      const res = await fetch(API_BASE + "/desk/daily-brief", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ macro }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("no stream");
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "token" && evt.chunk) {
+              setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content + evt.chunk } : m)));
+            }
+          } catch { /* skip partial line */ }
+        }
+      }
+    } catch {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(브리핑을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
+    } finally {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
+      setChatBusy(false);
+      setBriefDone(true); // reveal the "what's next?" chips
+    }
+  };
+
+  // Reset the desk conversation and replay onboarding from the top.
+  const startNewChat = () => {
+    if (chatBusy || running) return; // don't reset while a persona/run is actively working
+    setChatMsgs([]);
+    setConsiderations([]);
+    setEntryChoice(null);
+    setBriefDone(false);
+    setBenFollow("hidden");
+    setBenSelected([]);
+    setViewFlow("hidden");
+    setDraft("");
+    // Fully clear the previous run so nothing leaks into the fresh session —
+    // no stale view text, no old reasoning trace, no lingering report/attachments.
+    setSim(null);
+    setViewText("");
+    setParsedViews([]);
+    setLiveTrace("");
+    setLoadingStep(0);
+    setRunAnchor(null);
+    setAttached([]);
+    setAttachOpen(false);
+    setOpenReport(null);
+    userInteractedRef.current = false;
+    welcomedRef.current = true; // we re-seed manually below
+    briefedRef.current = true;
+    seedChrisWelcome();
+    if (macro && backendUp !== false) runJerryBrief();
+  };
+
+  // On entry: Chris greets, then (once macro is in) Jerry briefs. Each fires once;
+  // suppressed if the user starts chatting first (userInteractedRef).
+  useEffect(() => {
+    if (welcomedRef.current || userInteractedRef.current) return;
+    welcomedRef.current = true;
+    seedChrisWelcome();
+  }, []);
+  useEffect(() => {
+    if (briefedRef.current || userInteractedRef.current) return;
+    if (backendUp === false || !macro) return; // backend down / no numbers → skip
+    briefedRef.current = true;
+    runJerryBrief();
+  }, [macro, backendUp]);
+
+  // Append a static in-character message from a persona. Used by the entry-flow
+  // hand-off buttons — deterministic onboarding copy, no LLM call.
+  const pushPersonaMsg = (who: "chris" | "jerry" | "ben", content: string) => {
+    const meta = PERSONA_META[who];
+    setChatMsgs((prev) => [...prev, {
+      id: "sys" + Date.now() + Math.random().toString(36).slice(2, 5),
+      role: "persona", persona: who,
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content, streaming: false,
+    }]);
+  };
+
+  // ── The three post-brief hand-offs Jerry offers ─────────────────────────────
+  // 1) Meet Ben for a market/asset+news digest. This actually TRIGGERS the news
+  //    refresh pipeline: Ben shows a live "thinking" status driven by the real
+  //    collect/analyze stages, then reports a summary of what he found.
+  const benDigestSummary = (s: any) => {
+    if (!s || (!s.gotResult && s.streamErr)) {
+      if (s?.streamErr && s.streamErr !== "연결 실패")
+        return `죄송합니다. 뉴스를 분석하는 중 문제가 발생했습니다 (${s.streamErr}). 잠시 후 다시 시도해 주시면 다시 살펴보겠습니다.`;
+      return "죄송합니다. 지금은 뉴스 서버에 연결하지 못해 분석을 마치지 못했습니다. 백엔드가 실행 중인지 확인해 주시면 다시 시도하겠습니다.";
+    }
+    const lines: string[] = ["최신 시장 뉴스를 수집하고 분석을 마쳤습니다."];
+    if (typeof s.newCount === "number" && s.newCount > 0) {
+      lines.push(`이번에 새로 분석한 기사는 ${s.newCount}건입니다.`);
+      const sample = (s.analyzed || []).slice(0, 3);
+      if (sample.length) lines.push("특히 이런 기사를 살펴봤습니다: " + sample.map((t: string) => `「${t}」`).join(", ") + ".");
+    } else if (s.newCount === 0) {
+      lines.push("이번에는 새로 반영할 신규 기사가 없어, 기존 인텔리전스를 그대로 유지했습니다.");
+    } else {
+      lines.push("분석 결과를 인텔리전스 탭에 반영했습니다.");
+    }
+    lines.push("인텔리전스 탭에서 분석된 카드를 확인하실 수 있습니다. 관심 있는 기사를 대화에 첨부해 주시면 자산배분 근거로 함께 활용해 드리겠습니다.");
+    return lines.join("\n\n");
+  };
+  const runBenDigest = async () => {
+    if (chatBusy) return;
+    benEverUsedRef.current = true;
+    setEntryChoice("ben-digest");
+    setPersona("ben");
+    setTab("인텔리전스");
+    const meta = PERSONA_META.ben;
+    const botId = "ben-digest-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "ben",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "네, 최신 시장 뉴스를 수집해 분석해 보겠습니다.",
+      status: "최신 뉴스 소스에 연결하고 있습니다…", streaming: true, thinking: true,
+    }]);
+    setChatBusy(true);
+    let summary: any;
+    try {
+      summary = await refreshIntel({
+        onActivity: (label) => setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, status: label } : m))),
+      });
+    } catch { summary = { ok: false, streamErr: "연결 실패" }; }
+    const text = benDigestSummary(summary);
+    setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: text, status: undefined, streaming: false, thinking: false } : m)));
+    setChatBusy(false);
+    if (summary?.gotResult) setBenFollow("boxes"); // offer the next-step hand-off
+  };
+
+  // ── Ben's post-digest hand-offs (A: include digests · B: ask about one) ──────
+  const benDigests = () => intel.slice(0, 8); // the analyzed cards to choose from
+  const openBenInclude = () => { setBenSelected(benDigests().map((d: any) => d.id)); setBenFollow("include"); };
+  const toggleBenSelected = (id: string) =>
+    setBenSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const confirmBenInclude = () => {
+    const chosen = benDigests().filter((d: any) => benSelected.includes(d.id));
+    chosen.forEach((d: any) => attachSource(d));
+    setBenFollow("hidden");
+    if (chosen.length) {
+      pushPersonaMsg("ben", `${chosen.length}건의 디제스트를 대화에 반영했습니다. 이 근거를 바탕으로 자산배분을 논의해 보겠습니다.`);
+      pushPersonaMsg("chris", "이제 이 근거로 어떤 뷰를 가지고 계신지 정해 볼까요? 직접 의견을 남겨 주시거나, 리서치 하우스 뷰를 채택하실 수 있습니다. 특별한 뷰가 없다면 기준 비중으로 먼저 확인해 볼 수도 있습니다.");
+      setViewFlow("form"); // bridge to the view → run stage
+    }
+  };
+
+  // ── View → Run bridge (stage B): three ways to form a view, then run ─────────
+  const viewInputDirect = () => {
+    setPersona("chris");
+    pushPersonaMsg("chris", "시장에 대한 생각을 편하게 입력해 주세요. 예: '해외주식이 국내보다 나을 것 같다', '금리는 내릴 것 같다'. 남겨 주신 의견은 고려사항으로 기록되어 최적화에 반영됩니다.");
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+  const adoptHouseView = () => {
+    if (houseTheses.length) {
+      houseTheses.forEach((t: any) => attachThesis(t));
+      pushPersonaMsg("jerry", `리서치 하우스 뷰 ${houseTheses.length}건을 근거로 채택했습니다. 아래 '이 뷰로 최적화 실행'으로 바로 진행하실 수 있습니다.`);
+    } else {
+      setTab("리서치");
+      pushPersonaMsg("jerry", "아직 생성된 하우스 뷰가 없습니다. 리서치 탭에서 '수집 → 논거 구축'을 실행하면 하우스 뷰(테제)를 만들 수 있습니다. 생성 후 다시 '하우스 뷰 채택'을 눌러 주세요.");
+    }
+  };
+  const runWithViews = () => {
+    setViewFlow("hidden");
+    runSimulation();
+  };
+  const runPriorOnly = () => {
+    setViewFlow("hidden");
+    pushPersonaMsg("chris", "특별한 뷰 없이 NPS 기준 비중을 기준으로 최적화를 실행합니다. 결과는 오른쪽 탭에서 확인하실 수 있습니다.");
+    runSimulation("특별한 시장 뷰 없이 NPS 기준 비중을 유지합니다.");
+  };
+  // Attach the chosen digest and ask Ben to explain it — a real grounded LLM answer.
+  const askBenAbout = async (d: any) => {
+    if (!d) return;
+    attachSource(d);
+    setBenFollow("hidden");
+    setPersona("ben");
+    await sendChat({ persona: "ben", extraAttach: d, text: `방금 분석한 「${d.title}」 디제스트를 더 자세히 설명해 주세요. 핵심 내용과 자산배분 관점에서의 함의를 알려 주세요.` });
+    if (!sim && !running) setViewFlow("form"); // after the explanation, offer the run bridge
+  };
+  // 2) Let Jerry run a deeper macro research deep-dive (research feature).
+  // Explains the pipeline first, then shows a real action button — clicking it
+  // actually runs collect → thesis-build (not just "go do it yourself in the tab"),
+  // with a live status on Jerry's bubble, and a summary once it's fully done.
+  const chooseJerryDeepDive = () => {
+    setEntryChoice("jerry-deepdive");
+    setPersona("jerry");
+    setTab("리서치");
+    pushPersonaMsg("jerry",
+      "매크로를 더 깊이 파고들어 보겠습니다. 먼저 FRED 지표·뉴스·리서치 자료를 수집하고, 이를 자산군별 Bull·Bear 논거로 정리해 하우스 뷰(테제)를 구성하겠습니다. 아래 버튼을 누르시면 바로 시작하겠습니다.");
+    setJerryResearchPrompt(true);
+  };
+  const jerryResearchSummary = (c: { ok: boolean; totalInStore: number; collectedNow: number }, t: { ok: boolean; count: number }) => {
+    const lines: string[] = [];
+    lines.push(
+      c.ok
+        ? `FRED 지표·뉴스·리서치 자료를 수집했습니다 — 저장소 총 ${c.totalInStore}건 (이번에 새로 ${c.collectedNow}건 추가).`
+        : "자료 수집 중 문제가 있었지만, 기존에 저장된 자료로 계속 진행했습니다."
+    );
+    lines.push(
+      t.ok
+        ? `이를 바탕으로 자산군별 Bull·Bear 논거를 분석해 하우스 뷰(테제) ${t.count}건을 구성했습니다.`
+        : "다만 하우스 뷰 생성에는 실패했습니다 — 잠시 후 리서치 탭에서 '논거 구축'을 다시 시도해 주세요."
+    );
+    if (t.ok) lines.push("리서치 탭에서 각 테제의 근거를 확인하실 수 있고, '하우스 뷰 채택'으로 바로 최적화에 반영하실 수 있습니다.");
+    // Jerry's side covers macro/FRED/house research — if the user has never actually
+    // run Ben's news/article digest, nudge them toward the other half of the evidence
+    // (and the user-asset-upload feature) instead of assuming macro alone is enough.
+    if (!benEverUsedRef.current) {
+      lines.push("다만 지금까지는 매크로·리서치 근거만 반영했습니다. Ben에게 최신 뉴스·기사 디제스트도 요청해 보시고, 인텔리전스 탭의 '📎 내 자료 첨부'로 보유하신 리포트나 자산 자료를 직접 업로드해 보시면 더 폭넓은 근거로 배분을 검토할 수 있습니다.");
+    }
+    return lines.join("\n\n");
+  };
+  // Fires when the user clicks the "매크로 리서치 수집 및 논거구축 실행" action button:
+  // runs the REAL collect + thesis-build pipeline (not a canned reply), with Jerry's
+  // bubble on a live "thinking" status mirroring each stage, then a summary on completion.
+  const runJerryResearch = async () => {
+    if (chatBusy || collecting || buildingTheses) return;
+    setJerryResearchPrompt(false);
+    setPersona("jerry");
+    setTab("리서치");
+    const meta = PERSONA_META.jerry;
+    const botId = "jerry-research-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "jerry",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "", status: "FRED 지표·뉴스·리서치 소스에 연결하고 있습니다…", streaming: true, thinking: true,
+    }]);
+    setChatBusy(true);
+    const setStatus = (label: string) => setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, status: label } : m)));
+    let collectRes = { ok: false, totalInStore: 0, collectedNow: 0 };
+    let thesesRes = { ok: false, count: 0 };
+    try {
+      collectRes = await runCollect({ onActivity: setStatus });
+      thesesRes = await buildTheses({ onActivity: setStatus });
+    } catch { /* summary below reflects whatever succeeded */ }
+    const text = jerryResearchSummary(collectRes, thesesRes);
+    setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: text, status: undefined, streaming: false, thinking: false } : m)));
+    setChatBusy(false);
+    if (thesesRes.ok && !sim && !running) setViewFlow("form"); // theses are ready — offer the run bridge
+  };
+  // 3) Ask Ben to explain any number on the macro dashboard.
+  const chooseAskBen = () => {
+    setEntryChoice("ask-ben");
+    setPersona("ben");
+    setTab("매크로");
+    pushPersonaMsg("ben",
+      "매크로 대시보드의 수치 중 이해가 어려운 부분이 있으면 무엇이든 물어봐 주세요. 지표가 무엇을 의미하는지, 지금 수준이 어떤 신호인지 쉽게 풀어서 설명해 드리겠습니다.");
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+
+  // If the user lands in "ask Ben about the dashboard" mode and doesn't actually ask
+  // anything within 5s, surface the same hand-off chips (ask Ben / ask Jerry / move on)
+  // instead of leaving them staring at an empty composer with no cue what to do.
+  useEffect(() => {
+    if (entryChoice !== "ask-ben" || chatBusy || macroQaFollow) return;
+    const t = setTimeout(() => setMacroQaFollow(true), 5000);
+    return () => clearTimeout(t);
+  }, [entryChoice, chatBusy, macroQaFollow]);
 
   // Keep the conversation pinned to the latest message / streamed token.
-  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length]);
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice, benFollow, viewFlow]);
 
   // reasoning-trace typing loop (mirrors ReasoningTrace.dc.html)
   useEffect(() => {
@@ -528,6 +1281,33 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           { tag: "ABS", tagBg: C.green, text: "채권 강세 (금리↓)", val: "+2.2%", conf: "·55%" },
         ];
 
+  // One chat bubble — factored out so the thread can be split around `runAnchor`
+  // (rendered twice: messages before the run, then messages after it) without
+  // duplicating the JSX.
+  const renderChatMsg = (m: any) =>
+    m.role === "user" ? (
+      <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{m.content}</div>
+      </div>
+    ) : (
+      <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
+        <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
+        {m.thinking ? (
+          <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, color: m.color, fontSize: 11.5 }}>
+            <span style={{ display: "inline-flex", gap: 3 }}>
+              {[0, 1, 2].map((i) => (
+                <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: m.color, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />
+              ))}
+            </span>
+            <span style={{ color: C.t3 }}>{m.status || "분석 중…"}</span>
+          </span>
+        ) : (
+          m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
+        )}
+      </Msg>
+    );
+  const runBoundary = runAnchor ?? chatMsgs.length;
+
   return (
     <div style={{ width: "100%", height: "100vh", minHeight: 840, background: C.bg, color: C.white, fontFamily: FP, fontVariantNumeric: "tabular-nums", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style jsx global>{`
@@ -537,17 +1317,25 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         @keyframes donutIn { from{ opacity:0; transform:rotate(-90deg) scale(.72) } to{ opacity:1; transform:rotate(-90deg) scale(1) } }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes ticker { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
+        @keyframes slideInRight { from{ transform:translateX(100%) } to{ transform:translateX(0) } }
+        @keyframes slideInLeft { from{ transform:translateX(-100%) } to{ transform:translateX(0) } }
         .etc-scroll::-webkit-scrollbar{ width:8px; height:8px; }
         .etc-scroll::-webkit-scrollbar-thumb{ background:#1e1e1e; border-radius:4px; }
         .etc-scroll::-webkit-scrollbar-track{ background:transparent; }
+        .etc-tip{ opacity:0; }
         .etc-bar:hover .etc-tip{ opacity:1; }
         .etc-bar:hover .etc-fill{ filter:brightness(1.25); }
       `}</style>
 
+      <ChangelogDrawer />
+      {hasRun && (
+        <ReasoningTraceDrawer running={running} traceText={traceText} traceStatus={traceStatus} effProg={effProg} effActive={effActive} />
+      )}
+
       {/* ============ TOP NAV ============ */}
       <div style={{ height: 54, flex: "0 0 54px", borderBottom: `1px solid ${C.b1}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontFamily: FA, fontWeight: 800, fontSize: 16, letterSpacing: ".5px" }}>Etacolla</span>
+          <EtacollaLogo size={22} wordmarkSize={16} color={C.white} />
           <span style={{ width: 1, height: 18, background: "#222" }} />
           <span style={{ fontSize: 10.5, color: C.t4, letterSpacing: ".2px" }}>your personal macro asset allocation analyst</span>
         </div>
@@ -556,6 +1344,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             <span style={{ fontSize: 9, fontFamily: FA, letterSpacing: "1.5px", color: "#6b6b6b" }}>MARKET REGIME</span>
             <span style={{ fontSize: 9, fontFamily: FM, fontWeight: 600, letterSpacing: "1px", color: regimeColor, background: `${regimeColor}1a`, border: `1px solid ${regimeColor}40`, padding: "2px 7px", borderRadius: 3 }}>{regimeLabel}</span>
           </div>
+          <VersionBadge />
           <span style={{ fontSize: 10, fontFamily: FA, letterSpacing: "1.5px", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 4, color: "#999" }}>KO</span>
         </div>
       </div>
@@ -576,6 +1365,14 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         </div>
       </div>
 
+      {/* ============ BACKEND-DOWN BANNER ============ */}
+      {backendUp === false && (
+        <div style={{ flex: "0 0 auto", background: "rgba(255,80,0,.12)", borderBottom: `1px solid ${C.red}`, color: "#ffb088", padding: "8px 22px", fontSize: 11.5, fontFamily: FM, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.red }} />
+          백엔드 서버에 연결할 수 없습니다 ({API_BASE}). 리서치·마켓 인텔리전스 기능이 동작하지 않으며 화면은 예시 데이터를 표시합니다. 백엔드를 실행한 뒤 새로고침하세요.
+        </div>
+      )}
+
       {/* ============ VIEW BUILDER BAR ============ */}
       <div style={{ flex: "0 0 auto", borderBottom: `1px solid ${C.b1}`, background: C.panel, padding: "12px 22px", display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap" }}>
         <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -586,7 +1383,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         {chips.map((c, i) => (<Chip key={i} tag={c.tag} tagBg={c.tagBg} text={c.text} val={c.val} conf={c.conf} />))}
         <span style={{ fontSize: 11.5, color: C.t4, border: `1px dashed ${C.b4}`, borderRadius: 8, padding: "7px 11px", cursor: "pointer" }}>+ 신호 추가</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>δ 5% · ENSEMBLE</span>
+          <span style={{ fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>δ ±{Math.round(maxDeviation * 100)}%p · {optimizer.toUpperCase()}</span>
           <button onClick={() => runSimulation()} disabled={running} style={{ fontFamily: FA, fontWeight: 700, fontSize: 11, letterSpacing: "1.5px", background: "#fff", color: "#000", border: "none", padding: "10px 18px", borderRadius: 6, cursor: running ? "wait" : "pointer", opacity: running ? 0.6 : 1, display: "flex", alignItems: "center", gap: 7 }}>{running ? "최적화 중…" : "▶ 다시 최적화"}</button>
         </div>
       </div>
@@ -604,100 +1401,248 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             <span style={{ position: "relative", width: 8, height: 8 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.green, animation: "pulseDot 1.6s infinite" }} /></span>
             <span style={{ fontFamily: FA, fontSize: 9.5, letterSpacing: "2px", color: "#888" }}>투자 데스크 · 대화</span>
             <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>{sim?.simulation_id ? `RUN #${sim.simulation_id}` : isNew ? "준비됨" : "RUN #248"}</span>
+            <button
+              onClick={startNewChat}
+              disabled={chatBusy || running}
+              title="대화를 처음부터 다시 시작합니다"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: (chatBusy || running) ? C.t5 : "#cfcfcf", background: "transparent", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 6, cursor: (chatBusy || running) ? "default" : "pointer" }}
+            >↻ 새 대화</button>
           </div>
 
           <div ref={threadRef} className="etc-scroll" style={{ flex: 1, overflowY: "auto", padding: "20px 18px", display: "flex", flexDirection: "column", gap: 17 }}>
-            <Msg who="Chris" role="PM · 최고투자전략가" avatarColor={C.white}>
-              {isNew
-                ? <>안녕하세요, 저는 <b style={{ color: "#fff" }}>Chris</b>입니다 — 이 데스크의 최고투자전략가예요. 바로 의견을 주셔도 좋지만, 그 전에 오른쪽 탭에서 시장을 먼저 둘러보시길 권합니다: <b style={{ color: "#fff" }}>매크로</b>로 현재 국면과 지표를, <b style={{ color: "#fff" }}>인텔리전스</b>로 큐레이션된 뉴스·리서치를, <b style={{ color: "#fff" }}>리서치</b> 파이프라인으로 하우스 논거를 확인하실 수 있어요. 준비되시면 아래에 시장에 대한 생각을 입력해 주세요 — Ben과 매크로 데스크가 근거를 모으고 제가 배분으로 옮겨드리겠습니다.</>
-                : "안녕하세요. 오늘 시장을 어떻게 보고 계신가요? 편하게 말씀해 주시면 Ben(마켓)과 매크로 데스크가 근거를 모으고, 제가 최종 검토해 배분으로 옮겨드리겠습니다."}
-            </Msg>
+            {/* Chris's greeting is seeded into chatMsgs by the onboarding flow (so
+                「새 대화」 can fully reset the thread) — not hardcoded here. */}
 
-            {/* user bubble (last-run view) — only after a real run, never on entry */}
-            {hasRun && viewText && (
+            {/* ── live persona chat thread, part 1: everything up to the run ── */}
+            {chatMsgs.slice(0, runBoundary).map(renderChatMsg)}
+
+            {/* After Jerry's brief: three next-step hand-offs. Hidden once the user
+                picks one or starts typing their own message. */}
+            {briefDone && !entryChoice && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>다음 단계 · 무엇을 도와드릴까요?</div>
+                {[
+                  { on: runBenDigest, color: C.cyan, t: "Ben에게 자산·뉴스 디제스트 요청", d: "최신 뉴스를 새로고침해 분석하고, 그 결과를 요약해 드립니다." },
+                  { on: chooseJerryDeepDive, color: C.amber, t: "Jerry의 매크로 심층 리서치", d: "FRED·뉴스·리서치를 수집해 하우스 뷰(테제)까지 이어지는 딥다이브를 진행합니다." },
+                  { on: chooseAskBen, color: C.cyan, t: "대시보드 수치가 궁금하신가요?", d: "매크로 대시보드의 지표를 Ben이 쉽게 풀어서 설명해 드립니다." },
+                ].map((o, i) => (
+                  <div
+                    key={i}
+                    onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = o.color)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* After Ben's digest: hand-off state machine. boxes → include | ask. */}
+            {benFollow !== "hidden" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                {benFollow === "boxes" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>다음 단계 · 디제스트를 어떻게 활용할까요?</div>
+                  {[
+                    { on: openBenInclude, t: "디제스트를 대화에 반영", d: "분석된 디제스트 중 원하는 것을 골라 근거로 첨부합니다 (배분·답변에 활용)." },
+                    { on: () => setBenFollow("ask"), t: "특정 디제스트 자세히 알아보기", d: "한 건을 골라 Ben이 핵심과 배분 관점의 함의를 설명해 드립니다." },
+                  ].map((o, i) => (
+                    <div key={i} onClick={o.on}
+                      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                      <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                    </div>
+                  ))}
+                </>)}
+
+                {benFollow === "include" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>대화에 반영할 디제스트를 선택하세요</div>
+                  {benDigests().map((d: any) => {
+                    const on = benSelected.includes(d.id);
+                    return (
+                      <div key={d.id} onClick={() => toggleBenSelected(d.id)}
+                        style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${on ? C.cyan : C.b3}`, borderRadius: 9, padding: "9px 11px", display: "flex", alignItems: "flex-start", gap: 9 }}>
+                        <span style={{ flex: "0 0 auto", width: 15, height: 15, borderRadius: 4, border: `1px solid ${on ? C.cyan : C.b5}`, background: on ? C.cyan : "transparent", color: "#000", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>{on ? "✓" : ""}</span>
+                        <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                          <span style={{ fontSize: 11.5, color: "#e8e8e8", lineHeight: 1.4 }}>{d.title}</span>
+                          <span style={{ fontSize: 9.5, color: C.t5 }}>{d.source || d.author || "출처"}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    <div onClick={confirmBenInclude} style={{ cursor: benSelected.length ? "pointer" : "default", flex: 1, textAlign: "center", fontSize: 11, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: benSelected.length ? "#000" : C.t5, background: benSelected.length ? C.cyan : C.b3, borderRadius: 8, padding: "9px 10px" }}>선택한 {benSelected.length}건 반영</div>
+                    <div onClick={() => setBenFollow("boxes")} style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "9px 14px" }}>취소</div>
+                  </div>
+                </>)}
+
+                {benFollow === "ask" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>어떤 디제스트를 더 자세히 볼까요?</div>
+                  {benDigests().map((d: any) => (
+                    <div key={d.id} onClick={() => askBenAbout(d)}
+                      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 9, padding: "9px 11px", display: "flex", flexDirection: "column", gap: 2, transition: "border-color .15s" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                      <span style={{ fontSize: 11.5, color: "#e8e8e8", lineHeight: 1.4 }}>▸ {d.title}</span>
+                      <span style={{ fontSize: 9.5, color: C.t5 }}>{d.source || d.author || "출처"}</span>
+                    </div>
+                  ))}
+                  <div onClick={() => setBenFollow("boxes")} style={{ cursor: "pointer", alignSelf: "flex-start", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "8px 14px", marginTop: 2 }}>취소</div>
+                </>)}
+              </div>
+            )}
+
+            {/* View → Run bridge (stage B→C): form/confirm a view, then run the
+                optimizer. Shown after evidence is gathered; hidden once a run fires. */}
+            {viewFlow === "form" && !running && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>뷰 정하기 · 무엇을 근거로 배분을 조정할까요?</div>
+                {[
+                  { on: viewInputDirect, t: "직접 뷰 입력", d: "시장에 대한 생각을 채팅으로 남기면 고려사항으로 캡처되어 최적화에 반영됩니다." },
+                  { on: adoptHouseView, t: "하우스 뷰(리서치) 채택", d: houseTheses.length ? `리서치에서 만든 하우스 뷰 ${houseTheses.length}건을 근거로 채택합니다.` : "하우스 뷰가 없으면 리서치 탭으로 이동해 먼저 생성합니다." },
+                ].map((o, i) => (
+                  <div key={i} onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.white)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+
+                {/* Run settings the user chooses before executing. */}
+                <div style={{ background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 9, marginTop: 2 }}>
+                  <div>
+                    <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: C.t5, marginBottom: 6 }}>최적화 방식</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                      {([["ensemble", "앙상블"], ["markowitz", "MVO"], ["risk_parity", "리스크패리티"], ["hrp", "HRP"]] as const).map(([k, label]) => {
+                        const on = optimizer === k;
+                        return (
+                          <span key={k} onClick={() => setOptimizer(k)} style={{ cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: on ? "#000" : C.t3, background: on ? C.white : "transparent", border: `1px solid ${on ? C.white : C.b4}`, borderRadius: 7, padding: "5px 10px" }}>{label}</span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: C.t5, marginBottom: 6 }}>이탈 한도 δ · 벤치마크(NPS) 대비 최대 조정폭</div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                      {[0.03, 0.05, 0.10].map((d) => {
+                        const on = Math.abs(maxDeviation - d) < 1e-6;
+                        return (
+                          <span key={d} onClick={() => setMaxDeviation(d)} style={{ cursor: "pointer", fontSize: 10.5, fontWeight: 600, color: on ? "#000" : C.t3, background: on ? C.green : "transparent", border: `1px solid ${on ? C.green : C.b4}`, borderRadius: 7, padding: "5px 12px" }}>±{Math.round(d * 100)}%p</span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {considerations.length + attached.length > 0 ? (
+                  <div onClick={runWithViews} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: C.green, borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>▶ 이 뷰로 최적화 실행 · 반영 {considerations.length + attached.length}건</div>
+                ) : (
+                  <div onClick={runPriorOnly} style={{ cursor: "pointer", textAlign: "center", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "10px", marginTop: 2 }}>뷰 없이 기준 비중으로 실행 →</div>
+                )}
+              </div>
+            )}
+
+            {/* The "대시보드 수치가 궁금하신가요?" path used to be a dead end — this
+                re-offers a hand-off after every Ben/Jerry answer while in that mode,
+                so the user can keep asking (either persona) or move into the guided
+                flow instead of getting stuck. */}
+            {macroQaFollow && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>이어서 더 살펴보시겠어요?</div>
+                {[
+                  { on: () => { setMacroQaFollow(false); setPersona("jerry"); setTimeout(() => chatInputRef.current?.focus(), 50); }, t: "Jerry에게 물어보기", d: "같은 지표를 매크로 PM 관점에서 다시 설명해 드립니다." },
+                  { on: () => { setMacroQaFollow(false); runBenDigest(); }, t: "Ben에게 자산·뉴스 디제스트 요청", d: "최신 뉴스를 새로고침해 분석하고, 그 결과를 요약해 드립니다." },
+                  { on: () => { setMacroQaFollow(false); chooseJerryDeepDive(); }, t: "Jerry의 매크로 심층 리서치", d: "FRED·뉴스·리서치를 수집해 하우스 뷰(테제)까지 이어지는 딥다이브를 진행합니다." },
+                ].map((o, i) => (
+                  <div key={i} onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Jerry's deep-dive action button — explained first, then a real trigger
+                for the collect → thesis-build pipeline (not a "go do it yourself"). */}
+            {jerryResearchPrompt && (
+              <div onClick={runJerryResearch} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: C.amber, borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>▶ 매크로 리서치 수집 및 논거구축 실행</div>
+            )}
+
+            {/* Run artifacts — only after a REAL optimization runs, and anchored right
+                where the run fired (runAnchor) so they sit in their correct chronological
+                spot instead of being glued to the bottom of the thread forever. */}
+            {runAnchor !== null && viewText && (
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
               </div>
             )}
+            {/* Reasoning trace now lives in the ReasoningTraceDrawer (left-edge tab) —
+                see its render near <ChangelogDrawer /> — instead of inline in the thread. */}
 
-            {/* ── live persona chat thread (multi-turn Q&A + view capture) ── */}
-            {chatMsgs.map((m) =>
-              m.role === "user" ? (
-                <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{m.content}</div>
-                </div>
-              ) : (
-                <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
-                  <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
-                  {m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />}
-                </Msg>
-              )
-            )}
-
-            {/* Run artifacts — only after a REAL optimization runs. No scripted/hardcoded
-                analyst chatter on entry; live persona replies come from the chat thread above. */}
-            {hasRun && (<>
-            {/* reasoning trace */}
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-              <Avatar color={C.violet} small>∑</Avatar>
-              <div style={{ flex: 1 }}>
-                <div style={{ background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${C.b1}` }}>
-                    <span style={{ position: "relative", width: 7, height: 7 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.violet, animation: "pulseDot 1.4s infinite" }} /></span>
-                    <span style={{ fontFamily: FA, fontSize: 9, letterSpacing: "1.5px", color: "#9a9a9a" }}>NEMOTRON 3 SUPER · 추론 트레이스</span>
-                    <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: C.violet }}>{traceStatus}</span>
+            {/* Chris reports back to chat only once the run has FULLY completed
+                (sim received + not running) — never mid-reasoning. */}
+            {runAnchor !== null && sim && !running && (<>
+              <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
+                <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 아래에서 결과를 함께 살펴보시죠.</span>
+              </Msg>
+              {/* Stage D: guided walk through the results, ending at the PM report. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>결과 둘러보기</div>
+                {[
+                  { t: "배분 결과", d: "벤치마크(NPS) 대비 자산별 비중 변화와 근거", go: "배분" },
+                  { t: "리스크 지표", d: "기대수익률·변동성·샤프·VaR/CVaR·최대낙폭", go: "리스크" },
+                  { t: "효율적 프론티어", d: "최적 포트폴리오의 위험–수익 위치", go: "프론티어" },
+                ].map((o, i) => (
+                  <div key={i} onClick={() => setTab(o.go)}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.white)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
                   </div>
-                  <div style={{ padding: "11px 13px", borderBottom: `1px solid #141414`, background: C.panel }}>
-                    <div style={{ fontFamily: FM, fontSize: 10, lineHeight: 1.7, color: "#8f8f8f", minHeight: 96, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {traceText || (running ? "추론을 시작하는 중…" : "")}
-                      <span style={{ display: "inline-block", width: 6, height: 11, background: C.violet, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
-                    </div>
-                  </div>
-                  <div style={{ padding: "12px 13px 6px" }}>
-                    {TRACE_STEPS.map((s, i) => {
-                      const done = effProg >= s.at;
-                      const active = i === effActive;
-                      return (
-                        <div key={i} style={{ display: "flex", gap: 10 }}>
-                          <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                            <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, flex: "0 0 auto",
-                              ...(done ? { background: "#0e0e0e", border: "1px solid #2a2a2a", color: C.green }
-                                : active ? { background: C.violet, color: "#000", animation: "pulseDot 1.3s infinite" }
-                                : { background: "#0a0a0a", border: `1px solid ${C.b2}`, color: "#444" }) }}>
-                              {done ? "✓" : active ? "●" : String(i + 1)}
-                            </span>
-                            <span style={{ width: 1, flex: 1, background: C.b2, minHeight: 14 }} />
-                          </div>
-                          <div style={{ paddingBottom: 10 }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: done || active ? "#cfcfcf" : "#666" }}>{s.l}</div>
-                            <div style={{ fontSize: 10.5, lineHeight: 1.5, color: "#777" }}>{s.d}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                ))}
+                <div onClick={() => { setTab("리포트"); if (sim) setOpenReport(sim); }} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: "#fff", borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>PM 최종 리포트 →</div>
               </div>
-            </div>
-
-            {/* Chris final */}
-            <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
-              <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 전체 결과와 제 IC 메모는 오른쪽 탭에서 확인하세요.</span>
-              <button style={{ alignSelf: "flex-start", fontFamily: FA, fontWeight: 700, fontSize: 10, letterSpacing: "1px", background: "#fff", color: "#000", border: "none", padding: "8px 14px", borderRadius: 6, cursor: "pointer", marginTop: 10 }} onClick={() => setTab("리포트")}>PM 최종 리포트 →</button>
-            </Msg>
             </>)}
+
+            {/* ── live persona chat thread, part 2: anything asked AFTER the run
+                (e.g. a follow-up question about the report) — always renders below
+                the run artifacts above, never spliced in before them. ── */}
+            {chatMsgs.slice(runBoundary).map(renderChatMsg)}
           </div>
 
           {/* composer */}
           <div style={{ flex: "0 0 auto", borderTop: `1px solid #141414`, padding: "11px 16px 13px" }}>
+            {/* Attached sources — a compact one-line summary that expands into a
+                scrollable tray, so many sources don't stack up and eat the composer. */}
             {attached.length > 0 && (
-              <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
-                {attached.map((a) => (
-                  <span key={a.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 250, fontSize: 10, color: C.cyan, background: "rgba(34,211,238,.08)", border: "1px solid rgba(34,211,238,.3)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📎 {a.title}</span>
-                    <span onClick={() => detachSource(a.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
+              <div style={{ marginBottom: 9 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10.5 }}>
+                  <span onClick={() => setAttachOpen((o) => !o)} style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", color: C.cyan, background: "rgba(34,211,238,.08)", border: "1px solid rgba(34,211,238,.3)", borderRadius: 13, padding: "4px 10px" }}>
+                    <span style={{ transform: attachOpen ? "rotate(90deg)" : "none", transition: "transform .15s", fontSize: 8 }}>▶</span>
+                    📎 첨부 자료 {attached.length}건
                   </span>
-                ))}
+                  <span onClick={() => { setAttached([]); setAttachOpen(false); }} style={{ cursor: "pointer", color: C.t4, fontSize: 10 }}>모두 지우기</span>
+                </div>
+                {attachOpen && (
+                  <div className="etc-scroll" style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 7, maxHeight: 132, overflowY: "auto", paddingRight: 2 }}>
+                    {attached.map((a) => (
+                      <span key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: C.cyan, background: "rgba(34,211,238,.06)", border: "1px solid rgba(34,211,238,.22)", borderRadius: 8, padding: "5px 9px" }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>📎 {a.title}</span>
+                        <span onClick={() => detachSource(a.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {/* captured considerations — fold into the next optimization run */}
@@ -705,7 +1650,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1px", color: C.t5, marginRight: 2 }}>고려사항</span>
                 {considerations.map((c) => (
-                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 230, fontSize: 10, color: C.violet, background: "rgba(167,139,250,.08)", border: "1px solid rgba(167,139,250,.3)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
+                  <span key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 230, fontSize: 10, color: C.green, background: "rgba(0,200,5,.08)", border: "1px solid rgba(0,200,5,.25)", borderRadius: 13, padding: "4px 8px 4px 10px" }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↑ {c.label}</span>
                     <span onClick={() => removeConsideration(c.id)} style={{ cursor: "pointer", color: C.t4, flex: "0 0 auto" }}>✕</span>
                   </span>
@@ -713,19 +1658,69 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               </div>
             )}
             {/* persona selector — choose who you're addressing */}
-            <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 9, flexWrap: "wrap", position: "relative" }}>
               {(["chris", "jerry", "ben"] as const).map((key) => {
                 const meta = PERSONA_META[key];
                 const active = persona === key;
                 return (
-                  <span key={key} onClick={() => setPersona(key)} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 600, cursor: "pointer", color: active ? "#000" : meta.color, background: active ? meta.color : "transparent", border: `1px solid ${active ? meta.color : C.b3}`, borderRadius: 13, padding: "4px 10px" }}>
-                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: active ? "#000" : meta.color }} />@{meta.name}
+                  <span
+                    key={key}
+                    onClick={() => setPersona(key)}
+                    onMouseEnter={() => setHoveredPersona(key)}
+                    onMouseLeave={() => setHoveredPersona(null)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 600, cursor: "pointer", color: active ? "#000" : meta.color, background: active ? meta.color : "transparent", border: `1px solid ${active ? meta.color : C.b3}`, borderRadius: 13, padding: "4px 10px" }}
+                  >
+                    <img src={meta.avatar} alt={meta.name} style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover", border: `1px solid ${active ? "#000" : meta.color}` }} />@{meta.name}
                   </span>
                 );
               })}
+              {hoveredPersona && (() => {
+                const meta = PERSONA_META[hoveredPersona];
+                const caretLeft = hoveredPersona === "chris" ? 30 : hoveredPersona === "jerry" ? 95 : 157;
+                return (
+                  <div style={{
+                    position: "absolute",
+                    bottom: "100%",
+                    left: 0,
+                    marginBottom: 10,
+                    width: 260,
+                    background: "rgba(15, 15, 15, 0.98)",
+                    backdropFilter: "blur(12px)",
+                    border: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                    borderRadius: 8,
+                    padding: "12px",
+                    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
+                    zIndex: 1000,
+                    pointerEvents: "none",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <img src={meta.avatar} alt={meta.name} style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", border: `1px solid ${meta.color}` }} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>@{meta.name}</div>
+                        <div style={{ fontSize: 9.5, color: "#888", fontFamily: FP }}>{meta.role}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#ccc", lineHeight: 1.6, fontFamily: FP, fontWeight: 400, textAlign: "left", whiteSpace: "normal" }}>
+                      {meta.desc}
+                    </div>
+                    <div style={{
+                      position: "absolute",
+                      bottom: -4,
+                      left: caretLeft,
+                      transform: "translateX(-50%) rotate(45deg)",
+                      width: 8,
+                      height: 8,
+                      background: "rgba(15, 15, 15, 0.98)",
+                      borderRight: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                      borderBottom: `1px solid ${meta.color === C.white ? "rgba(255, 255, 255, 0.2)" : meta.color + "40"}`,
+                    }} />
+                  </div>
+                );
+              })()}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.chip, border: `1px solid ${C.b4}`, borderRadius: 10, padding: "10px 12px" }}>
               <input
+                ref={chatInputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
@@ -756,14 +1751,15 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           </div>
 
           <div className="etc-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "20px 24px" }}>
-            {tab === "배분" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <AllocationTab sim={sim} />)}
-            {tab === "리스크" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <RiskTab sim={sim} />)}
-            {tab === "프론티어" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <FrontierTab sim={sim} />)}
-            {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={setIntelOpen} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
-            {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
+            {tab === "배분" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <AllocationTab sim={activeSim} />)}
+            {tab === "리스크" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <RiskTab sim={activeSim} />)}
+            {tab === "프론티어" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <FrontierTab sim={activeSim} />)}
+            {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
+            {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} onRefresh={refreshMacro} refreshing={macroRefreshing} updatedAt={macroUpdatedAt} notice={macroNotice} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
-            {tab === "리포트" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <ReportTab sim={sim} />)}
+            {tab === "리포트" && <ReportTab reports={reports} openReport={openReport} running={running} reportLoading={reportLoading} onOpen={openReportDetail} onDelete={deleteReport} onBack={() => setOpenReport(null)} />}
             {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
+            {tab === "설정" && <ConfigTab />}
           </div>
         </div>
       </div>
@@ -797,6 +1793,7 @@ function IntelModal({ item, onClose, onAttach, onDelete }: { item: any; onClose:
         </div>
         <div style={{ fontFamily: FA, fontWeight: 700, fontSize: 20, lineHeight: 1.35, marginBottom: 8 }}>{item.title}</div>
         <div style={{ fontSize: 12, color: C.t4, marginBottom: 20 }}>{item.author}{item.author_title ? ` · ${item.author_title}` : ""} · {item.source}{item.date ? ` · ${String(item.date).slice(0, 10)}` : ""}</div>
+        {fmtKST(item.created_at) && <div style={{ fontSize: 10.5, fontFamily: FM, color: C.t5, marginTop: -14, marginBottom: 20 }}>분석 발행 시각 · {fmtKST(item.created_at)}</div>}
         <Field label="AI 해석">{item.ai_interpretation?.summary}</Field>
         {assets.length > 0 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -814,6 +1811,185 @@ function IntelModal({ item, onClose, onAttach, onDelete }: { item: any; onClose:
         </div>
       </div>
     </div>
+  );
+}
+function VersionBadge() {
+  const [v, setV] = useState<{ sha: string; branch: string; date: string; subject: string; dirty: boolean } | null>(null);
+  useEffect(() => { fetch("/api/version").then((r) => (r.ok ? r.json() : null)).then(setV).catch(() => {}); }, []);
+  if (!v?.sha) return null;
+  const dot = v.dirty ? "#FBBF24" : "#34D399";
+  return (
+    <span
+      title={`${v.branch}@${v.sha} · ${v.date}\n${v.subject}${v.dirty ? "\n⚠ uncommitted changes in working tree" : "\n✓ matches commit"}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: "#999", border: `1px solid ${C.b4}`, padding: "4px 9px", borderRadius: 4, cursor: "default" }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flex: "0 0 auto" }} />
+      {v.branch} · {v.sha}{v.dirty ? "*" : ""}
+    </span>
+  );
+}
+// Right-edge slide-out changelog. The vertical tab is always visible; clicking it
+// opens a drawer listing CHANGELOG newest-first. Append entries in the CHANGELOG
+// constant above to "log a version".
+function ChangelogDrawer() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {/* Always-visible vertical tab on the right edge */}
+      <button
+        onClick={() => setOpen(true)}
+        title="변경 이력 · Changelog"
+        style={{
+          position: "fixed", right: 0, top: "50%", transform: "translateY(-50%)", zIndex: 60,
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 9,
+          background: C.panel2, color: "#bbb", border: `1px solid ${C.b4}`, borderRight: "none",
+          borderRadius: "7px 0 0 7px", padding: "13px 7px", cursor: "pointer",
+        }}
+      >
+        <span style={{ fontSize: 9, fontFamily: FM, fontWeight: 700, color: C.green, letterSpacing: ".5px" }}>v{APP_VERSION}</span>
+        <span style={{ writingMode: "vertical-rl", fontSize: 9, fontFamily: FA, letterSpacing: "2px" }}>CHANGELOG</span>
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 90 }} />
+          <div className="etc-scroll" style={{
+            position: "fixed", top: 0, right: 0, height: "100vh", width: 380, maxWidth: "92vw", zIndex: 100,
+            background: C.bg, borderLeft: `1px solid ${C.b3}`, overflowY: "auto",
+            animation: "slideInRight .2s ease", boxShadow: "-24px 0 48px rgba(0,0,0,.6)",
+          }}>
+            <div style={{ position: "sticky", top: 0, background: C.bg, borderBottom: `1px solid ${C.b2}`, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: "2px", color: C.white }}>CHANGELOG</span>
+                <span style={{ fontSize: 9, fontFamily: FM, color: C.t4 }}>변경 이력</span>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 5, color: "#999", fontSize: 13, lineHeight: 1, width: 26, height: 26, cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: "8px 20px 48px" }}>
+              {CHANGELOG.map((e) => (
+                <div key={e.version} style={{ padding: "18px 0", borderBottom: `1px solid ${C.b1}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 15, fontFamily: FM, fontWeight: 700, color: C.white }}>v{e.version}</span>
+                    {e.current && (
+                      <span style={{ fontSize: 8, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: "#000", background: C.green, padding: "2px 6px", borderRadius: 3 }}>CURRENT</span>
+                    )}
+                    <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: FM, color: C.t4 }}>{e.date}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, fontFamily: FA, fontWeight: 600, letterSpacing: ".3px", color: C.t2, marginBottom: 11 }}>{e.title}</div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                    {e.items.map((it, i) => (
+                      <li key={i} style={{ display: "flex", gap: 9, fontSize: 12, lineHeight: 1.55, color: C.t3 }}>
+                        <span style={{ flex: "0 0 auto", marginTop: 6, width: 4, height: 4, borderRadius: "50%", background: C.green }} />
+                        <span>{it}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+// Mirrors ChangelogDrawer's tab-and-slide-panel pattern, but on the left edge and
+// driven by run state: pops open automatically the moment reasoning starts, then
+// auto-collapses back to just the tab a few seconds after it finishes. The tab
+// itself always stays put so the trace can be reopened anytime.
+function ReasoningTraceDrawer({ running, traceText, traceStatus, effProg, effActive }: { running: boolean; traceText: string; traceStatus: string; effProg: number; effActive: number }) {
+  const [open, setOpen] = useState(false);
+  const wasRunning = useRef(false);
+
+  useEffect(() => {
+    const prev = wasRunning.current;
+    wasRunning.current = running;
+    if (running && !prev) {
+      setOpen(true);
+    } else if (!running && prev) {
+      const t = setTimeout(() => setOpen(false), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [running]);
+
+  return (
+    <>
+      {/* Always-visible vertical tab on the left edge */}
+      <button
+        onClick={() => setOpen(true)}
+        title="추론 트레이스"
+        style={{
+          position: "fixed", left: 0, top: "50%", transform: "translateY(-50%)", zIndex: 60,
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 9,
+          background: C.panel2, color: "#bbb", border: `1px solid ${C.b4}`, borderLeft: "none",
+          borderRadius: "0 7px 7px 0", padding: "13px 7px", cursor: "pointer",
+        }}
+      >
+        <span style={{ position: "relative", width: 7, height: 7 }}>
+          <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: running ? C.violet : C.green, animation: running ? "pulseDot 1.4s infinite" : undefined }} />
+        </span>
+        <span style={{ writingMode: "vertical-rl", fontSize: 9, fontFamily: FA, letterSpacing: "2px" }}>추론 트레이스</span>
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 90 }} />
+          <div className="etc-scroll" style={{
+            position: "fixed", top: 0, left: 0, height: "100vh", width: 380, maxWidth: "92vw", zIndex: 100,
+            background: C.bg, borderRight: `1px solid ${C.b3}`, overflowY: "auto",
+            animation: "slideInLeft .2s ease", boxShadow: "24px 0 48px rgba(0,0,0,.6)",
+          }}>
+            <div style={{ position: "sticky", top: 0, background: C.bg, borderBottom: `1px solid ${C.b2}`, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ position: "relative", width: 7, height: 7 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.violet, animation: "pulseDot 1.4s infinite" }} /></span>
+                <span style={{ fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: "2px", color: C.white }}>NEMOTRON 3 SUPER</span>
+                <span style={{ fontSize: 9, fontFamily: FM, color: C.t4 }}>추론 트레이스</span>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 5, color: "#999", fontSize: 13, lineHeight: 1, width: 26, height: 26, cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: "16px 20px 48px" }}>
+              <div style={{ background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${C.b1}` }}>
+                  <span style={{ fontFamily: FA, fontSize: 9, letterSpacing: "1.5px", color: "#9a9a9a" }}>상태</span>
+                  <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: C.violet }}>{traceStatus}</span>
+                </div>
+                <div style={{ padding: "11px 13px", borderBottom: `1px solid #141414`, background: C.panel }}>
+                  <div style={{ fontFamily: FM, fontSize: 10, lineHeight: 1.7, color: "#8f8f8f", minHeight: 96, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {traceText || (running ? "추론을 시작하는 중…" : "")}
+                    <span style={{ display: "inline-block", width: 6, height: 11, background: C.violet, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
+                  </div>
+                </div>
+                <div style={{ padding: "12px 13px 6px" }}>
+                  {TRACE_STEPS.map((s, i) => {
+                    const done = effProg >= s.at;
+                    const active = i === effActive;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 10 }}>
+                        <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, flex: "0 0 auto",
+                            ...(done ? { background: "#0e0e0e", border: "1px solid #2a2a2a", color: C.green }
+                              : active ? { background: C.violet, color: "#000", animation: "pulseDot 1.3s infinite" }
+                              : { background: "#0a0a0a", border: `1px solid ${C.b2}`, color: "#444" }) }}>
+                            {done ? "✓" : active ? "●" : String(i + 1)}
+                          </span>
+                          <span style={{ width: 1, flex: 1, background: C.b2, minHeight: 14 }} />
+                        </div>
+                        <div style={{ paddingBottom: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: done || active ? "#cfcfcf" : "#666" }}>{s.l}</div>
+                          <div style={{ fontSize: 10.5, lineHeight: 1.5, color: "#777" }}>{s.d}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 function EmptyResults({ go }: { go: (t: string) => void }) {
@@ -839,9 +2015,19 @@ function Avatar({ children, color, bg, border, small }: { children: React.ReactN
 }
 
 function Msg({ who, role, children, avatarColor, avatarBg, avatarBorder }: { who: string; role: string; children: React.ReactNode; avatarColor: string; avatarBg?: string; avatarBorder?: string }) {
+  const nameKey = who.toLowerCase() as "chris" | "jerry" | "ben";
+  const hasAvatar = nameKey in PERSONA_META;
   return (
     <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-      <Avatar color={avatarColor} bg={avatarBg} border={avatarBorder}>{who[0]}</Avatar>
+      {hasAvatar ? (
+        <img
+          src={PERSONA_META[nameKey].avatar}
+          alt={who}
+          style={{ flex: "0 0 30px", width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: `1px solid ${avatarBorder || avatarColor}` }}
+        />
+      ) : (
+        <Avatar color={avatarColor} bg={avatarBg} border={avatarBorder}>{who[0]}</Avatar>
+      )}
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginBottom: 4 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{who}</span>
@@ -952,6 +2138,9 @@ function attribFromSim(sim: any) {
       delta: Math.abs(d) < 0.005 ? "—" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(2)}`,
       dc: Math.abs(d) < 0.005 ? C.t6 : d > 0 ? C.up : C.red,
       why: first ? String(first.thesis || "적용된 뷰").slice(0, 64) : "시장 균형 유지 (적용된 뷰 없음)",
+      // Non-empty only when the view-parser found sources that disagreed on direction
+      // and had to judge which side to weight — surfaced so it isn't silently hidden.
+      conflict: first?.conflicting_evidence ? String(first.conflicting_evidence) : "",
       src: srcs.length ? String(srcs[0]) : "", tag: "근거", tagDark: true,
     };
   });
@@ -1015,35 +2204,66 @@ function riskFromSim(sim: any): [string, string, string][] | null {
   const pct = (x: number) => `${((x || 0) * 100).toFixed(2)}%`;
   return [["기대수익률", pct(m.expected_return), C.white], ["변동성", pct(m.volatility), C.white], ["샤프 비율", sharpe.toFixed(2), C.white], ["95% VaR", pct(m.var_95), C.redL], ["95% CVaR", pct(m.cvar_95), C.redL], ["최대낙폭", pct(m.max_drawdown_estimate), C.redL]];
 }
-function devFromSim(sim: any) {
-  const opt = sim?.optimized_weights, mkt = sim?.market_weights; if (!opt || !mkt) return null;
-  return ASSET_ORDER.filter((a) => a in opt).map((a) => {
-    const dpp = ((opt[a] || 0) - (mkt[a] || 0)) * 100; const up = dpp >= 0;
-    return { n: ASSET_KR[a], c: up ? C.up : C.red, h: `${Math.min(48, Math.abs(dpp) * 8)}%`, up, v: `${up ? "+" : "−"}${Math.abs(dpp).toFixed(1)}`, pos: (up ? { top: 6 } : { bottom: 6 }) as React.CSSProperties };
-  });
-}
-function buildFrontier(sim: any) {
-  const ef = sim?.efficient_frontier;
-  if (!Array.isArray(ef) || ef.length < 2) return null;
-  const bm = sim.benchmark_portfolio, op = sim.optimized_portfolio;
-  const V = ef.map((p: any) => p.volatility), R = ef.map((p: any) => p.return);
-  if (bm) { V.push(bm.volatility); R.push(bm.return); } if (op) { V.push(op.volatility); R.push(op.return); }
+// Lay out frontier points (+ optional benchmark/optimized markers) into SVG
+// coordinates. Shared by real data (buildFrontier) and the mock fallback, so
+// both go through identical scaling/path logic — no separate hand-tuned mock path.
+function computeFrontierChart(
+  points: { return: number; volatility: number; sharpe: number; weights: Record<string, number> }[],
+  bm: { return: number; volatility: number } | null,
+  op: { return: number; volatility: number } | null
+) {
+  const W = 360, H = 250, PL = 44, PR = 14, PT = 16, PB = 34;
+  const V = points.map((p) => p.volatility), R = points.map((p) => p.return);
+  if (bm) { V.push(bm.volatility); R.push(bm.return); }
+  if (op) { V.push(op.volatility); R.push(op.return); }
   const vMin = Math.min(...V), vMax = Math.max(...V), rMin = Math.min(...R), rMax = Math.max(...R);
-  const sx = (v: number) => 38 + ((v - vMin) / ((vMax - vMin) || 1)) * (350 - 38);
-  const sy = (r: number) => 200 - ((r - rMin) / ((rMax - rMin) || 1)) * (200 - 20);
-  const path = ef.slice().sort((a: any, b: any) => a.volatility - b.volatility).map((p: any, i: number) => `${i ? "L" : "M"}${sx(p.volatility).toFixed(1)},${sy(p.return).toFixed(1)}`).join(" ");
-  return { path, bm: bm ? { x: sx(bm.volatility), y: sy(bm.return) } : null, op: op ? { x: sx(op.volatility), y: sy(op.return) } : null };
+  const vPad = (vMax - vMin || 0.01) * 0.08, rPad = (rMax - rMin || 0.01) * 0.12;
+  const vLo = vMin - vPad, vHi = vMax + vPad, rLo = rMin - rPad, rHi = rMax + rPad;
+  const sx = (v: number) => PL + ((v - vLo) / ((vHi - vLo) || 1)) * (W - PL - PR);
+  const sy = (r: number) => (H - PB) - ((r - rLo) / ((rHi - rLo) || 1)) * (H - PB - PT);
+  const sorted = points.slice().sort((a, b) => a.volatility - b.volatility);
+  const path = sorted.length >= 2 ? sorted.map((p, i) => `${i ? "L" : "M"}${sx(p.volatility).toFixed(1)},${sy(p.return).toFixed(1)}`).join(" ") : null;
+  return {
+    W, H, PL, PR, PT, PB, sx, sy, vLo, vHi, rLo, rHi,
+    pts: points.map((p) => ({ ...p, x: sx(p.volatility), y: sy(p.return) })),
+    path,
+    bm: bm ? { x: sx(bm.volatility), y: sy(bm.return) } : null,
+    op: op ? { x: sx(op.volatility), y: sy(op.return) } : null,
+  };
 }
-function buildMC(sim: any) {
-  const paths = sim?.risk_metrics?.simulation_paths;
-  if (!Array.isArray(paths) || !paths.length || !Array.isArray(paths[0])) return null;
-  const n = paths[0].length;
-  const idx = [0, 1, 2, 3, 4, 5].map((k) => Math.floor((k / 5) * (paths.length - 1)));
-  let maxAbs = 0.05;
-  idx.forEach((i) => paths[i].forEach((v: number) => { maxAbs = Math.max(maxAbs, Math.abs(v)); }));
-  const sx = (i: number) => 30 + (i / (n - 1)) * (350 - 30);
-  const sy = (v: number) => Math.max(5, Math.min(225, 115 - (v / maxAbs) * 80));
-  return idx.map((i) => paths[i].map((v: number, j: number) => `${j ? "L" : "M"}${sx(j).toFixed(1)},${sy(v).toFixed(1)}`).join(" "));
+type FrontierChart = ReturnType<typeof computeFrontierChart>;
+function buildFrontier(sim: any): FrontierChart | null {
+  const ef = sim?.efficient_frontier;
+  if (!Array.isArray(ef) || !ef.length) return null;
+  const rf = sim.risk_free_rate || 0.035;
+  const points = ef.map((p: any) => ({
+    return: p.return, volatility: p.volatility, weights: p.weights || {},
+    sharpe: p.volatility > 1e-6 ? (p.return - rf) / p.volatility : 0,
+  }));
+  return computeFrontierChart(points, sim.benchmark_portfolio || null, sim.optimized_portfolio || null);
+}
+// Historical crisis scenarios: `asset_impacts` is the scenario's raw market-wide
+// shock (identical for every portfolio) — NOT this portfolio's exposure. Only
+// `portfolio_return` (weights · shocks) is portfolio-specific. The per-asset
+// breakdown shown to the user must be computed here as weight × shock, which
+// sums exactly to `portfolio_return`.
+function stressFromSim(sim: any) {
+  const list = sim?.historical_stress_tests, w = sim?.optimized_weights;
+  if (!Array.isArray(list) || !list.length || !w) return null;
+  return list.map((s: any) => ({
+    nameKr: s.name_kr,
+    portfolioReturn: s.portfolio_return,
+    contrib: ASSET_ORDER.filter((a) => a in (s.asset_impacts || {})).map((a) => ({
+      n: ASSET_KR[a], contribution: (w[a] || 0) * s.asset_impacts[a],
+    })),
+  }));
+}
+function histoFromSim(sim: any) {
+  const m = sim?.risk_metrics, bins = m?.histogram_data;
+  if (!Array.isArray(bins) || bins.length < 2) return null;
+  const xs = bins.map((b: any) => b.x), ys = bins.map((b: any) => b.y);
+  return { bins, xMin: Math.min(...xs), xMax: Math.max(...xs), yMax: Math.max(...ys, 1e-9),
+           var95: m.var_95, cvar95: m.cvar_95, mean: m.expected_return };
 }
 
 function AllocationTab({ sim }: { sim: any }) {
@@ -1079,75 +2299,87 @@ function AllocationTab({ sim }: { sim: any }) {
         </div>
       </Card>
 
-      {/* grouped benchmark vs optimized */}
-      <Card style={{ padding: "18px 22px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${C.b1}` }}>
-          <span style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb" }}>배분 비교 (벤치마크 vs 최적화)</span>
-          <div style={{ display: "flex", gap: 14, fontSize: 9.5, fontFamily: FA, letterSpacing: "1px", color: "#666" }}>
+      {/* 배분 비교 + BL 기대수익률 산출 근거 — paired side by side: one shows weight
+          change, the other shows return change (different metrics, seeing both at
+          once makes that distinction obvious instead of implying they should match). */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+        {/* grouped benchmark vs optimized */}
+        <Card style={{ padding: "18px 22px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${C.b1}` }}>
+            <span style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb" }}>배분 비교 (벤치마크 vs 최적화)</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, fontSize: 9.5, fontFamily: FA, letterSpacing: "1px", color: "#666", marginBottom: 10 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 6, background: "#404040", borderRadius: 1 }} />국민연금</span>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 6, background: "#fff", borderRadius: 1 }} />최적화</span>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: "0 0 30px", width: 30, height: 150, position: "relative" }}>
-            {["50%", "40", "30", "20", "10", "0"].map((y, i) => (
-              <span key={y} style={{ position: "absolute", right: 3, top: i * 30, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
-            ))}
-          </div>
-          <div style={{ flex: 1, height: 150, position: "relative" }}>
-            {[0, 30, 60, 90, 120, 150].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 150 ? "#262626" : "#141414" }} />))}
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: 26, padding: "0 6px" }}>
-              {alloc.map((a) => (
-                <div key={a.name} className="etc-bar" style={{ flex: 1, height: 150, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
-                  <div className="etc-tip" style={{ opacity: 0, transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 130, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
-                    <span style={{ color: "#888" }}>벤치</span> {a.bench}% <span style={{ color: C.t6 }}>→</span> <span style={{ color: "#fff" }}>{a.w}%</span> <span style={{ color: a.d >= 0 ? C.up : C.red }}>{a.d >= 0 ? "▲" : "▼"}{Math.abs(a.d)}</span>
-                  </div>
-                  <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 5, alignItems: "flex-end", height: 150, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
-                    <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 150 }} />
-                    <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 150 }} />
-                  </div>
-                </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ flex: "0 0 26px", width: 26, height: 180, position: "relative" }}>
+              {["50%", "40", "30", "20", "10", "0"].map((y, i) => (
+                <span key={y} style={{ position: "absolute", right: 3, top: i * 36, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
               ))}
             </div>
+            <div style={{ flex: 1, height: 180, position: "relative" }}>
+              {[0, 36, 72, 108, 144, 180].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 180 ? "#262626" : "#141414" }} />))}
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: 10, padding: "0 4px" }}>
+                {alloc.map((a) => (
+                  <div key={a.name} className="etc-bar" style={{ flex: 1, height: 180, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
+                    <div className="etc-tip" style={{ transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 158, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
+                      <span style={{ color: "#888" }}>벤치</span> {a.bench}% <span style={{ color: C.t6 }}>→</span> <span style={{ color: "#fff" }}>{a.w}%</span> <span style={{ color: a.d >= 0 ? C.up : C.red }}>{a.d >= 0 ? "▲" : "▼"}{Math.abs(a.d)}</span>
+                    </div>
+                    <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 3, alignItems: "flex-end", height: 180, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
+                      <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 180 }} />
+                      <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 180 }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 26, padding: "8px 6px 0", marginLeft: 38 }}>
-          {alloc.map((a) => (<span key={a.name} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "#aaa" }}>{a.name}</span>))}
-        </div>
-      </Card>
+          <div style={{ display: "flex", gap: 10, padding: "8px 4px 0", marginLeft: 32 }}>
+            {alloc.map((a) => (<span key={a.name} style={{ flex: 1, textAlign: "center", fontSize: 9.5, color: "#aaa" }}>{a.name}</span>))}
+          </div>
+        </Card>
 
-      {/* BL attribution */}
-      <Card style={{ padding: "18px 22px" }}>
-        <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 14 }}>BL 기대수익률 산출 근거 (Prior → Posterior)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 70px 70px 64px 1fr", gap: "0 14px", fontSize: 9, fontFamily: FA, letterSpacing: "1px", color: C.t5, paddingBottom: 9, borderBottom: `1px solid ${C.b1}` }}>
-          <span>자산</span><span style={{ textAlign: "right" }}>PRIOR</span><span style={{ textAlign: "right" }}>POST</span><span style={{ textAlign: "right" }}>Δ</span><span style={{ paddingLeft: 6 }}>뷰 근거</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 70px 70px 64px 1fr", gap: "15px 14px", alignItems: "start", fontSize: 11.5, paddingTop: 11 }}>
-          {attrib.map((r: any) => (
-            <React.Fragment key={r.name}>
-              <span style={{ display: "flex", alignItems: "center", gap: 7, color: "#ddd", paddingTop: 1 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: r.color, flex: "0 0 auto" }} />{r.name}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: "#999", paddingTop: 1 }}>{r.prior}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: r.delta === "—" ? "#999" : "#fff", paddingTop: 1 }}>{r.post}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: r.dc, paddingTop: 1 }}>{r.delta}</span>
-              <span style={{ paddingLeft: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: r.src ? "#9a9a9a" : "#666" }}>{r.why}</span>
-                {r.src ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: C.cyan, cursor: "pointer" }}>
-                    <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: r.tagDark ? "#fff" : "#000", background: r.tagDark ? "transparent" : "#fff", border: r.tagDark ? "1px solid #333" : "none", padding: "1px 4px", borderRadius: 2, fontWeight: 700 }}>{r.tag}</span>
-                    {r.src}
-                  </span>
-                ) : (<span style={{ fontSize: 10, color: "#4a4a4a" }}>기여 소스 없음</span>)}
-              </span>
-            </React.Fragment>
-          ))}
-        </div>
-      </Card>
+        {/* BL attribution */}
+        <Card style={{ padding: "18px 22px" }}>
+          <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 14 }}>BL 기대수익률 산출 근거 (Prior → Posterior)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {attrib.map((r: any) => (
+              <div key={r.name} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7, color: "#ddd", flex: "0 0 auto" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: r.color, flex: "0 0 auto" }} />{r.name}</span>
+                  <span style={{ marginLeft: "auto", fontFamily: FM, color: "#999" }}>{r.prior}</span>
+                  <span style={{ fontFamily: FM, color: C.t6 }}>→</span>
+                  <span style={{ fontFamily: FM, color: r.delta === "—" ? "#999" : "#fff" }}>{r.post}</span>
+                  <span style={{ fontFamily: FM, color: r.dc, flex: "0 0 46px", textAlign: "right" }}>{r.delta}</span>
+                </div>
+                <div style={{ paddingLeft: 15 }}>
+                  <span style={{ fontSize: 11, color: r.src ? "#9a9a9a" : "#666" }}>{r.why}</span>
+                  {r.src ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: C.cyan, marginTop: 3 }}>
+                      <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: r.tagDark ? "#fff" : "#000", background: r.tagDark ? "transparent" : "#fff", border: r.tagDark ? "1px solid #333" : "none", padding: "1px 4px", borderRadius: 2, fontWeight: 700 }}>{r.tag}</span>
+                      {r.src}
+                    </div>
+                  ) : (<div style={{ fontSize: 10, color: "#4a4a4a", marginTop: 3 }}>기여 소스 없음</div>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
 
 function RiskTab({ sim }: { sim: any }) {
   const risk = riskFromSim(sim) || RISK;
+  const histo = histoFromSim(sim) || HISTO_MOCK;
+  const stress = stressFromSim(sim) || STRESS_MOCK;
+  const HW = 360, HH = 190, HPL = 14, HPR = 14, HPT = 16, HPB = 26;
+  const barW = (HW - HPL - HPR) / histo.bins.length;
+  const sxh = (x: number) => HPL + ((x - histo.xMin) / ((histo.xMax - histo.xMin) || 1)) * (HW - HPL - HPR);
+  const syh = (y: number) => (HH - HPB) - (y / histo.yMax) * (HH - HPB - HPT);
+  const xTicks = [0.1, 0.5, 0.9].map((f) => histo.xMin + f * (histo.xMax - histo.xMin));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 1, background: C.b1, border: `1px solid ${C.b6}`, borderRadius: 8, overflow: "hidden" }}>
@@ -1159,8 +2391,49 @@ function RiskTab({ sim }: { sim: any }) {
         ))}
       </div>
       <Card>
-        <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 6 }}>몬테카를로 · 역사적 스트레스</div>
-        <p style={{ fontSize: 12, lineHeight: 1.7, color: C.t3 }}>10,000회 몬테카를로 경로와 역사적 위기 시나리오(GFC·코로나·2022 금리인상)를 적용한 분포·낙폭 차트가 이 자리에 들어갑니다. 다음 단계에서 <span style={{ color: "#fff" }}>/simulate · /stress-test</span> 엔드포인트와 recharts로 연결합니다.</p>
+        <CardTitle right="10,000회 시뮬레이션">몬테카를로 수익률 분포</CardTitle>
+        <svg viewBox={`0 0 ${HW} ${HH}`} style={{ width: "100%", height: 210 }}>
+          <line x1={HPL} y1={HH - HPB} x2={HW - HPR} y2={HH - HPB} stroke="#1d1d1d" strokeWidth="1" />
+          {histo.bins.map((b: any, i: number) => {
+            const x = sxh(b.x), y = syh(b.y), h = Math.max(0, (HH - HPB) - y);
+            const loss = b.x < histo.var95;
+            return <rect key={i} x={x - barW * 0.42} y={y} width={Math.max(0.5, barW * 0.84)} height={h} fill={loss ? C.redL : C.t4} opacity={loss ? 0.85 : 0.65} />;
+          })}
+          {[
+            { v: histo.cvar95, c: C.red, label: "CVaR 95%", ly: 22 },
+            { v: histo.var95, c: C.redL, label: "VaR 95%", ly: 38 },
+            { v: histo.mean, c: "#fff", label: "평균", ly: 22 },
+          ].map((r, i) => (
+            <g key={i}>
+              <line x1={sxh(r.v)} y1={HPT} x2={sxh(r.v)} y2={HH - HPB} stroke={r.c} strokeWidth="1" strokeDasharray="3 3" />
+              <text x={sxh(r.v)} y={r.ly} fill={r.c} fontSize="8.5" textAnchor="middle" fontFamily={FM}>{r.label}</text>
+            </g>
+          ))}
+          {xTicks.map((v, i) => (
+            <text key={i} x={sxh(v)} y={HH - 6} fill="#555" fontSize="8.5" textAnchor="middle" fontFamily={FM}>{(v * 100).toFixed(0)}%</text>
+          ))}
+        </svg>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 4 }}>10,000개의 1년 시뮬레이션 경로 중 최종 수익률의 분포입니다. 점선은 예상 손실 구간(VaR·CVaR)과 평균 수익률을 나타냅니다.</p>
+      </Card>
+      <Card>
+        <CardTitle right="현재 포트폴리오 기준">역사적 위기 시나리오</CardTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          {stress.map((s) => (
+            <div key={s.nameKr} style={{ border: `1px solid ${C.b3}`, borderRadius: 9, padding: "13px 15px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: "#ddd" }}>{s.nameKr}</span>
+              <span style={{ fontFamily: FM, fontSize: 20, fontWeight: 700, color: s.portfolioReturn >= 0 ? C.up : C.red }}>{s.portfolioReturn >= 0 ? "+" : ""}{(s.portfolioReturn * 100).toFixed(1)}%</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {s.contrib.map((c) => (
+                  <div key={c.n} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.t4 }}>
+                    <span>{c.n}</span>
+                    <span style={{ fontFamily: FM, color: c.contribution >= 0 ? C.up : C.red }}>{c.contribution >= 0 ? "+" : ""}{(c.contribution * 100).toFixed(1)}%p</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 12 }}>2008년 금융위기·2020년 코로나19 같은 상황이 재현된다면, 현재 포트폴리오는 자산별 비중을 반영해 이만큼의 손실을 볼 것으로 추정됩니다. %p는 각 자산이 손익에 기여한 정도입니다.</p>
       </Card>
     </div>
   );
@@ -1175,74 +2448,79 @@ function CardTitle({ children, right }: { children: React.ReactNode; right?: Rea
   );
 }
 
-const DEV_MOCK = [
-  { n: "해외주식", c: C.up, h: "38%", up: true, v: "+4.8", pos: { top: 6 } as React.CSSProperties },
-  { n: "국내주식", c: C.red, h: "30%", up: false, v: "−3.6", pos: { bottom: 24 } as React.CSSProperties },
-  { n: "국내채권", c: C.up, h: "13%", up: true, v: "+1.4", pos: { top: 48 } as React.CSSProperties },
-  { n: "해외채권", c: C.up, h: "16%", up: true, v: "+1.7", pos: { top: 44 } as React.CSSProperties },
-  { n: "대체투자", c: C.red, h: "36%", up: false, v: "−4.3", pos: { bottom: 20 } as React.CSSProperties },
-];
-
 function FrontierTab({ sim }: { sim: any }) {
-  const DEV = devFromSim(sim) || DEV_MOCK;
-  const fr = buildFrontier(sim);
-  const mc = buildMC(sim);
+  const [selected, setSelected] = useState<number | null>(null);
+  useEffect(() => { setSelected(null); }, [sim?.simulation_id]);
+  const fr = buildFrontier(sim) || computeFrontierChart(FRONTIER_MOCK_POINTS, FRONTIER_MOCK_BM, FRONTIER_MOCK_OP);
+  const { pts } = fr;
+  const minVarIdx = pts.length ? pts.reduce((b, p, i) => (p.volatility < pts[b].volatility ? i : b), 0) : -1;
+  const maxSharpeIdx = pts.length ? pts.reduce((b, p, i) => (p.sharpe > pts[b].sharpe ? i : b), 0) : -1;
+  const selectedPt = selected != null ? pts[selected] : null;
+  const panelWeights = selectedPt?.weights || sim?.optimized_weights || FRONTIER_MOCK_OP_WEIGHTS;
+  const panelLabel = selectedPt
+    ? `프론티어 지점 배분 · 변동성 ${(selectedPt.volatility * 100).toFixed(1)}% · 수익 ${(selectedPt.return * 100).toFixed(1)}%`
+    : "최적화 포트폴리오 배분";
+  const panelRows = ASSET_ORDER.filter((a) => a in panelWeights).map((a) => ({ name: ASSET_KR[a], color: ASSET_HEX[a] || C.violet, w: r1(panelWeights[a]) }));
+  const yTicks = [0.25, 0.5, 0.75].map((f) => fr.rLo + f * (fr.rHi - fr.rLo));
+  const xTicks = [0.25, 0.5, 0.75].map((f) => fr.vLo + f * (fr.vHi - fr.vLo));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Card>
-          <CardTitle right="위험 vs 수익">효율적 프론티어</CardTitle>
-          <svg viewBox="0 0 360 230" style={{ width: "100%", height: 230 }}>
-            <line x1="38" y1="12" x2="38" y2="200" stroke="#1d1d1d" strokeWidth="1" />
-            <line x1="38" y1="200" x2="350" y2="200" stroke="#1d1d1d" strokeWidth="1" />
-            {fr ? (
-              <>
-                <path d={fr.path} fill="none" stroke="#525252" strokeWidth="1.6" />
-                {fr.bm && <><circle cx={fr.bm.x} cy={fr.bm.y} r="5" fill="#8a8a8f" /><text x={fr.bm.x + 9} y={fr.bm.y + 4} fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text></>}
-                {fr.op && <><path d={`M${fr.op.x},${fr.op.y - 6} l7,12 l-14,0 z`} fill="#fff" /><text x={fr.op.x - 16} y={fr.op.y - 10} fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text></>}
-              </>
-            ) : (
-              <>
-                <path d="M60,180 C140,90 250,55 340,40" fill="none" stroke="#525252" strokeWidth="1.6" />
-                <circle cx="172" cy="118" r="5" fill="#8a8a8f" /><text x="182" y="122" fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text>
-                <path d="M236,72 l7,12 l-14,0 z" fill="#fff" /><text x="220" y="64" fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text>
-              </>
-            )}
-            <text x="300" y="216" fill="#555" fontSize="9" fontFamily="Pretendard">변동성 →</text>
-            <text x="6" y="20" fill="#555" fontSize="9" fontFamily="Pretendard">수익</text>
-          </svg>
-        </Card>
-        <Card>
-          <CardTitle right="15개 샘플">몬테카를로 드리프트 경로</CardTitle>
-          <svg viewBox="0 0 360 230" style={{ width: "100%", height: 230 }}>
-            <line x1="30" y1="115" x2="350" y2="115" stroke="#161616" strokeWidth="1" strokeDasharray="3 3" />
-            {mc ? (
-              mc.map((d, i) => (<path key={i} d={d} fill="none" stroke={`rgba(255,255,255,${[1, 0.4, 0.28, 0.22, 0.18, 0.14][i] ?? 0.2})`} strokeWidth={i === 0 ? 1.4 : 1} />))
-            ) : (
-              <>
-                <path d="M30,115 C110,100 200,70 350,34" fill="none" stroke="#fff" strokeWidth="1.4" />
-                <path d="M30,115 C110,108 200,92 350,66" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1" />
-                <path d="M30,115 C110,112 200,104 350,90" fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1" />
-                <path d="M30,115 C110,120 200,118 350,108" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1" />
-                <path d="M30,115 C110,126 200,138 350,156" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-                <path d="M30,115 C110,134 200,160 350,194" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="1" />
-              </>
-            )}
-            <text x="280" y="218" fill="#555" fontSize="9" fontFamily="Pretendard">252 거래일 →</text>
-          </svg>
-        </Card>
-      </div>
       <Card>
-        <CardTitle>BL 가중치 시장 편차 (pp)</CardTitle>
-        <div style={{ position: "relative", height: 150, display: "flex", alignItems: "center", gap: 26, padding: "0 8px" }}>
-          <div style={{ position: "absolute", left: 8, right: 8, top: "50%", height: 1, background: "#262626" }} />
-          {DEV.map((d) => (
-            <div key={d.n} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", position: "relative" }}>
-              <div style={{ width: 38, background: d.c, height: d.h, ...(d.up ? { alignSelf: "flex-end", marginBottom: 75 } : { marginTop: 75 }) }} />
-              <span style={{ position: "absolute", bottom: 8, fontSize: 10, color: "#aaa" }}>{d.n}</span>
-              <span style={{ position: "absolute", ...d.pos, fontSize: 10, fontFamily: FM, color: d.c }}>{d.v}</span>
-            </div>
+        <CardTitle right="위험 vs 수익">효율적 프론티어</CardTitle>
+        <svg viewBox={`0 0 ${fr.W} ${fr.H}`} style={{ width: "100%", height: 280 }}>
+          {yTicks.map((v, i) => (
+            <g key={`y${i}`}>
+              <line x1={fr.PL} y1={fr.sy(v)} x2={fr.W - fr.PR} y2={fr.sy(v)} stroke="#161616" strokeWidth="1" />
+              <text x={fr.PL - 6} y={fr.sy(v) + 3} fill="#555" fontSize="8.5" textAnchor="end" fontFamily={FM}>{(v * 100).toFixed(1)}%</text>
+            </g>
           ))}
+          {xTicks.map((v, i) => (
+            <text key={`x${i}`} x={fr.sx(v)} y={fr.H - fr.PB + 14} fill="#555" fontSize="8.5" textAnchor="middle" fontFamily={FM}>{(v * 100).toFixed(1)}%</text>
+          ))}
+          <line x1={fr.PL} y1={fr.PT} x2={fr.PL} y2={fr.H - fr.PB} stroke="#1d1d1d" strokeWidth="1" />
+          <line x1={fr.PL} y1={fr.H - fr.PB} x2={fr.W - fr.PR} y2={fr.H - fr.PB} stroke="#1d1d1d" strokeWidth="1" />
+          {fr.path && <path d={fr.path} fill="none" stroke="#525252" strokeWidth="1.6" />}
+          {pts.map((p, i) => (
+            <g key={i}>
+              <circle cx={p.x} cy={p.y} r={9} fill="transparent" style={{ cursor: "pointer" }} onClick={() => setSelected(selected === i ? null : i)} />
+              <circle
+                cx={p.x} cy={p.y}
+                r={i === minVarIdx || i === maxSharpeIdx ? 5 : 3.5}
+                fill={i === minVarIdx ? C.cyan : i === maxSharpeIdx ? C.green : "#8a8a8f"}
+                stroke={selected === i ? "#fff" : "none"} strokeWidth={1.5}
+                style={{ pointerEvents: "none" }}
+              />
+            </g>
+          ))}
+          {fr.bm && <><circle cx={fr.bm.x} cy={fr.bm.y} r="5" fill="#8a8a8f" /><text x={fr.bm.x + 9} y={fr.bm.y + 4} fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text></>}
+          {fr.op && <><path d={`M${fr.op.x},${fr.op.y - 6} l7,12 l-14,0 z`} fill="#fff" /><text x={fr.op.x - 16} y={fr.op.y - 10} fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text></>}
+          <text x={fr.W - fr.PR} y={fr.H - 6} fill="#555" fontSize="9" fontFamily="Pretendard" textAnchor="end">변동성(연간) →</text>
+          <text x={fr.PL} y={fr.PT - 4} fill="#555" fontSize="9" fontFamily="Pretendard">수익(연간)</text>
+        </svg>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 9.5, fontFamily: FA, letterSpacing: ".5px", color: "#888", marginTop: 4 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#8a8a8f" }} />프론티어 지점</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: C.cyan }} />최소분산</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: C.green }} />최대샤프</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 0, height: 0, borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderBottom: "7px solid #fff" }} />최적화</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#8a8a8f", opacity: 0.6 }} />벤치마크</span>
+        </div>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 8 }}>곡선 위 각 점은 특정 위험(변동성) 수준에서 얻을 수 있는 최고 기대수익을 나타냅니다. 점을 클릭하면 그 지점의 자산 배분을 아래에서 볼 수 있습니다.</p>
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.b1}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: "#ddd" }}>{panelLabel}</span>
+            {selectedPt && (
+              <span onClick={() => setSelected(null)} style={{ cursor: "pointer", fontSize: 9.5, color: C.t4, marginLeft: "auto" }}>✕ 초기화</span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {panelRows.map((r) => (
+              <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ flex: "0 0 70px", display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "#ddd" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />{r.name}</span>
+                <div style={{ flex: 1, height: 6, background: C.b1, borderRadius: 3, overflow: "hidden" }}><div style={{ height: 6, width: `${(r.w / 50) * 100}%`, background: r.color }} /></div>
+                <span style={{ flex: "0 0 44px", textAlign: "right", fontFamily: FM, fontSize: 11 }}>{r.w}%</span>
+              </div>
+            ))}
+          </div>
         </div>
       </Card>
     </div>
@@ -1265,9 +2543,9 @@ function Tag({ kind, style }: { kind: string; style: string }) {
 
 const INTEL_CAT: Record<string, [string, string]> = { RESEARCH: ["리서치", "fill"], NEWS: ["뉴스", "outline"], USER_ASSET: ["내 자산", "cyan"] };
 
-function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, progress, onIngestUrl, onIngestPdf, ingesting }: {
-  intel: any[]; onOpen: (t: any) => void; onAttach: (t: any) => void; onDelete: (id: string) => void; onRefresh: () => void; refreshing: boolean;
-  progress: { phase: string; items: string[] } | null; onIngestUrl: (u: string) => void; onIngestPdf: (f: File) => void; ingesting: boolean;
+function IntelTab({ intel, onOpen, seenIds, onAttach, onDelete, onRefresh, refreshing, progress, notice, onIngestUrl, onIngestPdf, ingesting }: {
+  intel: any[]; onOpen: (t: any) => void; seenIds: Set<string>; onAttach: (t: any) => void; onDelete: (id: string) => void; onRefresh: () => void; refreshing: boolean;
+  progress: { phase: string; items: string[] } | null; notice?: string; onIngestUrl: (u: string) => void; onIngestPdf: (f: File) => void; ingesting: boolean;
 }) {
   const [urlText, setUrlText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1283,6 +2561,8 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
         return {
           tag, tagStyle, conf: `신뢰도 ${conf}%`, cc,
           date: t.date ? String(t.date).slice(0, 10) : "",
+          released: fmtKST(t.created_at),                 // when the AI released this analysis (KST)
+          isNew: !!t.id && !seenIds.has(t.id),            // unopened by this user
           assets: (t.ai_interpretation?.impacted_assets || []) as string[],
           title: t.title || "(제목 없음)",
           body: `${t.ai_interpretation?.summary || t.content || ""}`.slice(0, 165),
@@ -1291,7 +2571,7 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
           raw: t as any,
         };
       })
-    : INTEL_CARDS.map((c) => ({ ...c, date: "2026-06-28", assets: [] as string[], raw: null as any }));
+    : INTEL_CARDS.map((c) => ({ ...c, date: "2026-06-28", released: "", isNew: false, assets: [] as string[], raw: null as any }));
   const submitUrl = () => { if (urlText.trim()) { onIngestUrl(urlText); setUrlText(""); } };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1327,6 +2607,11 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
         <button onClick={() => fileRef.current?.click()} disabled={ingesting} style={{ fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: "#000", background: "#fff", padding: "8px 13px", borderRadius: 7, border: "none", cursor: ingesting ? "wait" : "pointer" }}>PDF 업로드</button>
       </div>
 
+      {/* result/error notice from the last refresh — never fail silently */}
+      {!refreshing && notice && (
+        <div style={{ border: `1px solid ${notice.startsWith("⚠") ? C.red : C.b3}`, background: notice.startsWith("⚠") ? "rgba(255,80,0,.10)" : C.panel2, color: notice.startsWith("⚠") ? "#ffb088" : C.t2, borderRadius: 8, padding: "9px 13px", fontSize: 11.5, fontFamily: FM }}>{notice}</div>
+      )}
+
       {/* progress log during refresh, else the cards */}
       {refreshing && progress ? (
         <div style={{ border: `1px solid ${C.b3}`, background: "#050505", borderRadius: 10, overflow: "hidden", minHeight: 340 }}>
@@ -1343,7 +2628,7 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
           </div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           {cards.map((c, i) => (
             <div
               key={i}
@@ -1355,7 +2640,12 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                 <Tag kind={c.tag} style={c.tagStyle} />
-                {c.date && <span style={{ fontSize: 9.5, fontFamily: FM, color: C.t5 }}>{c.date}</span>}
+                {c.isNew && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 8, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: "#000", background: C.green, padding: "2px 6px", borderRadius: 3 }}>
+                    <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#000" }} />NEW
+                  </span>
+                )}
+                {(c.released || c.date) && <span style={{ fontSize: 9.5, fontFamily: FM, color: C.t5 }}>{c.released || c.date}</span>}
                 <span style={{ fontSize: 10, fontFamily: FM, color: c.cc, marginLeft: "auto" }}>{c.conf}</span>
               </div>
               <div style={{ fontSize: 15, fontWeight: 600, color: "#fff", lineHeight: 1.45, marginBottom: 8 }}>{c.title}</div>
@@ -1387,9 +2677,12 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
   );
 }
 
+// ── MacroTab helpers & constants ─────────────────────────────────────────────
+
 const MACRO_IND = [
   ["US 10Y", "4.18%", "▼", C.up], ["DXY", "104.2", "▲", C.red], ["USD/KRW", "1,382", "▲", C.red], ["WTI", "$71.3", "▼", C.up],
-  ["GOLD", "$2,340", "▲", C.red], ["KOSPI", "2,610", "▼", C.red], ["S&P 500", "5,420", "▲", C.up], ["KR 3Y", "3.02%", "▼", C.up],
+  ["GOLD", "$2,340", "▲", C.red], ["KOSPI", "2,610", "▼", C.red], ["S&P 500", "5,420", "▲", C.up], ["NASDAQ", "17,330", "▲", C.up],
+  ["VIX", "23.4", "▲", C.red], ["MOVE", "115", "▲", C.red],
 ];
 const HEAT_LABELS = ["국내株", "해외株", "국내債", "해외債", "대체"];
 const HEAT: [string, string, string][][] = [
@@ -1407,6 +2700,7 @@ const REGIME_DESC: Record<string, string> = {
 const MACRO_IND_SPEC: [string, string][] = [
   ["US 10Y", "US10Y"], ["DXY", "DXY"], ["USD/KRW", "USD_KRW"], ["WTI", "WTI"],
   ["GOLD", "GOLD"], ["KOSPI", "KOSPI"], ["S&P 500", "SPY"], ["NASDAQ", "QQQ"],
+  ["VIX", "VIX"], ["채권변동성", "MOVE"],
 ];
 const HEAT_PROXY: [string, string][] = [["국내株", "KOSPI"], ["해외株", "SPY"], ["국내債", "US10Y"], ["해외債", "HYG"], ["대체", "GOLD"]];
 
@@ -1418,22 +2712,119 @@ function heatCell(v: number): [string, string, string] {
   return [s, `rgba(239,68,68,${a.toFixed(2)})`, "#fca5a5"];
 }
 
-function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; regime: string; regimeLabel: string; regimeColor: string }) {
+function Sparkline({ history, color, w = 60, h = 24 }: { history?: Array<{ date: string; value: number }>; color?: string; w?: number; h?: number }) {
+  if (!history || history.length < 3) return <span style={{ display: "inline-block", width: w, height: h }} />;
+  const vals = history.slice(-30).map(p => p.value);
+  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const tx = (i: number) => (i / (vals.length - 1)) * w;
+  const ty = (v: number) => h - 2 - ((v - mn) / rng) * (h - 4);
+  const pts = vals.map((v, i) => `${tx(i)},${ty(v)}`).join(" ");
+  const trend = vals[vals.length - 1] >= vals[0];
+  const stroke = color || (trend ? C.up : C.red);
+  const lx = tx(vals.length - 1), ly = ty(vals[vals.length - 1]);
+  return (
+    <svg width={w} height={h} style={{ display: "block", overflow: "visible", flexShrink: 0 }}>
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={lx} cy={ly} r={1.8} fill={stroke} />
+    </svg>
+  );
+}
+
+function YieldCurveChart({ macro }: { macro: any }) {
+  const curvePts = [
+    { label: "3M", key: "US3M" },
+    { label: "5Y", key: "US5Y" },
+    { label: "10Y", key: "US10Y" },
+    { label: "30Y", key: "US30Y" },
+  ].map(p => ({ label: p.label, rate: macro?.[p.key]?.current as number | undefined }))
+   .filter((p): p is { label: string; rate: number } => p.rate != null);
+
+  const useFallback = curvePts.length < 2;
+  const pts = useFallback
+    ? [{ label: "3M", rate: 5.27 }, { label: "5Y", rate: 4.21 }, { label: "10Y", rate: 4.18 }, { label: "30Y", rate: 4.41 }]
+    : curvePts;
+
+  const W = 420, H = 190, PL = 42, PR = 14, PT = 20, PB = 34;
+  const iW = W - PL - PR, iH = H - PT - PB;
+  const rates = pts.map(p => p.rate);
+  const mn = Math.min(...rates) - 0.15, mx = Math.max(...rates) + 0.15, rng = mx - mn || 1;
+  const tx = (i: number) => PL + (i / (pts.length - 1)) * iW;
+  const ty = (r: number) => PT + iH - ((r - mn) / rng) * iH;
+  const inverted = pts[0]?.rate != null && pts.find(p => p.label === "10Y") != null
+    ? pts[0].rate > (pts.find(p => p.label === "10Y")!.rate)
+    : false;
+  const col = inverted ? C.red : C.green;
+  const pathStr = pts.map((p, i) => `${tx(i)},${ty(p.rate)}`).join(" ");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>미국 국채 수익률 곡선</span>
+        {inverted && <span style={{ fontSize: 8, fontFamily: FA, color: C.red, background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.3)", padding: "2px 7px", borderRadius: 3, letterSpacing: ".5px" }}>역전 · 침체 경보</span>}
+        {!useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>실시간</span>}
+        {useFallback && <span style={{ fontSize: 8, fontFamily: FM, color: C.t5, marginLeft: "auto" }}>예시</span>}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", flex: 1, minHeight: 0 }}>
+        {[mn + rng * 0.1, mn + rng * 0.5, mn + rng * 0.9].map((v, i) => (
+          <g key={i}>
+            <line x1={PL} y1={ty(v)} x2={W - PR} y2={ty(v)} stroke="#1c1c1c" strokeWidth={1} />
+            <text x={PL - 5} y={ty(v) + 3.5} fill="#444" fontSize={9} textAnchor="end" fontFamily={FM}>{v.toFixed(1)}</text>
+          </g>
+        ))}
+        <polygon points={`${tx(0)},${PT + iH} ${pathStr} ${tx(pts.length - 1)},${PT + iH}`} fill={col} fillOpacity={0.08} />
+        <polyline points={pathStr} fill="none" stroke={col} strokeWidth={2} strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <g key={p.label}>
+            <circle cx={tx(i)} cy={ty(p.rate)} r={4} fill={col} />
+            <text x={tx(i)} y={ty(p.rate) - 9} fill={col} fontSize={10} textAnchor="middle" fontFamily={FM}>{p.rate.toFixed(2)}</text>
+            <text x={tx(i)} y={H - 8} fill="#555" fontSize={10} textAnchor="middle" fontFamily={FM}>{p.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+const REGIME_ORDER_LIST = ["LOW_VOL", "NORMAL", "ELEVATED_RISK", "CRISIS"] as const;
+const REGIME_COLORS_SEQ = [C.green, "#cfcfcf", C.amber, C.red];
+const REGIME_KR_SHORT: Record<string, string> = { LOW_VOL: "저위험", NORMAL: "정상", ELEVATED_RISK: "위험 고조", CRISIS: "위기" };
+
+function MacroTab({ macro, regime, regimeLabel, regimeColor, onRefresh, refreshing, updatedAt, notice }: {
+  macro: any; regime: string; regimeLabel: string; regimeColor: string;
+  onRefresh: () => void; refreshing: boolean; updatedAt: Date | null; notice?: string;
+}) {
   const vix = macro?.VIX;
+  const yieldSpread = macro?.YIELD_SPREAD;
+
   const regimeCards = [
     { l: "감지된 시장 레짐", v: macro ? regimeLabel : "위험 고조", vc: macro ? regimeColor : C.amber, d: REGIME_DESC[regime] || "RISK-OFF · 주식 비중 확대에 신중" },
-    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_1d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_1d >= 0 ? C.red : C.up) : C.red, d: "장기 평균 상회" },
+    { l: "VIX 변동성", v: vix ? String(vix.current) : "23.4", vc: C.white, arrow: vix ? (vix.change_1d >= 0 ? "▲" : "▼") : "▲", ac: vix ? (vix.change_1d >= 0 ? C.red : C.up) : C.red, d: vix?.change_1d != null ? `1일 ${vix.change_1d >= 0 ? "+" : ""}${vix.change_1d.toFixed(2)}%` : "장기 평균 상회" },
     { l: "위험회피 배율 λ", v: REGIME_LAMBDA[regime] || "1.25×", vc: C.white, d: "방어적 배분으로 상향" },
   ];
 
-  const indCells: [string, string, string, string][] = macro
+  const regimeIdx = REGIME_ORDER_LIST.indexOf(regime as typeof REGIME_ORDER_LIST[number]);
+
+  const indCells = macro
     ? MACRO_IND_SPEC.flatMap(([label, key]) => {
         const d = macro[key];
         if (!d || typeof d.current !== "number") return [];
         const up = (d.change_1d ?? 0) >= 0;
-        return [[label, fmtQuote(key, d.current), up ? "▲" : "▼", up ? C.up : C.red]] as [string, string, string, string][];
+        return [{ label, value: fmtQuote(key, d.current), up, change1d: d.change_1d ?? 0, history: d.history as Array<{ date: string; value: number }> | undefined }];
       })
-    : (MACRO_IND as [string, string, string, string][]);
+    : (MACRO_IND as [string, string, string, string][]).map(([l, v, a]) => ({ label: l, value: v, up: a === "▲", change1d: 0, history: undefined as undefined }));
+
+  const sentimentPulse: Array<{ label: string; sub: string; raw: number | undefined; fmt: (v: number) => string; tag: (v: number) => [string, string]; fallback: string }> = [
+    { label: "VIX 지수", sub: "주식 내재변동성", raw: vix?.current, fmt: (v) => v.toFixed(1), tag: (v) => v > 30 ? ["위기", C.red] : v > 20 ? ["경계", C.amber] : v > 13 ? ["정상", C.t3] : ["안정", C.green], fallback: "23.4" },
+    { label: "MOVE 지수", sub: "채권 내재변동성", raw: macro?.MOVE?.current, fmt: (v) => v.toFixed(0), tag: (v) => v > 140 ? ["고변동", C.red] : v > 100 ? ["경계", C.amber] : ["정상", C.t3], fallback: "—" },
+    { label: "10Y-3M 스프레드", sub: "장단기 금리차", raw: yieldSpread?.current, fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", tag: (v) => v < -0.1 ? ["역전", C.red] : v < 0.3 ? ["평탄", C.amber] : ["정상", C.green], fallback: "—" },
+    { label: "HY 크레딧", sub: "HYG 1일 변화", raw: macro?.HYG?.change_1d, fmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", tag: (v) => v < -1 ? ["확대", C.red] : v < 0 ? ["소폭 약세", C.amber] : ["타이트", C.green], fallback: "—" },
+  ];
+
+  const keyRates = [
+    { label: "미국 단기금리", sub: "US 3M T-Bill", key: "US3M" },
+    { label: "미국 장기금리", sub: "US 10Y Treasury", key: "US10Y" },
+    { label: "하이일드 ETF", sub: "HYG 현재가", key: "HYG" },
+  ].map(r => ({ ...r, current: macro?.[r.key]?.current as number | undefined, change1d: macro?.[r.key]?.change_1d as number | undefined }));
 
   const cm = macro?.correlation_matrix;
   const heatRows: [string, string, string][][] | null = cm
@@ -1444,28 +2835,133 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
     : null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 12 }}>
-        {regimeCards.map((r) => (
-          <Card key={r.l} style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 7 }}>
-            <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>{r.l}</span>
-            <span style={{ fontFamily: FA, fontSize: 20, fontWeight: 700, color: r.vc }}>{r.v} {r.arrow && <span style={{ fontSize: 11, color: r.ac }}>{r.arrow}</span>}</span>
-            <span style={{ fontSize: 10.5, color: "#888" }}>{r.d}</span>
-          </Card>
-        ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* header — manual refresh, since indicators are only fetched on page load otherwise */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 9 }}>
+          <span style={{ fontFamily: FA, fontWeight: 700, fontSize: 16, letterSpacing: ".5px" }}>매크로</span>
+          <span style={{ fontSize: 11.5, color: "#666" }}>{updatedAt ? `마지막 업데이트 · ${fmtKST(updatedAt.toISOString())}` : "실시간 지표"}</span>
+        </div>
+        <button onClick={onRefresh} disabled={refreshing} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: refreshing ? C.t5 : "#000", background: refreshing ? C.b3 : C.green, border: "none", padding: "7px 12px", borderRadius: 5, cursor: refreshing ? "wait" : "pointer" }}>{refreshing ? "새로고침 중…" : "↻ 매크로 새로고침"}</button>
       </div>
-      <Card>
+
+      {/* result/error notice from the last refresh — never fail silently */}
+      {!refreshing && notice && (
+        <div style={{ border: `1px solid ${notice.startsWith("⚠") ? C.red : C.b3}`, background: notice.startsWith("⚠") ? "rgba(255,80,0,.10)" : C.panel2, color: notice.startsWith("⚠") ? "#ffb088" : C.t2, borderRadius: 8, padding: "9px 13px", fontSize: 11.5, fontFamily: FM }}>{notice}</div>
+      )}
+
+      {/* S1: Regime Dashboard ──────────────────────────────────────────────── */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr" }}>
+          {regimeCards.map((r, i) => (
+            <div key={r.l} style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 6, borderRight: i < 2 ? `1px solid ${C.b2}` : undefined }}>
+              <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: "1.5px", color: C.t5 }}>{r.l}</span>
+              <span style={{ fontFamily: FA, fontSize: 20, fontWeight: 700, color: r.vc }}>
+                {r.v}{r.arrow && <span style={{ fontSize: 11, color: r.ac, marginLeft: 4 }}>{r.arrow}</span>}
+              </span>
+              <span style={{ fontSize: 10, color: "#777" }}>{r.d}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ borderTop: `1px solid ${C.b2}`, padding: "10px 18px 12px" }}>
+          <div style={{ display: "flex", gap: 3 }}>
+            {REGIME_ORDER_LIST.map((r, i) => {
+              const active = i === regimeIdx;
+              const col = REGIME_COLORS_SEQ[i];
+              const isFirst = i === 0;
+              const isLast = i === REGIME_ORDER_LIST.length - 1;
+              return (
+                <div key={r} style={{
+                  flex: 1,
+                  height: 40,
+                  borderRadius: isFirst ? "5px 2px 2px 5px" : isLast ? "2px 5px 5px 2px" : 2,
+                  background: active ? `${col}1f` : `${col}08`,
+                  border: `1px solid ${active ? col + "90" : col + "22"}`,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  boxShadow: active ? `0 0 14px ${col}30` : "none",
+                }}>
+                  <div style={{ width: 5, height: 5, borderRadius: "50%", background: active ? col : col + "40" }} />
+                  <span style={{ fontSize: 9, fontFamily: FA, letterSpacing: ".5px", fontWeight: active ? 700 : 400, color: active ? col : col + "55" }}>{REGIME_KR_SHORT[r]}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Card>
+
+      {/* S2: Yield Curve + Key Rates ────────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12 }}>
+        <Card style={{ padding: "14px 18px", display: "flex", flexDirection: "column" }}>
+          <YieldCurveChart macro={macro} />
+        </Card>
+        <Card style={{ padding: "14px 16px", display: "flex", flexDirection: "column" }}>
+          <CardTitle>주요 금리 현황</CardTitle>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "space-around" }}>
+            {keyRates.map((r, i) => (
+              <div key={r.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: i < keyRates.length - 1 ? `1px solid ${C.b2}` : undefined }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#bbb", fontWeight: 500 }}>{r.label}</div>
+                  <div style={{ fontSize: 8.5, color: C.t5, fontFamily: FA, letterSpacing: ".5px", marginTop: 1 }}>{r.sub}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontFamily: FM, fontSize: 14, fontWeight: 700, color: "#fff" }}>{r.current != null ? fmtQuote(r.key, r.current) : "—"}</div>
+                  {r.change1d != null && (
+                    <div style={{ fontSize: 9, fontFamily: FM, color: r.change1d >= 0 ? C.up : C.red, marginTop: 1 }}>
+                      {r.change1d >= 0 ? "▲" : "▼"}{Math.abs(r.change1d).toFixed(2)}%
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* S3: Macro Indicators with Sparklines ──────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
         <CardTitle right={macro ? "실시간" : undefined}>실시간 매크로 지표</CardTitle>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: C.b1, border: `1px solid ${C.b1}`, borderRadius: 6, overflow: "hidden" }}>
-          {indCells.map(([k, v, a, ac]) => (
-            <div key={k} style={{ background: C.card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 9, color: C.t5, fontFamily: FM }}>{k}</span>
-              <span style={{ fontFamily: FA, fontSize: 16, fontWeight: 700 }}>{v} <span style={{ fontSize: 10, color: ac }}>{a}</span></span>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: C.b2, border: `1px solid ${C.b2}`, borderRadius: 6, overflow: "hidden" }}>
+          {indCells.map((cell) => (
+            <div key={cell.label} style={{ background: C.card, padding: "11px 13px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ fontSize: 8.5, color: C.t5, fontFamily: FM }}>{cell.label}</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontFamily: FA, fontSize: 14, fontWeight: 700 }}>
+                  {cell.value} <span style={{ fontSize: 9.5, color: cell.up ? C.up : C.red }}>{cell.up ? "▲" : "▼"}</span>
+                </span>
+                <Sparkline history={cell.history} color={cell.up ? C.up : C.red} w={52} h={22} />
+              </div>
+              <span style={{ fontSize: 8, color: cell.up ? C.up : C.red, fontFamily: FM }}>{cell.up ? "+" : ""}{cell.change1d.toFixed(2)}% 1일</span>
             </div>
           ))}
         </div>
       </Card>
-      <Card>
+
+      {/* S4: Sentiment Pulse ────────────────────────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
+        <CardTitle right="시장 심리 지표">센티멘트 펄스</CardTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+          {sentimentPulse.map((s) => {
+            const val = s.raw != null ? s.fmt(s.raw) : s.fallback;
+            const [tagLabel, tagColor] = s.raw != null ? s.tag(s.raw) : ["—", C.t5];
+            return (
+              <div key={s.label} style={{ background: C.card2, border: `1px solid ${C.b2}`, borderRadius: 7, padding: "11px 13px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 8.5, fontFamily: FA, letterSpacing: "1px", color: C.t5 }}>{s.label}</span>
+                <span style={{ fontFamily: FM, fontSize: 18, fontWeight: 700, color: s.raw != null ? "#fff" : C.t5 }}>{val}</span>
+                <span style={{ fontSize: 9, color: C.t4, marginTop: -2 }}>{s.sub}</span>
+                <span style={{ display: "inline-flex", alignSelf: "flex-start", fontSize: 8.5, fontFamily: FA, color: tagColor, background: `${tagColor}1a`, border: `1px solid ${tagColor}40`, borderRadius: 3, padding: "2px 7px", letterSpacing: ".5px", marginTop: 2 }}>{tagLabel}</span>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* S5: Correlation Heatmap ────────────────────────────────────────────── */}
+      <Card style={{ padding: "14px 18px" }}>
         <CardTitle right={cm ? "1년 롤링 · 대용지표" : "60일 롤링"}>자산 상관관계 히트맵</CardTitle>
         <div style={{ display: "grid", gridTemplateColumns: "60px repeat(5,1fr)", gap: 4, fontFamily: FM, fontSize: 10.5 }}>
           <span />
@@ -1484,7 +2980,7 @@ function MacroTab({ macro, regime, regimeLabel, regimeColor }: { macro: any; reg
   );
 }
 
-const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#A78BFA", KR_BOND: "#34D399", GLOBAL_BOND: "#6EE7B7", ALTERNATIVE: "#FBBF24" };
+const ASSET_HEX: Record<string, string> = { KR_STOCK: "#3B82F6", GLOBAL_STOCK: "#A855F7", KR_BOND: "#2DD4BF", GLOBAL_BOND: "#FB923C", ALTERNATIVE: "#FACC15" };
 const Q_MOCK: any[] = [
   ["연준 의사록 — 도비시 기조 확인", "관련도 0.91", "감성 +0.6", C.up],
   ["반도체 수출 3개월 연속 증가", "관련도 0.84", "감성 +0.5", C.up],
@@ -1644,11 +3140,11 @@ function ResearchTab({ queue: qIn, theses: tIn, onCollect, collecting, collectPr
 }
 
 const REPORT_MOCK_ROWS = [
-  { name: "해외주식", color: C.violet, w: 39.5, d: 4.8, bench: 34.7 },
-  { name: "국내주식", color: C.blue, w: 17.2, d: -3.6, bench: 20.8 },
-  { name: "국내채권", color: C.green, w: 24.5, d: 1.4, bench: 23.1 },
-  { name: "해외채권", color: C.green2, w: 9.1, d: 1.7, bench: 7.4 },
-  { name: "대체투자", color: C.amber, w: 9.7, d: -4.3, bench: 14.0 },
+  { name: "해외주식", color: "#A855F7", w: 39.5, d: 4.8, bench: 34.7 },
+  { name: "국내주식", color: "#3B82F6", w: 17.2, d: -3.6, bench: 20.8 },
+  { name: "국내채권", color: "#2DD4BF", w: 24.5, d: 1.4, bench: 23.1 },
+  { name: "해외채권", color: "#FB923C", w: 9.1, d: 1.7, bench: 7.4 },
+  { name: "대체투자", color: "#FACC15", w: 9.7, d: -4.3, bench: 14.0 },
 ];
 const SOURCES_MOCK: [string, string, string, string, string][] = [
   ["리서치", "fill", "미 연준 2026 금리 인하 전망 · NPS 하우스뷰", "74%", C.up],
@@ -1657,7 +3153,75 @@ const SOURCES_MOCK: [string, string, string, string, string][] = [
   ["뉴스", "outline", "원/달러 1,380원 돌파 · 연합인포맥스", "61%", C.amber],
 ];
 
-function ReportTab({ sim }: { sim: any }) {
+// ── Report tab: a 4-column grid of past reports; selecting one shows the full
+// report (ReportDoc). A loading card appears while a new one is being generated.
+function ReportCard({ r, onClick, onDelete }: { r: any; onClick: () => void; onDelete: (id: number) => void }) {
+  const date = (r.created_at || "").slice(0, 10);
+  const opt = (r.optimizer || "ensemble").toUpperCase();
+  const [hover, setHover] = useState(false);
+  return (
+    <div onClick={onClick}
+      style={{ position: "relative", cursor: "pointer", background: C.panel2, border: `1px solid ${hover ? C.cyan : C.b2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 128, transition: "border-color .15s" }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}>
+      <span
+        onClick={(e) => { e.stopPropagation(); onDelete(r.id); }}
+        title="리포트 삭제"
+        style={{ position: "absolute", top: 8, right: 8, width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: C.t4, borderRadius: 4, opacity: hover ? 1 : 0, transition: "opacity .15s, color .15s, background .15s" }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = C.red; e.currentTarget.style.background = "rgba(239,68,68,.12)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = C.t4; e.currentTarget.style.background = "transparent"; }}>
+        ✕
+      </span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 9, fontFamily: FM, color: C.t5 }}>#{r.id} · {date}</span>
+        <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t3, border: `1px solid ${C.b4}`, borderRadius: 3, padding: "2px 5px", marginRight: 14 }}>{opt}</span>
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.title || "무제 리포트"}</span>
+      <span style={{ marginTop: "auto", fontSize: 9.5, color: C.green, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px" }}>리포트 열기 →</span>
+    </div>
+  );
+}
+function LoadingReportCard() {
+  return (
+    <div style={{ background: C.panel2, border: `1px dashed ${C.violet}`, borderRadius: 10, padding: 14, minHeight: 128, display: "flex", flexDirection: "column", gap: 12, justifyContent: "center", alignItems: "center" }}>
+      <span style={{ display: "inline-flex", gap: 4 }}>
+        {[0, 1, 2].map((i) => (<span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.violet, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />))}
+      </span>
+      <span style={{ fontSize: 10.5, color: C.violet, fontFamily: FA, letterSpacing: ".5px" }}>리포트 생성 중…</span>
+    </div>
+  );
+}
+function ReportTab({ reports, openReport, running, reportLoading, onOpen, onDelete, onBack }: {
+  reports: any[]; openReport: any | null; running: boolean; reportLoading: boolean;
+  onOpen: (id: number) => void; onDelete: (id: number) => void; onBack: () => void;
+}) {
+  if (openReport) {
+    return (
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
+        <div onClick={onBack} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: C.t3, marginBottom: 14 }}>← 리포트 목록</div>
+        <ReportDoc sim={openReport} />
+      </div>
+    );
+  }
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16 }}>
+        <span style={{ fontFamily: FA, fontWeight: 800, fontSize: 18, letterSpacing: ".3px" }}>생성된 리포트</span>
+        <span style={{ fontSize: 11, color: C.t4 }}>{reports.length}건{reportLoading ? " · 불러오는 중…" : ""}</span>
+      </div>
+      {reports.length === 0 && !running ? (
+        <div style={{ color: C.t4, fontSize: 12, lineHeight: 1.8, padding: "20px 2px" }}>아직 생성된 리포트가 없습니다. 왼쪽 데스크에서 뷰를 정하고 <b style={{ color: "#fff" }}>최적화 실행</b>을 하면 이 자리에 리포트가 생성됩니다.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+          {running && <LoadingReportCard />}
+          {reports.map((r) => (<ReportCard key={r.id} r={r} onClick={() => onOpen(r.id)} onDelete={onDelete} />))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportDoc({ sim }: { sim: any }) {
   const SectionH = ({ children, bar = "#fff", badge }: { children: React.ReactNode; bar?: string; badge?: string }) => (
     <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "26px 0 12px" }}>
       <span style={{ width: 3, height: 13, background: bar }} />
@@ -1670,6 +3234,9 @@ function ReportTab({ sim }: { sim: any }) {
   const attrib = attribFromSim(sim) || ATTRIB;
   const rm = sim?.risk_metrics, bm = sim?.benchmark_portfolio, op = sim?.optimized_portfolio;
   const mc = sim?.macro_context || {}, pm = sim?.pm_memo || {};
+  // δ (max-deviation) — defined early since the risk/recommendation copy references it.
+  const delta = typeof sim?.max_deviation === "number" ? sim.max_deviation : 0.05;
+  const deltaLabel = `±${(delta * 100).toFixed((delta * 100) % 1 === 0 ? 0 : 1)}%p`;
   const rf = sim?.risk_free_rate ?? 0.035;
   const expR = rm?.expected_return ?? 0.0684, vol = rm?.volatility ?? 0.0912;
   const sharpe = rm ? (rm.expected_return - rf) / (rm.volatility || 1e-6) : 0.61;
@@ -1690,7 +3257,7 @@ function ReportTab({ sim }: { sim: any }) {
     const a = (attrib as any[]).find((x) => x.name === r.name);
     const [stance, sc] = r.d >= 2 ? ["비중확대 OW", C.up] : r.d <= -2 ? ["비중축소 UW", C.red] : r.d > 0.3 ? ["소폭 확대", C.t2] : r.d < -0.3 ? ["소폭 축소", C.t2] : ["중립", C.t2];
     const conf = Math.abs(r.d) >= 3 ? "高" : Math.abs(r.d) >= 1 ? "中" : "—";
-    return [r.name, r.color, stance, sc, conf, f1(r.d), r.d >= 0 ? C.up : C.red, (a?.why as string) || "시장 균형 유지"];
+    return [r.name, r.color, stance, sc, conf, f1(r.d), r.d >= 0 ? C.up : C.red, (a?.why as string) || "시장 균형 유지", (a?.conflict as string) || ""];
   });
   const rrRows: [string, string, string, string, string][] = [
     ["연간 기대수익률", pf(benchR), pf(expR), dpp(expR - benchR), "#fff"],
@@ -1701,20 +3268,27 @@ function ReportTab({ sim }: { sim: any }) {
     ["예상 최대낙폭", "—", pf(mdd), "—", C.redL],
   ];
   const risks = [
-    [`① ${ow.name} 집중`, "영향 高 · 가능성 中", `단일 최대 오버웨이트(${f1(ow.d)}%p, 비중 ${ow.w.toFixed(1)}%). 해당 모멘텀 되돌림 시 손실 기여가 가장 크다.`, `${ow.name} 액티브 비중을 벤치마크 +5%p로 캡, 지수 풋 스프레드로 하방 5% 헤지.`],
+    [`① ${ow.name} 집중`, "영향 高 · 가능성 中", `단일 최대 오버웨이트(${f1(ow.d)}%p, 비중 ${ow.w.toFixed(1)}%). 해당 모멘텀 되돌림 시 손실 기여가 가장 크다.`, `${ow.name} 액티브 비중을 벤치마크 대비 ${deltaLabel} 이내로 캡, 지수 풋 스프레드로 하방 5% 헤지.`],
     ["② 환위험 (USD/KRW)", "영향 中 · 가능성 高", `원/달러 ${Math.round(usdkrw).toLocaleString()}원 수준에서 해외 익스포저가 KRW 대비 환노출. 원화 강세 전환 시 해외 수익을 잠식한다.`, "해외 익스포저 50%에 KRW 선물 오버레이, 분기 리밸런싱 시 헤지비율 재산정."],
     ["③ 금리·듀레이션", "영향 中 · 가능성 中", `채권 합산 ${f1(bondDelta)}%p 조정이 금리 경로 가정에 의존. 인하 지연·반등 시 채권·대체가 동반 약세할 수 있다.`, `채권 듀레이션 중립~단기 유지, US10Y 4.5% 상향 돌파를 뷰 재검토 트리거로 설정.`],
     ["④ 모델 리스크 (BL)", "영향 中 · 가능성 中", "사후 기대수익률이 뷰 신뢰도·τ·λ 가정에 민감하며 추정오차가 존재한다.", "앙상블(MVO·RP·HRP)로 단일모델 민감도 완화, 신뢰도 ±10% 민감도 분석 병행."],
   ];
-  const srcs = Array.from(new Set((attrib as any[]).map((a) => a.src).filter(Boolean))).slice(0, 5);
+  // Sources: aggregate EVERY cited source across all parsed views (+ attribution),
+  // deduped and unlimited — the report should list everything the analysis used.
+  const viewSrcs = ((sim?.parsed_views as any[]) || []).flatMap((v) => v?.sources || []);
+  const attribSrcs = (attrib as any[]).map((a) => a.src);
+  const srcs = Array.from(new Set([...viewSrcs, ...attribSrcs]
+    .map((s) => (s ? String(s).replace(/\s*↗\s*$/, "").trim() : ""))
+    .filter(Boolean)));
   const sources: [string, string, string, string, string][] = srcs.length
-    ? srcs.map((s) => ["근거", "outline", String(s), "", C.t3] as [string, string, string, string, string])
+    ? srcs.map((s) => ["근거", "outline", s, "", C.t3] as [string, string, string, string, string])
     : SOURCES_MOCK;
   const convictionText = pm?.investment_thesis_summary
     || `“${ow.name} 비중확대로 뷰를 표현하되, 환·변동성은 헤지로 관리한다 — δ 한도 내 절제된 배분.”`;
   const runId = sim?.simulation_id ? `#${sim.simulation_id}` : "#248";
   const today = new Date().toISOString().slice(0, 10);
-  const engine = (sim?.optimizer || "ensemble").toUpperCase();
+  const optKey = String(sim?.optimizer || "ensemble").toLowerCase();
+  const engine = ({ ensemble: "앙상블 (MVO·RP·HRP)", markowitz: "마코위츠 MVO", risk_parity: "리스크 패리티", hrp: "HRP", resampled: "리샘플드" } as Record<string, string>)[optKey] || optKey.toUpperCase();
   const gT = "96px 92px 78px 64px 1fr";
   const rrT = "1.6fr 1fr 1fr 1fr";
   return (
@@ -1723,9 +3297,8 @@ function ReportTab({ sim }: { sim: any }) {
       <div style={{ border: `1px solid ${C.b2}`, borderBottom: "none", background: "linear-gradient(180deg,#0c0c0c,#080808)", borderRadius: "10px 10px 0 0", padding: "24px 30px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <div>
-            <div style={{ fontSize: 9, fontFamily: FM, letterSpacing: "1px", color: C.t5, marginBottom: 9 }}>국민연금공단 · 투자정책실 · 글로벌 멀티에셋 데스크</div>
-            <div style={{ fontFamily: FA, fontWeight: 800, fontSize: 22, letterSpacing: ".5px", lineHeight: 1.15, marginBottom: 10 }}>글로벌 멀티에셋 배분 보고서</div>
-            <div style={{ fontSize: 13.5, lineHeight: 1.5, color: C.t2, maxWidth: 540 }}>{ow.name} {ow.d >= 0 ? "비중확대" : "비중축소"}를 중심으로 한 전술적 배분 — {regLabel} 레짐과 환위험은 절제로 관리</div>
+            <div style={{ fontSize: 9, fontFamily: FM, letterSpacing: "1px", color: C.t5, marginBottom: 10 }}>국민연금공단 · 투자정책실 · 글로벌 멀티에셋 데스크 · 배분 보고서</div>
+            <div style={{ fontFamily: FA, fontWeight: 800, fontSize: 20, letterSpacing: ".2px", lineHeight: 1.32, maxWidth: 560 }}>{ow.name} {ow.d >= 0 ? "비중확대" : "비중축소"}를 중심으로 한 전술적 배분 — {regLabel} 레짐과 환위험은 절제로 관리</div>
           </div>
           <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             <span style={{ fontSize: 8.5, fontFamily: FM, color: C.amber, border: "1px solid rgba(251,191,36,.3)", padding: "3px 8px", borderRadius: 3 }}>CONFIDENTIAL · IC ONLY</span>
@@ -1733,7 +3306,7 @@ function ReportTab({ sim }: { sim: any }) {
           </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginTop: 18, paddingTop: 15, borderTop: `1px solid ${C.b1}`, fontSize: 9.5, fontFamily: FM, color: "#777" }}>
-          {[["실행 ID", runId], ["일자", today], ["엔진", engine], ["이탈 한도 δ", "5%"], ["작성", "Chris (CIS)"], ["검토", "Jerry (선임 PM)"]].map(([k, v]) => (
+          {[["실행 ID", runId], ["일자", today], ["엔진", engine], ["이탈 한도 δ", deltaLabel], ["작성", "Chris (CIS)"], ["검토", "Jerry (선임 PM)"]].map(([k, v]) => (
             <span key={k}>{k} <span style={{ color: "#ddd" }}>{v}</span></span>
           ))}
         </div>
@@ -1742,7 +3315,7 @@ function ReportTab({ sim }: { sim: any }) {
       <div style={{ border: `1px solid ${C.b2}`, background: "#090909", borderRadius: "0 0 10px 10px", padding: "8px 30px 30px" }}>
         <SectionH>핵심 요약 · EXECUTIVE SUMMARY</SectionH>
         <div style={{ borderLeft: "2px solid #fff", background: C.card2, padding: "14px 18px", fontSize: 13, lineHeight: 1.8, color: "#dadada" }}>
-          <b style={{ color: "#fff" }}>결론 먼저(BLUF).</b> {ow.name}을 전략적 벤치마크 대비 <b style={{ color: "#fff" }}>{f1(ow.d)}%p {ow.d >= 0 ? "비중확대" : "비중축소"}({ow.w.toFixed(1)}%)</b>하고, {uw.name}을 <b style={{ color: "#fff" }}>{f1(uw.d)}%p {uw.d >= 0 ? "확대" : "축소"}({uw.w.toFixed(1)}%)</b>할 것을 권고한다. 채권은 합산 {f1(bondDelta)}%p 조정해 균형을 잡았다. 본 배분의 연간 기대수익률은 <b style={{ color: "#fff" }}>{pf(expR)}</b>, 변동성 <b style={{ color: "#fff" }}>{pf(vol)}</b>, 샤프 <b style={{ color: "#fff" }}>{sharpe.toFixed(2)}</b>로 벤치마크 대비 위험조정수익을 개선한다. {regLabel} 레짐을 감안해 모든 틸트는 δ 5% 한도 내로 절제했다.
+          <b style={{ color: "#fff" }}>결론 먼저(BLUF).</b> {ow.name}을 전략적 벤치마크 대비 <b style={{ color: "#fff" }}>{f1(ow.d)}%p {ow.d >= 0 ? "비중확대" : "비중축소"}({ow.w.toFixed(1)}%)</b>하고, {uw.name}을 <b style={{ color: "#fff" }}>{f1(uw.d)}%p {uw.d >= 0 ? "확대" : "축소"}({uw.w.toFixed(1)}%)</b>할 것을 권고한다. 채권은 합산 {f1(bondDelta)}%p 조정해 균형을 잡았다. 본 배분의 연간 기대수익률은 <b style={{ color: "#fff" }}>{pf(expR)}</b>, 변동성 <b style={{ color: "#fff" }}>{pf(vol)}</b>, 샤프 <b style={{ color: "#fff" }}>{sharpe.toFixed(2)}</b>로 벤치마크 대비 위험조정수익을 개선한다. {regLabel} 레짐을 감안해 모든 틸트는 δ {deltaLabel} 한도 내로 절제했다.
         </div>
         <SectionH>시장 국면 진단 · MARKET REGIME DIAGNOSIS</SectionH>
         <div style={{ fontSize: 13, lineHeight: 1.85, color: C.t2 }}>시스템은 현재 국면을 <b style={{ color: C.amber }}>{regLabel}</b>로 판정했다. VIX는 <b style={{ color: "#fff" }}>{vixV}</b> 수준이고, 원/달러는 <b style={{ color: "#fff" }}>{Math.round(usdkrw).toLocaleString()}원</b>, 미 10년물은 <b style={{ color: "#fff" }}>{us10y}%</b>로 관측된다. 이 국면 판단에 따라 위험예산을 조정하며, 위험회피계수 λ를 <b style={{ color: "#fff" }}>{lam}</b>로 적용해 틸트 강도를 제한했다.</div>
@@ -1759,7 +3332,12 @@ function ReportTab({ sim }: { sim: any }) {
                 <span style={{ color: r[3] as string, fontSize: 10.5 }}>{r[2]}</span>
                 <span style={{ fontFamily: FM, color: "#bbb" }}>{r[4]}</span>
                 <span style={{ textAlign: "right", fontFamily: FM, color: r[6] as string }}>{r[5]}</span>
-                <span style={{ color: C.t3, fontSize: 11, paddingLeft: 8 }}>{r[7]}</span>
+                <span style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 8 }}>
+                  <span style={{ color: C.t3, fontSize: 11 }}>{r[7]}</span>
+                  {r[8] && (
+                    <span style={{ color: C.amber, fontSize: 10, lineHeight: 1.4 }}>⚠ 상충 신호 — {r[8]}</span>
+                  )}
+                </span>
               </React.Fragment>
             ))}
           </div>
@@ -1796,7 +3374,7 @@ function ReportTab({ sim }: { sim: any }) {
         </div>
         <SectionH>실행 권고 · ACTIONABLE RECOMMENDATIONS</SectionH>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, lineHeight: 1.65, color: C.t2 }}>
-          {[["리밸런싱.", "분기 1회 정기 + δ 5% 이탈 시 수시. 다음 정기검토 2026-09-30."], ["헤지 오버레이.", "해외주식 FX 50%에 KRW 선물, 주식 하방 5% 풋 스프레드."], ["비중 한도.", "대체투자 벤치마크 +5%p 캡, 단일 자산 액티브 ±5%p 이내."], ["모니터링 트리거.", "VIX 30 · US10Y 4.5% · USD/KRW 1,420 돌파 시 뷰 즉시 재검토."]].map(([b, t]) => (
+          {[["리밸런싱.", `분기 1회 정기 + δ ${deltaLabel} 이탈 시 수시. 다음 정기검토 2026-09-30.`], ["헤지 오버레이.", "해외주식 FX 50%에 KRW 선물, 주식 하방 5% 풋 스프레드."], ["비중 한도.", `단일 자산 액티브 벤치마크 대비 ${deltaLabel} 이내(δ 제약).`], ["모니터링 트리거.", "VIX 30 · US10Y 4.5% · USD/KRW 1,420 돌파 시 뷰 즉시 재검토."]].map(([b, t]) => (
             <div key={b} style={{ display: "flex", gap: 9 }}><span style={{ color: "#fff" }}>·</span><span><b style={{ color: "#fff" }}>{b}</b> {t}</span></div>
           ))}
         </div>
@@ -1823,6 +3401,141 @@ function ReportTab({ sim }: { sim: any }) {
         </div>
         <div style={{ marginTop: 22, padding: "13px 16px", background: C.panel2, border: `1px solid ${C.b1}`, borderRadius: 8, fontSize: 10, lineHeight: 1.7, color: C.t4 }}>면책: 본 보고서는 공급된 데이터에 근거한 내부 검토용 문서이며 투자 권유가 아닙니다. 사후 기대수익률·VaR·낙폭은 확정치가 아니라 블랙-리터만 및 몬테카를로 모델의 추정치이며, 실제 성과는 시장 상황에 따라 달라질 수 있습니다. NEMOTRON 3 SUPER 추론 기반 · RUN {runId}.</div>
       </div>
+    </div>
+  );
+}
+
+// ── 설정 (Config) tab — view & switch the LLM used for each task ──────────────
+// Reads/writes the live backend model registry (/config/models). Switching a
+// model takes effect immediately and is persisted to backend/.env.
+type ModelChoice = { id: string; label: string; kind: "fast" | "reasoning"; note: string };
+type ModelTask = { key: string; env: string; label: string; desc: string; prefer: "fast" | "reasoning"; current: string };
+
+function ConfigTab() {
+  const [tasks, setTasks] = useState<ModelTask[] | null>(null);
+  const [choices, setChoices] = useState<ModelChoice[]>([]);
+  const [error, setError] = useState<string>("");
+  const [saving, setSaving] = useState<string>("");      // env currently being saved
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  const load = async () => {
+    setError("");
+    try {
+      const r = await fetch(API_BASE + "/config/models");
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      setTasks(j.tasks); setChoices(j.choices);
+    } catch {
+      setError("백엔드에 연결할 수 없습니다 (localhost:8000). 서버가 실행 중인지 확인하세요.");
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const choiceOf = (id: string): ModelChoice | undefined => choices.find(c => c.id === id);
+
+  const switchModel = async (env: string, model: string) => {
+    setSaving(env); setToast(null);
+    try {
+      const r = await fetch(API_BASE + "/config/models", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ env, model }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      setTasks(ts => ts ? ts.map(t => t.env === env ? { ...t, current: j.model } : t) : ts);
+      setToast({ msg: `${choiceOf(model)?.label || model} (으)로 변경되었습니다 · .env에 저장됨`, ok: true });
+    } catch {
+      setToast({ msg: "변경에 실패했습니다. 백엔드 연결을 확인하세요.", ok: false });
+    }
+    setSaving("");
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Header card */}
+      <div style={{ background: "linear-gradient(135deg, #050505 0%, #0a0a0a 100%)", border: `1px solid ${C.b1}`, padding: "20px 24px", borderRadius: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <Settings size={16} style={{ color: C.violet }} />
+          <h3 style={{ fontSize: 14, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", margin: 0, textTransform: "uppercase" }}>AI 모델 설정 · Model Configuration</h3>
+        </div>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, lineHeight: 1.5 }}>
+          각 작업(task)에 어떤 LLM이 사용되는지 확인하고, 클릭 한 번으로 모델을 교체할 수 있습니다.<br />
+          변경 사항은 <span style={{ color: C.t2, fontFamily: FM }}>backend/.env</span> 에 즉시 저장되며 별도 재시작 없이 적용됩니다.
+        </p>
+      </div>
+
+      {error && (
+        <div style={{ border: `1px solid ${C.red}`, background: "#160a05", color: C.redL, padding: "12px 16px", borderRadius: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <AlertTriangle size={14} /> {error}
+          <span onClick={load} style={{ marginLeft: "auto", cursor: "pointer", textDecoration: "underline", color: C.t2 }}>다시 시도</span>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{ border: `1px solid ${toast.ok ? C.green : C.red}`, background: toast.ok ? "#04140a" : "#160a05", color: toast.ok ? C.green : C.redL, padding: "10px 14px", borderRadius: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          {toast.ok ? <Check size={14} /> : <AlertTriangle size={14} />} {toast.msg}
+        </div>
+      )}
+
+      {tasks?.map(task => {
+        const cur = choiceOf(task.current);
+        const mismatch = task.prefer === "reasoning" && cur?.kind === "fast";
+        return (
+          <div key={task.env} style={{ border: `1px solid ${C.b1}`, background: C.panel, borderRadius: 10, padding: "16px 18px" }}>
+            {/* Task header */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.white }}>{task.label}</span>
+              <span style={{ fontSize: 10, fontFamily: FM, color: C.t5 }}>{task.env}</span>
+            </div>
+            <p style={{ fontSize: 11.5, color: C.t3, margin: "0 0 6px" }}>{task.desc}</p>
+            <div style={{ fontSize: 11.5, color: C.t4, marginBottom: 12 }}>
+              현재 모델: <span style={{ color: C.violet, fontWeight: 600 }}>{cur?.label || task.current}</span>
+              {cur && <span style={{ color: C.t5 }}> · {cur.note}</span>}
+            </div>
+
+            {mismatch && (
+              <div style={{ fontSize: 11, color: C.amber, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertTriangle size={12} /> 이 작업은 추론(CoT) 모델을 권장합니다. 현재 모델은 추론이 없어 결과 품질이 낮을 수 있습니다.
+              </div>
+            )}
+
+            {/* Choice chips */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {choices.map(ch => {
+                const active = ch.id === task.current;
+                const isSaving = saving === task.env;
+                return (
+                  <button
+                    key={ch.id}
+                    disabled={active || isSaving}
+                    onClick={() => switchModel(task.env, ch.id)}
+                    title={ch.note}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      fontFamily: FA, fontSize: 11, fontWeight: 600, letterSpacing: ".3px",
+                      padding: "7px 11px", borderRadius: 7,
+                      cursor: active ? "default" : (isSaving ? "wait" : "pointer"),
+                      background: active ? "#04140a" : C.card,
+                      color: active ? C.green : C.t2,
+                      border: `1px solid ${active ? C.green : C.b3}`,
+                      opacity: isSaving && !active ? 0.5 : 1,
+                      transition: "all .12s",
+                    }}
+                  >
+                    {active && <Check size={12} />}
+                    {ch.label}
+                    <span style={{ fontSize: 9, color: active ? C.green : C.t5, border: `1px solid ${active ? C.green : C.b3}`, borderRadius: 4, padding: "1px 4px" }}>
+                      {ch.kind === "reasoning" ? "추론" : "고속"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {!tasks && !error && <div style={{ fontSize: 12, color: C.t4 }}>모델 설정을 불러오는 중...</div>}
     </div>
   );
 }

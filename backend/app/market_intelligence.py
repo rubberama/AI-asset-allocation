@@ -7,10 +7,10 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.db import MarketIntelligence
 from app.config import (
-    OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_API_URL,
     MARKETAUX_API_KEY, MARKETAUX_API_URL, MARKETAUX_LIMIT, MARKETAUX_INDUSTRIES,
-    ARTICLE_DIGESTION_MODEL,
 )
+from app import config  # OPENROUTER_MODEL / ARTICLE_DIGESTION_MODEL read live for runtime switching (설정 tab)
 import json
 import re
 import asyncio
@@ -348,7 +348,7 @@ IMPORTANT LANGUAGE RULE: If the article's source or content is primarily in Engl
     }
     
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,  # Nemotron Super for article digestion
+        "model": config.ARTICLE_DIGESTION_MODEL,  # reading-grade model for article digestion
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Financial Headlines:\n{headlines_text}"}
@@ -475,7 +475,7 @@ async def assess_article_relevance(text: str) -> Dict[str, Any]:
     )
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,
+        "model": config.ARTICLE_DIGESTION_MODEL,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": text[:4000]}],
         "response_format": {"type": "json_object"}, "temperature": 0.0, "max_tokens": 200,
     }
@@ -601,6 +601,9 @@ def _serialize_feed(items: List[Any]) -> List[Dict[str, Any]]:
             "author_title": item.author_title,
             "source": item.source,
             "date": item.date,
+            # When this analysis was released by the AI (DB insert time). Stored naive-UTC;
+            # emit with an explicit 'Z' so the client parses it as UTC and can render KST.
+            "created_at": (item.created_at.isoformat() + "Z") if item.created_at else None,
             "title": item.title,
             "content": item.content,
             "image_url": item.image_url,
@@ -656,7 +659,7 @@ Output ONLY valid, parseable JSON. Do not write markdown decorations other than 
     }
     
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": config.OPENROUTER_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Here is the list of headlines:\n\n{headlines_text}"}
@@ -783,23 +786,29 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
     for h in selected_headlines:
         yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "analyzing"}
 
-    thesis_tasks = [
-        generate_theses_with_llm([h], category_hint=h.get("category_hint"))
-        for h in selected_headlines
-    ]
+    # Fire all analyses concurrently, but emit each article's "done" the MOMENT it
+    # finishes — not after the whole batch. Batching the done-events behind a single
+    # asyncio.gather made the UI sit frozen for the entire (slow) analysis, which read
+    # as the refresh "stopping/crashing" right after article selection.
+    async def _analyze_one(h):
+        cat_theses = await generate_theses_with_llm([h], category_hint=h.get("category_hint"))
+        return h, cat_theses
+
     all_theses = []
-    if thesis_tasks:
+    tasks = [asyncio.create_task(_analyze_one(h)) for h in selected_headlines]
+    for fut in asyncio.as_completed(tasks):
         try:
-            thesis_results = await asyncio.gather(*thesis_tasks)
-            for i, (h, cat_theses) in enumerate(zip(selected_headlines, thesis_results)):
-                if cat_theses:
-                    all_theses.extend(cat_theses)
-                yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
+            h, cat_theses = await fut
+            if cat_theses:
+                all_theses.extend(cat_theses)
+            yield {"type": "article_analyzing", "title": h.get("title", "")[:80], "source": h.get("source", ""), "status": "done"}
         except Exception as e:
-            logger.error(f"Failed parallel LLM thesis generation: {e}")
+            logger.error(f"Thesis task failed during analysis: {e}")
 
     # -- Phase 5: Commit to DB --
     yield {"type": "phase", "phase": "saving", "msg": f"Saving {len(all_theses)} theses to database..."}
+    saved = False
+    save_error = None
     if all_theses:
         try:
             db.query(MarketIntelligence).filter(
@@ -824,12 +833,22 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
                 )
                 db.add(db_item)
             db.commit()
+            saved = True
         except Exception as e:
-            logger.error(f"Failed to commit theses in stream: {e}")
+            # Without this, a failed commit (e.g. "database is locked" from a
+            # concurrent writer) was rolled back silently and the code below
+            # still reported the stale, unchanged feed as a fresh success --
+            # the digest cards kept their old "production time" while the UI
+            # claimed new articles had just been reflected.
+            logger.error(f"Failed to commit theses in stream: {e}", exc_info=True)
             db.rollback()
+            save_error = str(e)
+
+    if save_error:
+        yield {"type": "error", "msg": f"분석 결과 저장에 실패했습니다: {save_error}"}
 
     final_data = _serialize_feed(db.query(MarketIntelligence).all())
-    yield {"type": "result", "data": final_data}
+    yield {"type": "result", "data": final_data, "new_count": len(all_theses) if saved else 0}
 
 
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:
@@ -1033,7 +1052,7 @@ Confidence: {thesis_row.confidence_calibrated}
     }
     
     payload = {
-        "model": ARTICLE_DIGESTION_MODEL,
+        "model": config.ARTICLE_DIGESTION_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
