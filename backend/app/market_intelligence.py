@@ -570,14 +570,14 @@ async def ingest_article(
     try:
         db_item = MarketIntelligence(
             id=t["id"],
-            author=t.get("author", "User-Submitted Analysis"),
-            author_title=t.get("author_title", "AI Research Desk"),
-            source=t.get("source", ""),
-            date=t.get("date"),
-            title=t.get("title", ""),
-            content=t.get("content", ""),
-            image_url=t.get("image_url", ""),
-            ai_interpretation=t.get("ai_interpretation", {}),
+            author=t.get("author") or "User-Submitted Analysis",
+            author_title=t.get("author_title") or "AI Research Desk",
+            source=t.get("source") or "",
+            date=t.get("date") or datetime.utcnow().isoformat(),
+            title=t.get("title") or "",
+            content=t.get("content") or "",
+            image_url=t.get("image_url") or "",
+            ai_interpretation=t.get("ai_interpretation") or {},
             full_report=t.get("full_report"),
             category="USER_ASSET"
         )
@@ -820,14 +820,14 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
             for t in all_theses:
                 db_item = MarketIntelligence(
                     id=t["id"],
-                    author=t.get("author", "NPS Research Desk"),
-                    author_title=t.get("author_title", "Senior Macro Strategist"),
-                    source=t.get("source", "Financial News"),
-                    date=t.get("date", datetime.utcnow().isoformat()),
-                    title=t.get("title", ""),
-                    content=t.get("content", ""),
-                    image_url=t.get("image_url", ""),
-                    ai_interpretation=t.get("ai_interpretation", {}),
+                    author=t.get("author") or "NPS Research Desk",
+                    author_title=t.get("author_title") or "Senior Macro Strategist",
+                    source=t.get("source") or "Financial News",
+                    date=t.get("date") or datetime.utcnow().isoformat(),
+                    title=t.get("title") or "",
+                    content=t.get("content") or "",
+                    image_url=t.get("image_url") or "",
+                    ai_interpretation=t.get("ai_interpretation") or {},
                     full_report=t.get("full_report"),
                     category="NEWS"
                 )
@@ -975,14 +975,14 @@ async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dic
                 for t in all_theses:
                     db_item = MarketIntelligence(
                         id=t["id"],
-                        author=t.get("author", "NPS Research Desk"),
-                        author_title=t.get("author_title", "Senior Macro Strategist"),
-                        source=t.get("source", "Financial News"),
-                        date=t.get("date", datetime.utcnow().isoformat()),
-                        title=t.get("title", ""),
-                        content=t.get("content", ""),
-                        image_url=t.get("image_url", ""),
-                        ai_interpretation=t.get("ai_interpretation", {}),
+                        author=t.get("author") or "NPS Research Desk",
+                        author_title=t.get("author_title") or "Senior Macro Strategist",
+                        source=t.get("source") or "Financial News",
+                        date=t.get("date") or datetime.utcnow().isoformat(),
+                        title=t.get("title") or "",
+                        content=t.get("content") or "",
+                        image_url=t.get("image_url") or "",
+                        ai_interpretation=t.get("ai_interpretation") or {},
                         full_report=t.get("full_report"),
                         category="NEWS"
                     )

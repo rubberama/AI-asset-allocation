@@ -67,5 +67,43 @@ class TestMarketIntelligence(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(res), 12)
             self.assertEqual(self.db.query(MarketIntelligence).filter(MarketIntelligence.category == "NEWS").count(), 12)
 
+    async def test_sync_market_intelligence_survives_null_fields_from_llm(self):
+        # Regression test: the LLM's JSON output can legally contain explicit
+        # `null` values (e.g. "image_url": null) instead of omitting the key.
+        # dict.get(key, default) only falls back to default when the key is
+        # ABSENT, not when its value is None -- so a null here used to reach
+        # the DB insert and blow up the NOT NULL constraint on image_url,
+        # rolling back the whole batch and reporting the refresh as failed.
+        headlines = [{"title": f"Article {i}", "link": f"http://a{i}.com", "url": f"http://a{i}.com", "pubDate": datetime.utcnow().isoformat(), "source": "Test", "description": f"Summary {i}", "category_hint": "MACRO"} for i in range(35)]
+
+        with patch("app.market_intelligence.fetch_rss_headlines_for_category", AsyncMock(return_value=headlines)), \
+             patch("app.market_intelligence.select_top_articles_with_llm") as mock_select, \
+             patch("app.market_intelligence.fetch_url_text", AsyncMock(return_value="Scraped text body of the article")), \
+             patch("app.market_intelligence.generate_theses_with_llm") as mock_gen:
+
+            mock_select.return_value = headlines[:12]
+
+            def mock_gen_side_effect(headlines_list, category_hint=None):
+                h = headlines_list[0]
+                return [
+                    {
+                        "id": f"t-{h['title']}",
+                        "author": None,
+                        "author_title": None,
+                        "source": "Test",
+                        "date": datetime.utcnow().isoformat(),
+                        "title": f"Analyzed {h['title']}",
+                        "content": "This is a detailed analysis.",
+                        "image_url": None,  # explicit null from the LLM, not a missing key
+                        "ai_interpretation": None,
+                        "full_report": {"executive_summary": "Exec summary", "rationale": "Rationale", "target_assets": "Assets", "recommendation": "Rec", "risk_factors": "Risks"}
+                    }
+                ]
+            mock_gen.side_effect = mock_gen_side_effect
+
+            res = await sync_market_intelligence(self.db, force=True)
+            self.assertEqual(len(res), 12)
+            self.assertEqual(self.db.query(MarketIntelligence).filter(MarketIntelligence.category == "NEWS").count(), 12)
+
 if __name__ == "__main__":
     unittest.main()
