@@ -65,14 +65,26 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.7.4";
+const APP_VERSION = "0.8.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.8.0",
+    date: "2026-07-01",
+    title: "프론티어·리스크 탭 전면 개편 · 리포트 열람 시 데이터 불일치 수정",
+    current: true,
+    items: [
+      "프론티어 탭: 저활용 차트 3개 → 인터랙티브 효율적 프론티어 1개로 개편 — 축 눈금 추가, 점 클릭 시 해당 지점의 실제 자산배분 확인 가능(그동안 버려지던 프론티어 배분 데이터 활용), 최소분산·최대샤프 지점 표시",
+      "리스크 탭: '추후 연결' 플레이스홀더였던 자리를 실제 몬테카를로 수익률 분포(VaR·CVaR·평균 기준선 포함)와 역사적 위기 시나리오(코로나19·GFC·2022 금리인상 등 5종, 현재 포트폴리오 기준 손실 추정)로 완성 — 백엔드가 이미 계산해 두고도 화면에 쓰이지 않던 데이터를 연결",
+      "배분 비교(벤치마크 vs 최적화)와 BL 기대수익률 산출 근거를 나란히 배치 — 서로 다른 지표(비중 vs 기대수익률)임을 한눈에 알 수 있도록",
+      "배분/리스크/프론티어 탭이 리포트 히스토리에서 연 '지난 리포트'를 볼 때, 최신 실행이 아닌 그 리포트 자체의 데이터(뷰·출처 포함)를 정확히 표시하도록 수정 — 이전에는 지난 리포트를 열어도 최신 실행 데이터가 표시되어 '뷰 근거'가 실제 입력한 출처와 다르게 보이는 문제가 있었음",
+      "배분 비교 그래프의 호버 툴팁이 항상 숨겨진 채였던 CSS 버그 수정 — 벤치마크·최적화 수치와 차이가 정상적으로 표시됨",
+    ],
+  },
   {
     version: "0.7.4",
     date: "2026-07-01",
     title: "대시보드 Q&A 5초 무응답 시 Ben/Jerry 선택지 자동 제안",
-    current: true,
     items: [
       "'대시보드 수치가 궁금하신가요?'로 진입한 뒤 5초간 아무 질문도 하지 않으면, Ben에게 계속 묻거나 Jerry에게 물어볼 수 있는 선택지를 자동으로 보여줌 — 빈 입력창 앞에서 다음에 뭘 해야 할지 몰라 멈추는 상황 방지",
     ],
@@ -282,6 +294,57 @@ const ATTRIB = [
 const RISK = [
   ["기대수익률", "6.84%", C.white], ["변동성", "9.12%", C.white], ["샤프 비율", "0.61", C.white],
   ["95% VaR", "-13.7%", C.redL], ["95% CVaR", "-18.2%", C.redL], ["최대낙폭", "-22.4%", C.redL],
+];
+
+// Illustrative pre-run frontier: same shape as real efficient_frontier points
+// (return/volatility/weights), fed through the identical computeFrontierChart
+// scaling logic used for real data — no separately hand-tuned mock SVG path.
+const FRONTIER_MOCK_POINTS = [
+  { return: 0.041, volatility: 0.052, sharpe: 0.12, weights: { KR_BOND: 0.45, GLOBAL_BOND: 0.30, KR_STOCK: 0.10, GLOBAL_STOCK: 0.10, ALTERNATIVE: 0.05 } },
+  { return: 0.061, volatility: 0.081, sharpe: 0.32, weights: { KR_BOND: 0.28, GLOBAL_BOND: 0.18, KR_STOCK: 0.17, GLOBAL_STOCK: 0.29, ALTERNATIVE: 0.08 } },
+  { return: 0.0742, volatility: 0.1074, sharpe: 0.37, weights: { KR_BOND: 0.15, GLOBAL_BOND: 0.10, KR_STOCK: 0.20, GLOBAL_STOCK: 0.42, ALTERNATIVE: 0.13 } },
+  { return: 0.081, volatility: 0.132, sharpe: 0.35, weights: { KR_BOND: 0.08, GLOBAL_BOND: 0.05, KR_STOCK: 0.22, GLOBAL_STOCK: 0.50, ALTERNATIVE: 0.15 } },
+];
+const FRONTIER_MOCK_BM = { return: 0.048, volatility: 0.084 };
+const FRONTIER_MOCK_OP = { return: 0.0684, volatility: 0.0912 }; // matches the RISK mock exactly
+// Matches ALLOC's mock weights exactly, so the default (unselected) weight panel
+// agrees with the 배분 tab's own mock allocation.
+const FRONTIER_MOCK_OP_WEIGHTS: Record<string, number> = { GLOBAL_STOCK: 0.395, KR_STOCK: 0.172, KR_BOND: 0.245, GLOBAL_BOND: 0.091, ALTERNATIVE: 0.097 };
+
+// Illustrative Monte Carlo return distribution consistent with the RISK mock
+// numbers above (mean 6.84% / vol 9.12% / VaR -13.7% / CVaR -18.2%) — a plain
+// Gaussian shape is only for illustration pre-run, not a statistical claim.
+const HISTO_MOCK = (() => {
+  const mean = 0.0684, vol = 0.0912, var95 = -0.137, cvar95 = -0.182;
+  const bins = Array.from({ length: 40 }, (_, i) => {
+    const x = mean - 3 * vol + (i / 39) * 6 * vol;
+    const z = (x - mean) / vol;
+    return { x, y: Math.exp(-0.5 * z * z) };
+  });
+  const xs = bins.map((b) => b.x), ys = bins.map((b) => b.y);
+  return { bins, xMin: Math.min(...xs), xMax: Math.max(...xs), yMax: Math.max(...ys), var95, cvar95, mean };
+})();
+
+// Illustrative historical stress scenarios, using the real scenario names from
+// backend/app/stress_test.py. Contribution numbers are hand-computed as
+// FRONTIER_MOCK_OP_WEIGHTS × each scenario's real shock vector, so they sum
+// exactly to portfolioReturn — same relationship the real data has.
+const STRESS_MOCK = [
+  { nameKr: "코로나19 팬데믹 폭락 (2020.03)", portfolioReturn: -0.2140, contrib: [
+    { n: "해외주식", contribution: -0.1343 }, { n: "국내주식", contribution: -0.0602 }, { n: "국내채권", contribution: 0.0049 }, { n: "해외채권", contribution: 0.0027 }, { n: "대체투자", contribution: -0.0272 },
+  ]},
+  { nameKr: "글로벌 금융위기 (2008)", portfolioReturn: -0.3022, contrib: [
+    { n: "해외주식", contribution: -0.1975 }, { n: "국내주식", contribution: -0.0946 }, { n: "국내채권", contribution: 0.0196 }, { n: "해외채권", contribution: 0.0091 }, { n: "대체투자", contribution: -0.0388 },
+  ]},
+  { nameKr: "급격한 금리인상 사이클 (2022)", portfolioReturn: -0.1893, contrib: [
+    { n: "해외주식", contribution: -0.0790 }, { n: "국내주식", contribution: -0.0430 }, { n: "국내채권", contribution: -0.0245 }, { n: "해외채권", contribution: -0.0137 }, { n: "대체투자", contribution: -0.0291 },
+  ]},
+  { nameKr: "테이퍼 탠트럼 (2013)", portfolioReturn: -0.0671, contrib: [
+    { n: "해외주식", contribution: -0.0198 }, { n: "국내주식", contribution: -0.0138 }, { n: "국내채권", contribution: -0.0147 }, { n: "해외채권", contribution: -0.0073 }, { n: "대체투자", contribution: -0.0116 },
+  ]},
+  { nameKr: "유럽 재정위기 (2011)", portfolioReturn: -0.1126, contrib: [
+    { n: "해외주식", contribution: -0.0790 }, { n: "국내주식", contribution: -0.0310 }, { n: "국내채권", contribution: 0.0074 }, { n: "해외채권", contribution: 0.0046 }, { n: "대체투자", contribution: -0.0146 },
+  ]},
 ];
 
 export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
@@ -785,6 +848,12 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // happens when the user chats a view/"run" or hits 다시 최적화. (Right-panel tabs
   // fall back to their demo/mock data until a real run populates `sim`.)
   const hasRun = !!sim || running || liveTrace.length > 0;
+  // 배분/리스크/프론티어 must reflect whichever report the user is actually looking
+  // at. If a report is open (openReport, e.g. an older one picked from 리포트 탭
+  // history), show ITS data — not the live/latest `sim` — otherwise a user viewing
+  // an old report would see the current run's views/sources ("뷰 근거") instead of
+  // the ones that actually produced that report.
+  const activeSim = openReport || sim;
 
   // ── Entry flow: Chris welcomes, then Jerry briefs the live macro numbers ─────
   // Chris's greeting is static (a greeting needs no AI). Jerry's daily brief
@@ -1176,6 +1245,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         .etc-scroll::-webkit-scrollbar{ width:8px; height:8px; }
         .etc-scroll::-webkit-scrollbar-thumb{ background:#1e1e1e; border-radius:4px; }
         .etc-scroll::-webkit-scrollbar-track{ background:transparent; }
+        .etc-tip{ opacity:0; }
         .etc-bar:hover .etc-tip{ opacity:1; }
         .etc-bar:hover .etc-fill{ filter:brightness(1.25); }
       `}</style>
@@ -1644,9 +1714,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           </div>
 
           <div className="etc-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "20px 24px" }}>
-            {tab === "배분" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <AllocationTab sim={sim} />)}
-            {tab === "리스크" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <RiskTab sim={sim} />)}
-            {tab === "프론티어" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <FrontierTab sim={sim} />)}
+            {tab === "배분" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <AllocationTab sim={activeSim} />)}
+            {tab === "리스크" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <RiskTab sim={activeSim} />)}
+            {tab === "프론티어" && (isNew && !hasRun && !openReport ? <EmptyResults go={setTab} /> : <FrontierTab sim={activeSim} />)}
             {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
             {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
@@ -1999,34 +2069,66 @@ function riskFromSim(sim: any): [string, string, string][] | null {
   const pct = (x: number) => `${((x || 0) * 100).toFixed(2)}%`;
   return [["기대수익률", pct(m.expected_return), C.white], ["변동성", pct(m.volatility), C.white], ["샤프 비율", sharpe.toFixed(2), C.white], ["95% VaR", pct(m.var_95), C.redL], ["95% CVaR", pct(m.cvar_95), C.redL], ["최대낙폭", pct(m.max_drawdown_estimate), C.redL]];
 }
-function devFromSim(sim: any) {
-  const opt = sim?.optimized_weights, mkt = sim?.market_weights; if (!opt || !mkt) return null;
-  return ASSET_ORDER.filter((a) => a in opt).map((a) => ({
-    n: ASSET_KR[a], dpp: ((opt[a] || 0) - (mkt[a] || 0)) * 100,
+// Lay out frontier points (+ optional benchmark/optimized markers) into SVG
+// coordinates. Shared by real data (buildFrontier) and the mock fallback, so
+// both go through identical scaling/path logic — no separate hand-tuned mock path.
+function computeFrontierChart(
+  points: { return: number; volatility: number; sharpe: number; weights: Record<string, number> }[],
+  bm: { return: number; volatility: number } | null,
+  op: { return: number; volatility: number } | null
+) {
+  const W = 360, H = 250, PL = 44, PR = 14, PT = 16, PB = 34;
+  const V = points.map((p) => p.volatility), R = points.map((p) => p.return);
+  if (bm) { V.push(bm.volatility); R.push(bm.return); }
+  if (op) { V.push(op.volatility); R.push(op.return); }
+  const vMin = Math.min(...V), vMax = Math.max(...V), rMin = Math.min(...R), rMax = Math.max(...R);
+  const vPad = (vMax - vMin || 0.01) * 0.08, rPad = (rMax - rMin || 0.01) * 0.12;
+  const vLo = vMin - vPad, vHi = vMax + vPad, rLo = rMin - rPad, rHi = rMax + rPad;
+  const sx = (v: number) => PL + ((v - vLo) / ((vHi - vLo) || 1)) * (W - PL - PR);
+  const sy = (r: number) => (H - PB) - ((r - rLo) / ((rHi - rLo) || 1)) * (H - PB - PT);
+  const sorted = points.slice().sort((a, b) => a.volatility - b.volatility);
+  const path = sorted.length >= 2 ? sorted.map((p, i) => `${i ? "L" : "M"}${sx(p.volatility).toFixed(1)},${sy(p.return).toFixed(1)}`).join(" ") : null;
+  return {
+    W, H, PL, PR, PT, PB, sx, sy, vLo, vHi, rLo, rHi,
+    pts: points.map((p) => ({ ...p, x: sx(p.volatility), y: sy(p.return) })),
+    path,
+    bm: bm ? { x: sx(bm.volatility), y: sy(bm.return) } : null,
+    op: op ? { x: sx(op.volatility), y: sy(op.return) } : null,
+  };
+}
+type FrontierChart = ReturnType<typeof computeFrontierChart>;
+function buildFrontier(sim: any): FrontierChart | null {
+  const ef = sim?.efficient_frontier;
+  if (!Array.isArray(ef) || !ef.length) return null;
+  const rf = sim.risk_free_rate || 0.035;
+  const points = ef.map((p: any) => ({
+    return: p.return, volatility: p.volatility, weights: p.weights || {},
+    sharpe: p.volatility > 1e-6 ? (p.return - rf) / p.volatility : 0,
+  }));
+  return computeFrontierChart(points, sim.benchmark_portfolio || null, sim.optimized_portfolio || null);
+}
+// Historical crisis scenarios: `asset_impacts` is the scenario's raw market-wide
+// shock (identical for every portfolio) — NOT this portfolio's exposure. Only
+// `portfolio_return` (weights · shocks) is portfolio-specific. The per-asset
+// breakdown shown to the user must be computed here as weight × shock, which
+// sums exactly to `portfolio_return`.
+function stressFromSim(sim: any) {
+  const list = sim?.historical_stress_tests, w = sim?.optimized_weights;
+  if (!Array.isArray(list) || !list.length || !w) return null;
+  return list.map((s: any) => ({
+    nameKr: s.name_kr,
+    portfolioReturn: s.portfolio_return,
+    contrib: ASSET_ORDER.filter((a) => a in (s.asset_impacts || {})).map((a) => ({
+      n: ASSET_KR[a], contribution: (w[a] || 0) * s.asset_impacts[a],
+    })),
   }));
 }
-function buildFrontier(sim: any) {
-  const ef = sim?.efficient_frontier;
-  if (!Array.isArray(ef) || ef.length < 2) return null;
-  const bm = sim.benchmark_portfolio, op = sim.optimized_portfolio;
-  const V = ef.map((p: any) => p.volatility), R = ef.map((p: any) => p.return);
-  if (bm) { V.push(bm.volatility); R.push(bm.return); } if (op) { V.push(op.volatility); R.push(op.return); }
-  const vMin = Math.min(...V), vMax = Math.max(...V), rMin = Math.min(...R), rMax = Math.max(...R);
-  const sx = (v: number) => 38 + ((v - vMin) / ((vMax - vMin) || 1)) * (350 - 38);
-  const sy = (r: number) => 200 - ((r - rMin) / ((rMax - rMin) || 1)) * (200 - 20);
-  const path = ef.slice().sort((a: any, b: any) => a.volatility - b.volatility).map((p: any, i: number) => `${i ? "L" : "M"}${sx(p.volatility).toFixed(1)},${sy(p.return).toFixed(1)}`).join(" ");
-  return { path, bm: bm ? { x: sx(bm.volatility), y: sy(bm.return) } : null, op: op ? { x: sx(op.volatility), y: sy(op.return) } : null };
-}
-function buildMC(sim: any) {
-  const paths = sim?.risk_metrics?.simulation_paths;
-  if (!Array.isArray(paths) || !paths.length || !Array.isArray(paths[0])) return null;
-  const n = paths[0].length;
-  const idx = [0, 1, 2, 3, 4, 5].map((k) => Math.floor((k / 5) * (paths.length - 1)));
-  let maxAbs = 0.05;
-  idx.forEach((i) => paths[i].forEach((v: number) => { maxAbs = Math.max(maxAbs, Math.abs(v)); }));
-  const sx = (i: number) => 30 + (i / (n - 1)) * (350 - 30);
-  const sy = (v: number) => Math.max(5, Math.min(225, 115 - (v / maxAbs) * 80));
-  return idx.map((i) => paths[i].map((v: number, j: number) => `${j ? "L" : "M"}${sx(j).toFixed(1)},${sy(v).toFixed(1)}`).join(" "));
+function histoFromSim(sim: any) {
+  const m = sim?.risk_metrics, bins = m?.histogram_data;
+  if (!Array.isArray(bins) || bins.length < 2) return null;
+  const xs = bins.map((b: any) => b.x), ys = bins.map((b: any) => b.y);
+  return { bins, xMin: Math.min(...xs), xMax: Math.max(...xs), yMax: Math.max(...ys, 1e-9),
+           var95: m.var_95, cvar95: m.cvar_95, mean: m.expected_return };
 }
 
 function AllocationTab({ sim }: { sim: any }) {
@@ -2062,75 +2164,87 @@ function AllocationTab({ sim }: { sim: any }) {
         </div>
       </Card>
 
-      {/* grouped benchmark vs optimized */}
-      <Card style={{ padding: "18px 22px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${C.b1}` }}>
-          <span style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb" }}>배분 비교 (벤치마크 vs 최적화)</span>
-          <div style={{ display: "flex", gap: 14, fontSize: 9.5, fontFamily: FA, letterSpacing: "1px", color: "#666" }}>
+      {/* 배분 비교 + BL 기대수익률 산출 근거 — paired side by side: one shows weight
+          change, the other shows return change (different metrics, seeing both at
+          once makes that distinction obvious instead of implying they should match). */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+        {/* grouped benchmark vs optimized */}
+        <Card style={{ padding: "18px 22px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${C.b1}` }}>
+            <span style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb" }}>배분 비교 (벤치마크 vs 최적화)</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, fontSize: 9.5, fontFamily: FA, letterSpacing: "1px", color: "#666", marginBottom: 10 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 6, background: "#404040", borderRadius: 1 }} />국민연금</span>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 14, height: 6, background: "#fff", borderRadius: 1 }} />최적화</span>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: "0 0 30px", width: 30, height: 180, position: "relative" }}>
-            {["50%", "40", "30", "20", "10", "0"].map((y, i) => (
-              <span key={y} style={{ position: "absolute", right: 3, top: i * 36, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
-            ))}
-          </div>
-          <div style={{ flex: 1, height: 180, position: "relative" }}>
-            {[0, 36, 72, 108, 144, 180].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 180 ? "#262626" : "#141414" }} />))}
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: 26, padding: "0 6px" }}>
-              {alloc.map((a) => (
-                <div key={a.name} className="etc-bar" style={{ flex: 1, height: 180, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
-                  <div className="etc-tip" style={{ opacity: 0, transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 158, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
-                    <span style={{ color: "#888" }}>벤치</span> {a.bench}% <span style={{ color: C.t6 }}>→</span> <span style={{ color: "#fff" }}>{a.w}%</span> <span style={{ color: a.d >= 0 ? C.up : C.red }}>{a.d >= 0 ? "▲" : "▼"}{Math.abs(a.d)}</span>
-                  </div>
-                  <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 5, alignItems: "flex-end", height: 180, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
-                    <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 180 }} />
-                    <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 180 }} />
-                  </div>
-                </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ flex: "0 0 26px", width: 26, height: 180, position: "relative" }}>
+              {["50%", "40", "30", "20", "10", "0"].map((y, i) => (
+                <span key={y} style={{ position: "absolute", right: 3, top: i * 36, transform: "translateY(-50%)", fontSize: 8, fontFamily: FM, color: C.t5 }}>{y}</span>
               ))}
             </div>
+            <div style={{ flex: 1, height: 180, position: "relative" }}>
+              {[0, 36, 72, 108, 144, 180].map((t) => (<div key={t} style={{ position: "absolute", left: 0, right: 0, top: t, height: 1, background: t === 180 ? "#262626" : "#141414" }} />))}
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", gap: 10, padding: "0 4px" }}>
+                {alloc.map((a) => (
+                  <div key={a.name} className="etc-bar" style={{ flex: 1, height: 180, display: "flex", alignItems: "flex-end", justifyContent: "center", position: "relative" }}>
+                    <div className="etc-tip" style={{ transition: "opacity .12s ease", pointerEvents: "none", position: "absolute", bottom: 158, left: "50%", transform: "translateX(-50%)", background: "#000", border: `1px solid ${C.b4}`, borderRadius: 6, padding: "6px 9px", fontSize: 10, fontFamily: FM, whiteSpace: "nowrap", zIndex: 5, boxShadow: "0 4px 14px rgba(0,0,0,.5)" }}>
+                      <span style={{ color: "#888" }}>벤치</span> {a.bench}% <span style={{ color: C.t6 }}>→</span> <span style={{ color: "#fff" }}>{a.w}%</span> <span style={{ color: a.d >= 0 ? C.up : C.red }}>{a.d >= 0 ? "▲" : "▼"}{Math.abs(a.d)}</span>
+                    </div>
+                    <div className="etc-fill" style={{ width: "100%", display: "flex", gap: 3, alignItems: "flex-end", height: 180, transformOrigin: "bottom", animation: "growUp .7s cubic-bezier(.2,.7,.2,1) both" }}>
+                      <div style={{ flex: 1, background: "#404040", height: (a.bench / maxBar) * 180 }} />
+                      <div style={{ flex: 1, background: a.color, height: (a.w / maxBar) * 180 }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 26, padding: "8px 6px 0", marginLeft: 38 }}>
-          {alloc.map((a) => (<span key={a.name} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "#aaa" }}>{a.name}</span>))}
-        </div>
-      </Card>
+          <div style={{ display: "flex", gap: 10, padding: "8px 4px 0", marginLeft: 32 }}>
+            {alloc.map((a) => (<span key={a.name} style={{ flex: 1, textAlign: "center", fontSize: 9.5, color: "#aaa" }}>{a.name}</span>))}
+          </div>
+        </Card>
 
-      {/* BL attribution */}
-      <Card style={{ padding: "18px 22px" }}>
-        <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 14 }}>BL 기대수익률 산출 근거 (Prior → Posterior)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 70px 70px 64px 1fr", gap: "0 14px", fontSize: 9, fontFamily: FA, letterSpacing: "1px", color: C.t5, paddingBottom: 9, borderBottom: `1px solid ${C.b1}` }}>
-          <span>자산</span><span style={{ textAlign: "right" }}>PRIOR</span><span style={{ textAlign: "right" }}>POST</span><span style={{ textAlign: "right" }}>Δ</span><span style={{ paddingLeft: 6 }}>뷰 근거</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 70px 70px 64px 1fr", gap: "15px 14px", alignItems: "start", fontSize: 11.5, paddingTop: 11 }}>
-          {attrib.map((r: any) => (
-            <React.Fragment key={r.name}>
-              <span style={{ display: "flex", alignItems: "center", gap: 7, color: "#ddd", paddingTop: 1 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: r.color, flex: "0 0 auto" }} />{r.name}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: "#999", paddingTop: 1 }}>{r.prior}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: r.delta === "—" ? "#999" : "#fff", paddingTop: 1 }}>{r.post}</span>
-              <span style={{ textAlign: "right", fontFamily: FM, color: r.dc, paddingTop: 1 }}>{r.delta}</span>
-              <span style={{ paddingLeft: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 11, color: r.src ? "#9a9a9a" : "#666" }}>{r.why}</span>
-                {r.src ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: C.cyan, cursor: "pointer" }}>
-                    <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: r.tagDark ? "#fff" : "#000", background: r.tagDark ? "transparent" : "#fff", border: r.tagDark ? "1px solid #333" : "none", padding: "1px 4px", borderRadius: 2, fontWeight: 700 }}>{r.tag}</span>
-                    {r.src}
-                  </span>
-                ) : (<span style={{ fontSize: 10, color: "#4a4a4a" }}>기여 소스 없음</span>)}
-              </span>
-            </React.Fragment>
-          ))}
-        </div>
-      </Card>
+        {/* BL attribution */}
+        <Card style={{ padding: "18px 22px" }}>
+          <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 14 }}>BL 기대수익률 산출 근거 (Prior → Posterior)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {attrib.map((r: any) => (
+              <div key={r.name} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 7, color: "#ddd", flex: "0 0 auto" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: r.color, flex: "0 0 auto" }} />{r.name}</span>
+                  <span style={{ marginLeft: "auto", fontFamily: FM, color: "#999" }}>{r.prior}</span>
+                  <span style={{ fontFamily: FM, color: C.t6 }}>→</span>
+                  <span style={{ fontFamily: FM, color: r.delta === "—" ? "#999" : "#fff" }}>{r.post}</span>
+                  <span style={{ fontFamily: FM, color: r.dc, flex: "0 0 46px", textAlign: "right" }}>{r.delta}</span>
+                </div>
+                <div style={{ paddingLeft: 15 }}>
+                  <span style={{ fontSize: 11, color: r.src ? "#9a9a9a" : "#666" }}>{r.why}</span>
+                  {r.src ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: C.cyan, marginTop: 3 }}>
+                      <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: r.tagDark ? "#fff" : "#000", background: r.tagDark ? "transparent" : "#fff", border: r.tagDark ? "1px solid #333" : "none", padding: "1px 4px", borderRadius: 2, fontWeight: 700 }}>{r.tag}</span>
+                      {r.src}
+                    </div>
+                  ) : (<div style={{ fontSize: 10, color: "#4a4a4a", marginTop: 3 }}>기여 소스 없음</div>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
 
 function RiskTab({ sim }: { sim: any }) {
   const risk = riskFromSim(sim) || RISK;
+  const histo = histoFromSim(sim) || HISTO_MOCK;
+  const stress = stressFromSim(sim) || STRESS_MOCK;
+  const HW = 360, HH = 190, HPL = 14, HPR = 14, HPT = 16, HPB = 26;
+  const barW = (HW - HPL - HPR) / histo.bins.length;
+  const sxh = (x: number) => HPL + ((x - histo.xMin) / ((histo.xMax - histo.xMin) || 1)) * (HW - HPL - HPR);
+  const syh = (y: number) => (HH - HPB) - (y / histo.yMax) * (HH - HPB - HPT);
+  const xTicks = [0.1, 0.5, 0.9].map((f) => histo.xMin + f * (histo.xMax - histo.xMin));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 1, background: C.b1, border: `1px solid ${C.b6}`, borderRadius: 8, overflow: "hidden" }}>
@@ -2142,8 +2256,49 @@ function RiskTab({ sim }: { sim: any }) {
         ))}
       </div>
       <Card>
-        <div style={{ fontFamily: FA, fontWeight: 600, fontSize: 11, letterSpacing: "1.5px", color: "#bbb", marginBottom: 6 }}>몬테카를로 · 역사적 스트레스</div>
-        <p style={{ fontSize: 12, lineHeight: 1.7, color: C.t3 }}>10,000회 몬테카를로 경로와 역사적 위기 시나리오(GFC·코로나·2022 금리인상)를 적용한 분포·낙폭 차트가 이 자리에 들어갑니다. 다음 단계에서 <span style={{ color: "#fff" }}>/simulate · /stress-test</span> 엔드포인트와 recharts로 연결합니다.</p>
+        <CardTitle right="10,000회 시뮬레이션">몬테카를로 수익률 분포</CardTitle>
+        <svg viewBox={`0 0 ${HW} ${HH}`} style={{ width: "100%", height: 210 }}>
+          <line x1={HPL} y1={HH - HPB} x2={HW - HPR} y2={HH - HPB} stroke="#1d1d1d" strokeWidth="1" />
+          {histo.bins.map((b: any, i: number) => {
+            const x = sxh(b.x), y = syh(b.y), h = Math.max(0, (HH - HPB) - y);
+            const loss = b.x < histo.var95;
+            return <rect key={i} x={x - barW * 0.42} y={y} width={Math.max(0.5, barW * 0.84)} height={h} fill={loss ? C.redL : C.t4} opacity={loss ? 0.85 : 0.65} />;
+          })}
+          {[
+            { v: histo.cvar95, c: C.red, label: "CVaR 95%", ly: 22 },
+            { v: histo.var95, c: C.redL, label: "VaR 95%", ly: 38 },
+            { v: histo.mean, c: "#fff", label: "평균", ly: 22 },
+          ].map((r, i) => (
+            <g key={i}>
+              <line x1={sxh(r.v)} y1={HPT} x2={sxh(r.v)} y2={HH - HPB} stroke={r.c} strokeWidth="1" strokeDasharray="3 3" />
+              <text x={sxh(r.v)} y={r.ly} fill={r.c} fontSize="8.5" textAnchor="middle" fontFamily={FM}>{r.label}</text>
+            </g>
+          ))}
+          {xTicks.map((v, i) => (
+            <text key={i} x={sxh(v)} y={HH - 6} fill="#555" fontSize="8.5" textAnchor="middle" fontFamily={FM}>{(v * 100).toFixed(0)}%</text>
+          ))}
+        </svg>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 4 }}>10,000개의 1년 시뮬레이션 경로 중 최종 수익률의 분포입니다. 점선은 예상 손실 구간(VaR·CVaR)과 평균 수익률을 나타냅니다.</p>
+      </Card>
+      <Card>
+        <CardTitle right="현재 포트폴리오 기준">역사적 위기 시나리오</CardTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          {stress.map((s) => (
+            <div key={s.nameKr} style={{ border: `1px solid ${C.b3}`, borderRadius: 9, padding: "13px 15px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: "#ddd" }}>{s.nameKr}</span>
+              <span style={{ fontFamily: FM, fontSize: 20, fontWeight: 700, color: s.portfolioReturn >= 0 ? C.up : C.red }}>{s.portfolioReturn >= 0 ? "+" : ""}{(s.portfolioReturn * 100).toFixed(1)}%</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {s.contrib.map((c) => (
+                  <div key={c.n} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.t4 }}>
+                    <span>{c.n}</span>
+                    <span style={{ fontFamily: FM, color: c.contribution >= 0 ? C.up : C.red }}>{c.contribution >= 0 ? "+" : ""}{(c.contribution * 100).toFixed(1)}%p</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 12 }}>2008년 금융위기·2020년 코로나19 같은 상황이 재현된다면, 현재 포트폴리오는 자산별 비중을 반영해 이만큼의 손실을 볼 것으로 추정됩니다. %p는 각 자산이 손익에 기여한 정도입니다.</p>
       </Card>
     </div>
   );
@@ -2158,93 +2313,80 @@ function CardTitle({ children, right }: { children: React.ReactNode; right?: Rea
   );
 }
 
-const DEV_MOCK = [
-  { n: "해외주식", dpp: 4.8 },
-  { n: "국내주식", dpp: -3.6 },
-  { n: "국내채권", dpp: 1.4 },
-  { n: "해외채권", dpp: 1.7 },
-  { n: "대체투자", dpp: -4.3 },
-];
-
 function FrontierTab({ sim }: { sim: any }) {
-  const DEV = devFromSim(sim) || DEV_MOCK;
-  const fr = buildFrontier(sim);
-  const mc = buildMC(sim);
+  const [selected, setSelected] = useState<number | null>(null);
+  useEffect(() => { setSelected(null); }, [sim?.simulation_id]);
+  const fr = buildFrontier(sim) || computeFrontierChart(FRONTIER_MOCK_POINTS, FRONTIER_MOCK_BM, FRONTIER_MOCK_OP);
+  const { pts } = fr;
+  const minVarIdx = pts.length ? pts.reduce((b, p, i) => (p.volatility < pts[b].volatility ? i : b), 0) : -1;
+  const maxSharpeIdx = pts.length ? pts.reduce((b, p, i) => (p.sharpe > pts[b].sharpe ? i : b), 0) : -1;
+  const selectedPt = selected != null ? pts[selected] : null;
+  const panelWeights = selectedPt?.weights || sim?.optimized_weights || FRONTIER_MOCK_OP_WEIGHTS;
+  const panelLabel = selectedPt
+    ? `프론티어 지점 배분 · 변동성 ${(selectedPt.volatility * 100).toFixed(1)}% · 수익 ${(selectedPt.return * 100).toFixed(1)}%`
+    : "최적화 포트폴리오 배분";
+  const panelRows = ASSET_ORDER.filter((a) => a in panelWeights).map((a) => ({ name: ASSET_KR[a], color: ASSET_HEX[a] || C.violet, w: r1(panelWeights[a]) }));
+  const yTicks = [0.25, 0.5, 0.75].map((f) => fr.rLo + f * (fr.rHi - fr.rLo));
+  const xTicks = [0.25, 0.5, 0.75].map((f) => fr.vLo + f * (fr.vHi - fr.vLo));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <Card>
-          <CardTitle right="위험 vs 수익">효율적 프론티어</CardTitle>
-          <svg viewBox="0 0 360 230" style={{ width: "100%", height: 230 }}>
-            <line x1="38" y1="12" x2="38" y2="200" stroke="#1d1d1d" strokeWidth="1" />
-            <line x1="38" y1="200" x2="350" y2="200" stroke="#1d1d1d" strokeWidth="1" />
-            {fr ? (
-              <>
-                <path d={fr.path} fill="none" stroke="#525252" strokeWidth="1.6" />
-                {fr.bm && <><circle cx={fr.bm.x} cy={fr.bm.y} r="5" fill="#8a8a8f" /><text x={fr.bm.x + 9} y={fr.bm.y + 4} fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text></>}
-                {fr.op && <><path d={`M${fr.op.x},${fr.op.y - 6} l7,12 l-14,0 z`} fill="#fff" /><text x={fr.op.x - 16} y={fr.op.y - 10} fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text></>}
-              </>
-            ) : (
-              <>
-                <path d="M60,180 C140,90 250,55 340,40" fill="none" stroke="#525252" strokeWidth="1.6" />
-                <circle cx="172" cy="118" r="5" fill="#8a8a8f" /><text x="182" y="122" fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text>
-                <path d="M236,72 l7,12 l-14,0 z" fill="#fff" /><text x="220" y="64" fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text>
-              </>
-            )}
-            <text x="300" y="216" fill="#555" fontSize="9" fontFamily="Pretendard">변동성 →</text>
-            <text x="6" y="20" fill="#555" fontSize="9" fontFamily="Pretendard">수익</text>
-          </svg>
-        </Card>
-        <Card>
-          <CardTitle right="15개 샘플">몬테카를로 드리프트 경로</CardTitle>
-          <svg viewBox="0 0 360 230" style={{ width: "100%", height: 230 }}>
-            <line x1="30" y1="115" x2="350" y2="115" stroke="#161616" strokeWidth="1" strokeDasharray="3 3" />
-            {mc ? (
-              mc.map((d, i) => (<path key={i} d={d} fill="none" stroke={`rgba(255,255,255,${[1, 0.4, 0.28, 0.22, 0.18, 0.14][i] ?? 0.2})`} strokeWidth={i === 0 ? 1.4 : 1} />))
-            ) : (
-              <>
-                <path d="M30,115 C110,100 200,70 350,34" fill="none" stroke="#fff" strokeWidth="1.4" />
-                <path d="M30,115 C110,108 200,92 350,66" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1" />
-                <path d="M30,115 C110,112 200,104 350,90" fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1" />
-                <path d="M30,115 C110,120 200,118 350,108" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1" />
-                <path d="M30,115 C110,126 200,138 350,156" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
-                <path d="M30,115 C110,134 200,160 350,194" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="1" />
-              </>
-            )}
-            <text x="280" y="218" fill="#555" fontSize="9" fontFamily="Pretendard">252 거래일 →</text>
-          </svg>
-        </Card>
-      </div>
       <Card>
-        <CardTitle right="시장 비중 대비 ± 퍼센트포인트">BL 가중치 시장 편차 (pp)</CardTitle>
-        {(() => {
-          const PLOT = 150, HALF = PLOT / 2, W = 34;
-          const MAXBAR = HALF - 24; // leave headroom for the value label above the bar tip
-          const maxDev = Math.max(1, ...DEV.map((d) => Math.abs(d.dpp)));
-          return (
-            <div>
-              <div style={{ position: "relative", height: PLOT, display: "flex", gap: 26, padding: "0 8px" }}>
-                {/* zero baseline = market weight */}
-                <div style={{ position: "absolute", left: 8, right: 8, top: HALF, height: 1, background: "#2c2c2c" }} />
-                <span style={{ position: "absolute", left: 8, top: HALF - 13, fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t5 }}>시장 비중</span>
-                {DEV.map((d) => {
-                  const up = d.dpp >= 0;
-                  const col = up ? C.up : C.red;
-                  const h = Math.max(2, (Math.abs(d.dpp) / maxDev) * MAXBAR);
-                  return (
-                    <div key={d.n} style={{ flex: 1, position: "relative" }}>
-                      <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", width: W, background: col, borderRadius: 2, height: h, transformOrigin: up ? "bottom" : "top", animation: "growUp .6s cubic-bezier(.2,.7,.2,1) both", ...(up ? { bottom: HALF } : { top: HALF }) }} />
-                      <span style={{ position: "absolute", left: 0, right: 0, textAlign: "center", fontSize: 10.5, fontFamily: FM, fontWeight: 600, color: col, ...(up ? { bottom: HALF + h + 3 } : { top: HALF + h + 3 }) }}>{up ? "+" : "−"}{Math.abs(d.dpp).toFixed(1)}</span>
-                    </div>
-                  );
-                })}
+        <CardTitle right="위험 vs 수익">효율적 프론티어</CardTitle>
+        <svg viewBox={`0 0 ${fr.W} ${fr.H}`} style={{ width: "100%", height: 280 }}>
+          {yTicks.map((v, i) => (
+            <g key={`y${i}`}>
+              <line x1={fr.PL} y1={fr.sy(v)} x2={fr.W - fr.PR} y2={fr.sy(v)} stroke="#161616" strokeWidth="1" />
+              <text x={fr.PL - 6} y={fr.sy(v) + 3} fill="#555" fontSize="8.5" textAnchor="end" fontFamily={FM}>{(v * 100).toFixed(1)}%</text>
+            </g>
+          ))}
+          {xTicks.map((v, i) => (
+            <text key={`x${i}`} x={fr.sx(v)} y={fr.H - fr.PB + 14} fill="#555" fontSize="8.5" textAnchor="middle" fontFamily={FM}>{(v * 100).toFixed(1)}%</text>
+          ))}
+          <line x1={fr.PL} y1={fr.PT} x2={fr.PL} y2={fr.H - fr.PB} stroke="#1d1d1d" strokeWidth="1" />
+          <line x1={fr.PL} y1={fr.H - fr.PB} x2={fr.W - fr.PR} y2={fr.H - fr.PB} stroke="#1d1d1d" strokeWidth="1" />
+          {fr.path && <path d={fr.path} fill="none" stroke="#525252" strokeWidth="1.6" />}
+          {pts.map((p, i) => (
+            <g key={i}>
+              <circle cx={p.x} cy={p.y} r={9} fill="transparent" style={{ cursor: "pointer" }} onClick={() => setSelected(selected === i ? null : i)} />
+              <circle
+                cx={p.x} cy={p.y}
+                r={i === minVarIdx || i === maxSharpeIdx ? 5 : 3.5}
+                fill={i === minVarIdx ? C.cyan : i === maxSharpeIdx ? C.green : "#8a8a8f"}
+                stroke={selected === i ? "#fff" : "none"} strokeWidth={1.5}
+                style={{ pointerEvents: "none" }}
+              />
+            </g>
+          ))}
+          {fr.bm && <><circle cx={fr.bm.x} cy={fr.bm.y} r="5" fill="#8a8a8f" /><text x={fr.bm.x + 9} y={fr.bm.y + 4} fill="#888" fontSize="9" fontFamily="Pretendard">벤치마크</text></>}
+          {fr.op && <><path d={`M${fr.op.x},${fr.op.y - 6} l7,12 l-14,0 z`} fill="#fff" /><text x={fr.op.x - 16} y={fr.op.y - 10} fill="#fff" fontSize="9" fontFamily="Pretendard">최적화</text></>}
+          <text x={fr.W - fr.PR} y={fr.H - 6} fill="#555" fontSize="9" fontFamily="Pretendard" textAnchor="end">변동성(연간) →</text>
+          <text x={fr.PL} y={fr.PT - 4} fill="#555" fontSize="9" fontFamily="Pretendard">수익(연간)</text>
+        </svg>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 9.5, fontFamily: FA, letterSpacing: ".5px", color: "#888", marginTop: 4 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#8a8a8f" }} />프론티어 지점</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: C.cyan }} />최소분산</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: C.green }} />최대샤프</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 0, height: 0, borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderBottom: "7px solid #fff" }} />최적화</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#8a8a8f", opacity: 0.6 }} />벤치마크</span>
+        </div>
+        <p style={{ fontSize: 11.5, lineHeight: 1.7, color: C.t3, marginTop: 8 }}>곡선 위 각 점은 특정 위험(변동성) 수준에서 얻을 수 있는 최고 기대수익을 나타냅니다. 점을 클릭하면 그 지점의 자산 배분을 아래에서 볼 수 있습니다.</p>
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.b1}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: "#ddd" }}>{panelLabel}</span>
+            {selectedPt && (
+              <span onClick={() => setSelected(null)} style={{ cursor: "pointer", fontSize: 9.5, color: C.t4, marginLeft: "auto" }}>✕ 초기화</span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {panelRows.map((r) => (
+              <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ flex: "0 0 70px", display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "#ddd" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: r.color }} />{r.name}</span>
+                <div style={{ flex: 1, height: 6, background: C.b1, borderRadius: 3, overflow: "hidden" }}><div style={{ height: 6, width: `${(r.w / 50) * 100}%`, background: r.color }} /></div>
+                <span style={{ flex: "0 0 44px", textAlign: "right", fontFamily: FM, fontSize: 11 }}>{r.w}%</span>
               </div>
-              <div style={{ display: "flex", gap: 26, padding: "9px 8px 0" }}>
-                {DEV.map((d) => (<span key={d.n} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "#aaa" }}>{d.n}</span>))}
-              </div>
-            </div>
-          );
-        })()}
+            ))}
+          </div>
+        </div>
       </Card>
     </div>
   );
