@@ -65,14 +65,25 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.6.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.6.0",
+    date: "2026-07-01",
+    title: "리포트 히스토리 · 결과 둘러보기 · 실행 브리지 확대",
+    current: true,
+    items: [
+      "리포트 탭을 생성된 리포트 목록(4열 카드 그리드)으로 개편 — 카드 선택 시 해당 리포트 표시, 생성 중에는 로딩 카드",
+      "지난 리포트를 DB(/simulations)에서 불러와 새로고침 후에도 유지",
+      "최적화 완료 후 '결과 둘러보기'(배분·리스크·프론티어) 안내와 PM 리포트 열기 (Stage D)",
+      "뷰→실행 브리지 진입점 확대: 채팅으로 뷰를 남기거나 특정 디제스트를 물어본 뒤에도 실행 브리지 표시",
+    ],
+  },
   {
     version: "0.5.0",
     date: "2026-07-01",
     title: "실행 설정 · 첨부 정리 · 완료 타이밍",
-    current: true,
     items: [
       "최적화 실행 전 최적화 방식(앙상블·MVO·리스크패리티·HRP)과 이탈 한도 δ(±3/5/10%p)를 직접 선택",
       "Chris의 완료 메시지를 최적화가 실제로 끝난 뒤에만 표시 (실행 중 조기 노출 수정)",
@@ -255,6 +266,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const i = await getJson("/market-intelligence"); if (Array.isArray(i?.data)) setIntel(i.data);
       const q = await getJson("/research/queue?limit=12"); if (Array.isArray(q?.data)) setQueue(q.data);
       const t = await getJson("/theses"); if (Array.isArray(t?.data)) setHouseTheses(t.data);
+      const sm = await getJson("/simulations"); if (Array.isArray(sm)) setReports(sm);
       setBackendUp(reachable);
     })();
   }, []);
@@ -338,6 +350,10 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [optimizer, setOptimizer] = useState<"ensemble" | "markowitz" | "risk_parity" | "hrp">("ensemble");
   const [maxDeviation, setMaxDeviation] = useState(0.05); // δ cap vs NPS benchmark
   const [attachOpen, setAttachOpen] = useState(false); // attached-sources tray expanded?
+  // Report history: list from /simulations; openReport = the full detail being viewed.
+  const [reports, setReports] = useState<any[]>([]);
+  const [openReport, setOpenReport] = useState<any | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
@@ -535,6 +551,16 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     });
   };
 
+  // Report history helpers.
+  const refetchReports = async () => {
+    try { const r = await fetch(API_BASE + "/simulations"); if (r.ok) { const j = await r.json(); if (Array.isArray(j)) setReports(j); } } catch { /* offline */ }
+  };
+  const openReportDetail = async (id: number) => {
+    if (sim && sim.simulation_id === id) { setOpenReport(sim); return; } // already in memory
+    setReportLoading(true);
+    try { const r = await fetch(API_BASE + "/simulations/" + id); if (r.ok) setOpenReport(await r.json()); } catch { /* offline */ } finally { setReportLoading(false); }
+  };
+
   const runSimulation = async (text?: string) => {
     const vt = (text ?? viewText).trim();
     if ((!vt && attached.length === 0 && considerations.length === 0) || running) return;
@@ -579,7 +605,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           } catch { /* skip partial line */ }
         }
       }
-    } catch { /* offline → tabs keep mock */ } finally { setRunning(false); }
+    } catch { /* offline → tabs keep mock */ } finally { setRunning(false); refetchReports(); }
   };
 
   // ── Send a chat message to the chosen persona (streams the reply via /chat) ──
@@ -648,6 +674,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               if (evt.intent === "view") {
                 const label = (evt.summary && evt.summary.trim()) || text.slice(0, 40);
                 setConsiderations((prev) => (prev.some((c) => c.text === text) ? prev : [...prev, { id: "c" + botId, label, text }]));
+                if (!sim && !running) setViewFlow("form"); // a captured view surfaces the run bridge
               } else if (evt.intent === "run") {
                 shouldRun = true;
               }
@@ -883,12 +910,13 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     runSimulation("특별한 시장 뷰 없이 NPS 기준 비중을 유지합니다.");
   };
   // Attach the chosen digest and ask Ben to explain it — a real grounded LLM answer.
-  const askBenAbout = (d: any) => {
+  const askBenAbout = async (d: any) => {
     if (!d) return;
     attachSource(d);
     setBenFollow("hidden");
     setPersona("ben");
-    sendChat({ persona: "ben", extraAttach: d, text: `방금 분석한 「${d.title}」 디제스트를 더 자세히 설명해 주세요. 핵심 내용과 자산배분 관점에서의 함의를 알려 주세요.` });
+    await sendChat({ persona: "ben", extraAttach: d, text: `방금 분석한 「${d.title}」 디제스트를 더 자세히 설명해 주세요. 핵심 내용과 자산배분 관점에서의 함의를 알려 주세요.` });
+    if (!sim && !running) setViewFlow("form"); // after the explanation, offer the run bridge
   };
   // 2) Let Jerry run a deeper macro research deep-dive (research feature).
   const chooseJerryDeepDive = () => {
@@ -1265,12 +1293,29 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
 
             {/* Chris reports back to chat only once the run has FULLY completed
                 (sim received + not running) — never mid-reasoning. */}
-            {sim && !running && (
+            {sim && !running && (<>
               <Msg who="Chris" role="PM · 최종 검토" avatarColor={C.white}>
-                <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 전체 결과와 제 IC 메모는 오른쪽 탭에서 확인하세요.</span>
-                <button style={{ alignSelf: "flex-start", fontFamily: FA, fontWeight: 700, fontSize: 10, letterSpacing: "1px", background: "#fff", color: "#000", border: "none", padding: "8px 14px", borderRadius: 6, cursor: "pointer", marginTop: 10 }} onClick={() => setTab("리포트")}>PM 최종 리포트 →</button>
+                <span>의견을 반영해 배분을 마무리했습니다. 시장 레짐을 감안해 틸트 강도는 δ 한도 내로 절제했어요. 아래에서 결과를 함께 살펴보시죠.</span>
               </Msg>
-            )}
+              {/* Stage D: guided walk through the results, ending at the PM report. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>결과 둘러보기</div>
+                {[
+                  { t: "배분 결과", d: "벤치마크(NPS) 대비 자산별 비중 변화와 근거", go: "배분" },
+                  { t: "리스크 지표", d: "기대수익률·변동성·샤프·VaR/CVaR·최대낙폭", go: "리스크" },
+                  { t: "효율적 프론티어", d: "최적 포트폴리오의 위험–수익 위치", go: "프론티어" },
+                ].map((o, i) => (
+                  <div key={i} onClick={() => setTab(o.go)}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.white)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+                <div onClick={() => { setTab("리포트"); if (sim) setOpenReport(sim); }} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: "#fff", borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>PM 최종 리포트 →</div>
+              </div>
+            </>)}
           </div>
 
           {/* composer */}
@@ -1410,7 +1455,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
             {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
-            {tab === "리포트" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <ReportTab sim={sim} />)}
+            {tab === "리포트" && <ReportTab reports={reports} openReport={openReport} running={running} reportLoading={reportLoading} onOpen={openReportDetail} onBack={() => setOpenReport(null)} />}
             {tab === "가이드" && <GuideTab onNavigate={setTab} runSimulation={runSimulation} running={running} />}
             {tab === "설정" && <ConfigTab />}
           </div>
@@ -2616,7 +2661,66 @@ const SOURCES_MOCK: [string, string, string, string, string][] = [
   ["뉴스", "outline", "원/달러 1,380원 돌파 · 연합인포맥스", "61%", C.amber],
 ];
 
-function ReportTab({ sim }: { sim: any }) {
+// ── Report tab: a 4-column grid of past reports; selecting one shows the full
+// report (ReportDoc). A loading card appears while a new one is being generated.
+function ReportCard({ r, onClick }: { r: any; onClick: () => void }) {
+  const date = (r.created_at || "").slice(0, 10);
+  const opt = (r.optimizer || "ensemble").toUpperCase();
+  return (
+    <div onClick={onClick}
+      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 8, minHeight: 128, transition: "border-color .15s" }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b2)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 9, fontFamily: FM, color: C.t5 }}>#{r.id} · {date}</span>
+        <span style={{ fontSize: 8, fontFamily: FA, letterSpacing: ".5px", color: C.t3, border: `1px solid ${C.b4}`, borderRadius: 3, padding: "2px 5px" }}>{opt}</span>
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{r.title || "무제 리포트"}</span>
+      <span style={{ marginTop: "auto", fontSize: 9.5, color: C.green, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px" }}>리포트 열기 →</span>
+    </div>
+  );
+}
+function LoadingReportCard() {
+  return (
+    <div style={{ background: C.panel2, border: `1px dashed ${C.violet}`, borderRadius: 10, padding: 14, minHeight: 128, display: "flex", flexDirection: "column", gap: 12, justifyContent: "center", alignItems: "center" }}>
+      <span style={{ display: "inline-flex", gap: 4 }}>
+        {[0, 1, 2].map((i) => (<span key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.violet, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />))}
+      </span>
+      <span style={{ fontSize: 10.5, color: C.violet, fontFamily: FA, letterSpacing: ".5px" }}>리포트 생성 중…</span>
+    </div>
+  );
+}
+function ReportTab({ reports, openReport, running, reportLoading, onOpen, onBack }: {
+  reports: any[]; openReport: any | null; running: boolean; reportLoading: boolean;
+  onOpen: (id: number) => void; onBack: () => void;
+}) {
+  if (openReport) {
+    return (
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
+        <div onClick={onBack} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: C.t3, marginBottom: 14 }}>← 리포트 목록</div>
+        <ReportDoc sim={openReport} />
+      </div>
+    );
+  }
+  return (
+    <div style={{ maxWidth: 1000, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 16 }}>
+        <span style={{ fontFamily: FA, fontWeight: 800, fontSize: 18, letterSpacing: ".3px" }}>생성된 리포트</span>
+        <span style={{ fontSize: 11, color: C.t4 }}>{reports.length}건{reportLoading ? " · 불러오는 중…" : ""}</span>
+      </div>
+      {reports.length === 0 && !running ? (
+        <div style={{ color: C.t4, fontSize: 12, lineHeight: 1.8, padding: "20px 2px" }}>아직 생성된 리포트가 없습니다. 왼쪽 데스크에서 뷰를 정하고 <b style={{ color: "#fff" }}>최적화 실행</b>을 하면 이 자리에 리포트가 생성됩니다.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+          {running && <LoadingReportCard />}
+          {reports.map((r) => (<ReportCard key={r.id} r={r} onClick={() => onOpen(r.id)} />))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportDoc({ sim }: { sim: any }) {
   const SectionH = ({ children, bar = "#fff", badge }: { children: React.ReactNode; bar?: string; badge?: string }) => (
     <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "26px 0 12px" }}>
       <span style={{ width: 3, height: 13, background: bar }} />
