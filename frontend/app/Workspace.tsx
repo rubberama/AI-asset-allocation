@@ -1318,6 +1318,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes ticker { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
         @keyframes slideInRight { from{ transform:translateX(100%) } to{ transform:translateX(0) } }
+        @keyframes slideInLeft { from{ transform:translateX(-100%) } to{ transform:translateX(0) } }
         .etc-scroll::-webkit-scrollbar{ width:8px; height:8px; }
         .etc-scroll::-webkit-scrollbar-thumb{ background:#1e1e1e; border-radius:4px; }
         .etc-scroll::-webkit-scrollbar-track{ background:transparent; }
@@ -1327,6 +1328,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       `}</style>
 
       <ChangelogDrawer />
+      {hasRun && (
+        <ReasoningTraceDrawer running={running} traceText={traceText} traceStatus={traceStatus} effProg={effProg} effActive={effActive} />
+      )}
 
       {/* ============ TOP NAV ============ */}
       <div style={{ height: 54, flex: "0 0 54px", borderBottom: `1px solid ${C.b1}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px" }}>
@@ -1581,51 +1585,8 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                 <div style={{ maxWidth: 330, background: "#fff", color: "#000", fontSize: 13, lineHeight: 1.6, padding: "11px 14px", borderRadius: "14px 14px 4px 14px" }}>{viewText}</div>
               </div>
             )}
-            {runAnchor !== null && hasRun && (
-            /* reasoning trace */
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-              <Avatar color={C.violet} small>∑</Avatar>
-              <div style={{ flex: 1 }}>
-                <div style={{ background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${C.b1}` }}>
-                    <span style={{ position: "relative", width: 7, height: 7 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.violet, animation: "pulseDot 1.4s infinite" }} /></span>
-                    <span style={{ fontFamily: FA, fontSize: 9, letterSpacing: "1.5px", color: "#9a9a9a" }}>NEMOTRON 3 SUPER · 추론 트레이스</span>
-                    <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: C.violet }}>{traceStatus}</span>
-                  </div>
-                  <div style={{ padding: "11px 13px", borderBottom: `1px solid #141414`, background: C.panel }}>
-                    <div style={{ fontFamily: FM, fontSize: 10, lineHeight: 1.7, color: "#8f8f8f", minHeight: 96, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {traceText || (running ? "추론을 시작하는 중…" : "")}
-                      <span style={{ display: "inline-block", width: 6, height: 11, background: C.violet, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
-                    </div>
-                  </div>
-                  <div style={{ padding: "12px 13px 6px" }}>
-                    {TRACE_STEPS.map((s, i) => {
-                      const done = effProg >= s.at;
-                      const active = i === effActive;
-                      return (
-                        <div key={i} style={{ display: "flex", gap: 10 }}>
-                          <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                            <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, flex: "0 0 auto",
-                              ...(done ? { background: "#0e0e0e", border: "1px solid #2a2a2a", color: C.green }
-                                : active ? { background: C.violet, color: "#000", animation: "pulseDot 1.3s infinite" }
-                                : { background: "#0a0a0a", border: `1px solid ${C.b2}`, color: "#444" }) }}>
-                              {done ? "✓" : active ? "●" : String(i + 1)}
-                            </span>
-                            <span style={{ width: 1, flex: 1, background: C.b2, minHeight: 14 }} />
-                          </div>
-                          <div style={{ paddingBottom: 10 }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: done || active ? "#cfcfcf" : "#666" }}>{s.l}</div>
-                            <div style={{ fontSize: 10.5, lineHeight: 1.5, color: "#777" }}>{s.d}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            )}
+            {/* Reasoning trace now lives in the ReasoningTraceDrawer (left-edge tab) —
+                see its render near <ChangelogDrawer /> — instead of inline in the thread. */}
 
             {/* Chris reports back to chat only once the run has FULLY completed
                 (sim received + not running) — never mid-reasoning. */}
@@ -1926,6 +1887,104 @@ function ChangelogDrawer() {
                   </ul>
                 </div>
               ))}
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+// Mirrors ChangelogDrawer's tab-and-slide-panel pattern, but on the left edge and
+// driven by run state: pops open automatically the moment reasoning starts, then
+// auto-collapses back to just the tab a few seconds after it finishes. The tab
+// itself always stays put so the trace can be reopened anytime.
+function ReasoningTraceDrawer({ running, traceText, traceStatus, effProg, effActive }: { running: boolean; traceText: string; traceStatus: string; effProg: number; effActive: number }) {
+  const [open, setOpen] = useState(false);
+  const wasRunning = useRef(false);
+
+  useEffect(() => {
+    const prev = wasRunning.current;
+    wasRunning.current = running;
+    if (running && !prev) {
+      setOpen(true);
+    } else if (!running && prev) {
+      const t = setTimeout(() => setOpen(false), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [running]);
+
+  return (
+    <>
+      {/* Always-visible vertical tab on the left edge */}
+      <button
+        onClick={() => setOpen(true)}
+        title="추론 트레이스"
+        style={{
+          position: "fixed", left: 0, top: "50%", transform: "translateY(-50%)", zIndex: 60,
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 9,
+          background: C.panel2, color: "#bbb", border: `1px solid ${C.b4}`, borderLeft: "none",
+          borderRadius: "0 7px 7px 0", padding: "13px 7px", cursor: "pointer",
+        }}
+      >
+        <span style={{ position: "relative", width: 7, height: 7 }}>
+          <span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: running ? C.violet : C.green, animation: running ? "pulseDot 1.4s infinite" : undefined }} />
+        </span>
+        <span style={{ writingMode: "vertical-rl", fontSize: 9, fontFamily: FA, letterSpacing: "2px" }}>추론 트레이스</span>
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 90 }} />
+          <div className="etc-scroll" style={{
+            position: "fixed", top: 0, left: 0, height: "100vh", width: 380, maxWidth: "92vw", zIndex: 100,
+            background: C.bg, borderRight: `1px solid ${C.b3}`, overflowY: "auto",
+            animation: "slideInLeft .2s ease", boxShadow: "24px 0 48px rgba(0,0,0,.6)",
+          }}>
+            <div style={{ position: "sticky", top: 0, background: C.bg, borderBottom: `1px solid ${C.b2}`, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ position: "relative", width: 7, height: 7 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.violet, animation: "pulseDot 1.4s infinite" }} /></span>
+                <span style={{ fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: "2px", color: C.white }}>NEMOTRON 3 SUPER</span>
+                <span style={{ fontSize: 9, fontFamily: FM, color: C.t4 }}>추론 트레이스</span>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 5, color: "#999", fontSize: 13, lineHeight: 1, width: 26, height: 26, cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: "16px 20px 48px" }}>
+              <div style={{ background: C.panel2, border: `1px solid ${C.b2}`, borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: `1px solid ${C.b1}` }}>
+                  <span style={{ fontFamily: FA, fontSize: 9, letterSpacing: "1.5px", color: "#9a9a9a" }}>상태</span>
+                  <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, letterSpacing: ".5px", color: C.violet }}>{traceStatus}</span>
+                </div>
+                <div style={{ padding: "11px 13px", borderBottom: `1px solid #141414`, background: C.panel }}>
+                  <div style={{ fontFamily: FM, fontSize: 10, lineHeight: 1.7, color: "#8f8f8f", minHeight: 96, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {traceText || (running ? "추론을 시작하는 중…" : "")}
+                    <span style={{ display: "inline-block", width: 6, height: 11, background: C.violet, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
+                  </div>
+                </div>
+                <div style={{ padding: "12px 13px 6px" }}>
+                  {TRACE_STEPS.map((s, i) => {
+                    const done = effProg >= s.at;
+                    const active = i === effActive;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 10 }}>
+                        <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <span style={{ width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, flex: "0 0 auto",
+                            ...(done ? { background: "#0e0e0e", border: "1px solid #2a2a2a", color: C.green }
+                              : active ? { background: C.violet, color: "#000", animation: "pulseDot 1.3s infinite" }
+                              : { background: "#0a0a0a", border: `1px solid ${C.b2}`, color: "#444" }) }}>
+                            {done ? "✓" : active ? "●" : String(i + 1)}
+                          </span>
+                          <span style={{ width: 1, flex: 1, background: C.b2, minHeight: 14 }} />
+                        </div>
+                        <div style={{ paddingBottom: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: done || active ? "#cfcfcf" : "#666" }}>{s.l}</div>
+                          <div style={{ fontSize: 10.5, lineHeight: 1.5, color: "#777" }}>{s.d}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
         </>
