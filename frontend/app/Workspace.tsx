@@ -65,14 +65,22 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.3.1",
+    date: "2026-07-01",
+    title: "데스크 챗 한국어 고정",
+    current: true,
+    items: [
+      "데스크 챗 답변이 문장 중간에 일본어 등 다른 언어로 바뀌던 문제 수정 — 한국어(한글) 전용 규칙 강화 (고유명사·약어는 원문 허용)",
+    ],
+  },
   {
     version: "0.3.0",
     date: "2026-07-01",
     title: "새 대화 · Ben 디제스트 후속 흐름",
-    current: true,
     items: [
       "「새 대화」 버튼으로 대화를 초기화하고 온보딩(Chris→Jerry 브리핑)을 처음부터 재생",
       "채팅 스레드를 chatMsgs로 일원화(하드코딩 Chris 인사 제거) — 인사 중복 해소",
