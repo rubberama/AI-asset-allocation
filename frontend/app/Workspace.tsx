@@ -65,14 +65,26 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.7.1";
+const APP_VERSION = "0.7.2";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.7.2",
+    date: "2026-07-01",
+    title: "상충되는 근거 처리 개선 — 뷰 파싱이 정직해짐",
+    current: true,
+    items: [
+      "뉴스·리서치 출처가 서로 반대 방향을 가리킬 때, 한쪽만 골라 인용하던 문제 수정",
+      "뷰의 '논거(thesis)'가 상충되는 신호를 명시적으로 인정하고, 어느 쪽을 왜 더 무겁게 봤는지 설명",
+      "상충 신호가 있으면 확신도(confidence)를 서버에서 강제로 낮춤(최대 0.55) — 모델의 자체 신고에만 의존하지 않음",
+      "Jerry의 PM 메모가 상충 신호를 핵심 리스크(key_risks_considered)로 명시",
+      "리포트 '포지셔닝 논리' 표에 ⚠ 상충 신호 캡션 추가 — 근거가 만장일치가 아니었을 때 숨기지 않고 표시",
+    ],
+  },
   {
     version: "0.7.1",
     date: "2026-07-01",
     title: "새 대화 완전 초기화 · 대화 순서 고정",
-    current: true,
     items: [
       "「새 대화」가 이전 실행의 뷰·추론 트레이스·리포트를 완전히 초기화 — 하드코딩된 것처럼 남아있던 이전 뷰 문구 제거",
       "추론 트레이스·PM 완료 메시지가 실행 시점에 맞춰 대화 순서대로 배치 — 리포트 완성 후 던진 질문이 항상 맨 아래에 표시(중간 삽입 문제 수정)",
@@ -1784,6 +1796,9 @@ function attribFromSim(sim: any) {
       delta: Math.abs(d) < 0.005 ? "—" : `${d > 0 ? "+" : "−"}${Math.abs(d).toFixed(2)}`,
       dc: Math.abs(d) < 0.005 ? C.t6 : d > 0 ? C.up : C.red,
       why: first ? String(first.thesis || "적용된 뷰").slice(0, 64) : "시장 균형 유지 (적용된 뷰 없음)",
+      // Non-empty only when the view-parser found sources that disagreed on direction
+      // and had to judge which side to weight — surfaced so it isn't silently hidden.
+      conflict: first?.conflicting_evidence ? String(first.conflicting_evidence) : "",
       src: srcs.length ? String(srcs[0]) : "", tag: "근거", tagDark: true,
     };
   });
@@ -2802,7 +2817,7 @@ function ReportDoc({ sim }: { sim: any }) {
     const a = (attrib as any[]).find((x) => x.name === r.name);
     const [stance, sc] = r.d >= 2 ? ["비중확대 OW", C.up] : r.d <= -2 ? ["비중축소 UW", C.red] : r.d > 0.3 ? ["소폭 확대", C.t2] : r.d < -0.3 ? ["소폭 축소", C.t2] : ["중립", C.t2];
     const conf = Math.abs(r.d) >= 3 ? "高" : Math.abs(r.d) >= 1 ? "中" : "—";
-    return [r.name, r.color, stance, sc, conf, f1(r.d), r.d >= 0 ? C.up : C.red, (a?.why as string) || "시장 균형 유지"];
+    return [r.name, r.color, stance, sc, conf, f1(r.d), r.d >= 0 ? C.up : C.red, (a?.why as string) || "시장 균형 유지", (a?.conflict as string) || ""];
   });
   const rrRows: [string, string, string, string, string][] = [
     ["연간 기대수익률", pf(benchR), pf(expR), dpp(expR - benchR), "#fff"],
@@ -2877,7 +2892,12 @@ function ReportDoc({ sim }: { sim: any }) {
                 <span style={{ color: r[3] as string, fontSize: 10.5 }}>{r[2]}</span>
                 <span style={{ fontFamily: FM, color: "#bbb" }}>{r[4]}</span>
                 <span style={{ textAlign: "right", fontFamily: FM, color: r[6] as string }}>{r[5]}</span>
-                <span style={{ color: C.t3, fontSize: 11, paddingLeft: 8 }}>{r[7]}</span>
+                <span style={{ display: "flex", flexDirection: "column", gap: 3, paddingLeft: 8 }}>
+                  <span style={{ color: C.t3, fontSize: 11 }}>{r[7]}</span>
+                  {r[8] && (
+                    <span style={{ color: C.amber, fontSize: 10, lineHeight: 1.4 }}>⚠ 상충 신호 — {r[8]}</span>
+                  )}
+                </span>
               </React.Fragment>
             ))}
           </div>

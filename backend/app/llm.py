@@ -45,6 +45,7 @@ class AbsoluteView(BaseModel):
     confidence: float = Field(..., description="Confidence score between 0.0 and 1.0")
     thesis: str = Field(..., description="Specific investment thesis/rationale for this view based on the user's text")
     sources: List[str] = Field(default=[], description="Specific data sources, indices, or economic indicators supporting this view")
+    conflicting_evidence: str = Field(default="", description="If provided sources disagreed on direction, name the strongest counter-evidence and why it was outweighed. Empty only if sources were unanimous.")
 
 class RelativeView(BaseModel):
     view_type: str = Field("relative")
@@ -54,6 +55,7 @@ class RelativeView(BaseModel):
     confidence: float = Field(..., description="Confidence score between 0.0 and 1.0")
     thesis: str = Field(..., description="Specific investment thesis/rationale for this relative view based on the user's text")
     sources: List[str] = Field(default=[], description="Specific data sources, indices, or economic indicators supporting this view")
+    conflicting_evidence: str = Field(default="", description="If provided sources disagreed on direction, name the strongest counter-evidence and why it was outweighed. Empty only if sources were unanimous.")
 
 class InvestmentViews(BaseModel):
     views: List[Union[AbsoluteView, RelativeView]]
@@ -179,7 +181,8 @@ Each view must be either an "absolute" or a "relative" view.
   "expected_return": 0.12,
   "confidence": 0.8,
   "thesis": "Specific 1-2 sentence investment thesis explaining this view.",
-  "sources": ["Source 1 (e.g., FRED CPI)", "Source 2 (e.g., CBOE VIX)"]
+  "sources": ["Source 1 (e.g., FRED CPI)", "Source 2 (e.g., CBOE VIX)"],
+  "conflicting_evidence": "Empty string if all sources agreed; otherwise name the strongest opposing source/claim and why it was outweighed."
 }}
 
 2. Relative View Schema (asset1 will outperform asset2):
@@ -190,7 +193,8 @@ Each view must be either an "absolute" or a "relative" view.
   "outperformance": 0.05,
   "confidence": 0.75,
   "thesis": "Specific 1-2 sentence investment thesis explaining why asset1 outperforms asset2.",
-  "sources": ["Source 1", "Source 2"]
+  "sources": ["Source 1", "Source 2"],
+  "conflicting_evidence": "Empty string if all sources agreed; otherwise name the strongest opposing source/claim and why it was outweighed."
 }}
 
 {macro_context_str}
@@ -204,12 +208,34 @@ SOURCE CITATION RULES (CRITICAL):
 - If the user's input contains structured article references in the format "[Author - Title]: content" or starts with "--- [Selected Market Intelligence] ---", you MUST cite those EXACT author names and article titles in your "sources" array for each relevant view. For example: if the input contains "[Goldman Sachs - Global Equity Outlook]: ...", your sources should include "Goldman Sachs - Global Equity Outlook". Do NOT substitute generic index names (e.g. "S&P 500", "FRED CPI") when specific research articles are provided.
 - If no structured articles are provided, list 1-3 realistic supporting data sources or indices.
 
+EVIDENCE CONFLICT RULE (CRITICAL — read before writing each view):
+Before deciding a view's direction, first check whether the provided sources actually agree. Real news feeds routinely contain articles that point in OPPOSITE directions for the same asset (e.g. one headline says rising yields are bearish for bonds, another says falling yields are bullish for bonds). When that happens:
+- Do NOT silently pick the side that supports a cleaner story and cite only those sources. That is confirmation bias, not analysis, and it misleads the reader into thinking the evidence was unanimous.
+- Name the strongest opposing source/claim in "conflicting_evidence" (e.g. "WSJ's June 30 report of rising yields on resilient growth data cuts against this, but two more recent sources plus the current macro trend outweigh it"). Leave it as an empty string ONLY when the sources genuinely agree.
+- Your "thesis" must acknowledge the disagreement in at least one clause when it exists (e.g. "despite an earlier report suggesting X, more recent coverage and the macro data support Y because...").
+- Confidence must reflect the actual disagreement, not just your own certainty: if the conflicting sources are roughly balanced in number/quality, cap confidence at 0.45; if one side is clearly stronger (more sources, more recent, corroborated by the real-time macro data above), cap at 0.55. Only use confidence above 0.55 when the sources are unanimous or near-unanimous.
+- "sources" should still list only the sources that actually support the view's stated direction — the dissenting evidence belongs in "conflicting_evidence", not mixed into "sources".
+
 Rules:
 - Annualized expected returns MUST be realistic: absolute views in [-0.10, +0.14], relative outperformance in [-0.08, +0.08].
 - Confidence strictly between 0.30 and 0.70. Do NOT output confidence above 0.70 — calibrate carefully.
 - Provide a professional "thesis" explaining the economic mechanism, referencing the specific articles or research provided in the input.
 - Only reference the allowed asset keys.
 - Output ONLY valid, parseable JSON. No explanations outside the JSON."""
+
+
+def _clamp_conflict_confidence(vd: Dict[str, Any]) -> float:
+    """
+    Server-side backstop for the EVIDENCE CONFLICT RULE: don't just trust the model
+    to self-limit its confidence when it flags conflicting sources — a model that's
+    willing to cherry-pick supporting sources is equally capable of "forgetting" to
+    lower its confidence afterward. If conflicting_evidence is non-empty, hard-cap
+    confidence at 0.55 regardless of what the model reported.
+    """
+    conf = float(max(0.30, min(0.70, float(vd["confidence"]))))
+    if str(vd.get("conflicting_evidence") or "").strip():
+        conf = min(conf, 0.55)
+    return conf
 
 
 def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
@@ -224,13 +250,14 @@ def _parse_and_clamp_views(answer: str, view_text: str) -> List[Dict[str, Any]]:
                 # Realistic NPS-grade return range: bonds ~4-8%, equities ~6-14%
                 vd["expected_return"] = float(max(-0.10, min(0.14, float(vd["expected_return"]))))
                 # Cap confidence at 0.70 — high confidence drowns out market equilibrium
-                vd["confidence"] = float(max(0.30, min(0.70, float(vd["confidence"]))))
+                # (further capped at 0.55 below if the model flagged conflicting sources)
+                vd["confidence"] = _clamp_conflict_confidence(vd)
                 filtered.append(vd)
             elif (vd["view_type"] == "relative"
                   and vd.get("asset1") in VALID_ASSETS
                   and vd.get("asset2") in VALID_ASSETS):
                 vd["outperformance"] = float(max(-0.08, min(0.08, float(vd["outperformance"]))))
-                vd["confidence"] = float(max(0.30, min(0.70, float(vd["confidence"]))))
+                vd["confidence"] = _clamp_conflict_confidence(vd)
                 filtered.append(vd)
         if filtered:
             logger.info(f"Parsed and clamped {len(filtered)} BL views.")
@@ -293,8 +320,12 @@ async def _multi_call_confidence_calibration(
 
     results = await asyncio.gather(*[_single_sample() for _ in range(n_calls)], return_exceptions=True)
 
-    # Collect Q samples keyed by asset signature
+    # Collect Q samples keyed by asset signature, plus whether ANY independent
+    # resample flagged conflicting sources for that view — a model that cherry-picks
+    # supporting evidence on one call may still notice the conflict on another, and
+    # that signal shouldn't be lost just because the "initial" call missed it.
     q_samples: Dict[str, List[float]] = {}
+    conflict_notes: Dict[str, str] = {}
     for res in results:
         if isinstance(res, Exception) or not res:
             continue
@@ -305,6 +336,11 @@ async def _multi_call_confidence_calibration(
             elif v["view_type"] == "relative" and v.get("asset1") in VALID_ASSETS and v.get("asset2") in VALID_ASSETS:
                 key = f"rel:{v['asset1']}:{v['asset2']}"
                 q_samples.setdefault(key, []).append(float(v.get("outperformance", 0)))
+            else:
+                continue
+            note = str(v.get("conflicting_evidence") or "").strip()
+            if note and key not in conflict_notes:
+                conflict_notes[key] = note
 
     calibrated = []
     for v in initial_views:
@@ -324,6 +360,11 @@ async def _multi_call_confidence_calibration(
                 f"Variance calibration [{key}]: self={self_conf:.2f} "
                 f"std={std:.4f} empirical={empirical_conf:.2f} → blended={blended:.2f}"
             )
+        # If this view didn't flag a conflict but an independent resample did, carry
+        # that note over rather than silently dropping it.
+        if not str(v.get("conflicting_evidence") or "").strip() and key in conflict_notes:
+            v["conflicting_evidence"] = conflict_notes[key]
+        v["confidence"] = _clamp_conflict_confidence(v)
         calibrated.append(v)
 
     return calibrated
@@ -632,17 +673,23 @@ async def generate_pm_memo(parsed_views: List[Dict[str, Any]], macro_context: Di
     # Format the inputs for the prompt
     views_formatted = []
     for idx, v in enumerate(parsed_views):
+        conflict_line = (
+            f"\n  Conflicting evidence noted: {v.get('conflicting_evidence')}"
+            if str(v.get("conflicting_evidence") or "").strip() else ""
+        )
         if v.get("view_type") == "absolute":
             views_formatted.append(
                 f"- Absolute View: {v.get('asset')} | Expected Return: {v.get('expected_return'):+.2%} | Confidence: {v.get('confidence'):.2f}\n"
                 f"  Thesis: {v.get('thesis')}\n"
                 f"  Sources: {', '.join(v.get('sources', []))}"
+                f"{conflict_line}"
             )
         elif v.get("view_type") == "relative":
             views_formatted.append(
                 f"- Relative View: {v.get('asset1')} outperforming {v.get('asset2')} by {v.get('outperformance'):+.2%} | Confidence: {v.get('confidence'):.2f}\n"
                 f"  Thesis: {v.get('thesis')}\n"
                 f"  Sources: {', '.join(v.get('sources', []))}"
+                f"{conflict_line}"
             )
     views_text = "\n".join(views_formatted)
 
@@ -654,12 +701,14 @@ Your task is to write a concise internal macro-asset allocation memo ("Jerry's P
 
 CRITICAL: Read EVERY active view (its thesis and its cited sources) AND the user's original input & sources below THOROUGHLY, and base your assessment on ALL of them together — both the user's macro view and every attached news / research source. Do not ignore or skip any source. Where relevant, ground your reasoning in the specific sources provided.
 
+Some views below may include a "Conflicting evidence noted" line — this means the analyst who built that view found sources pointing in opposite directions and had to judge which side to weight more. Do NOT ignore this: if any view carries a conflict note, name it as one of your key_risks_considered (e.g. "view rests on a judgment call between diverging signals — X vs Y") rather than presenting the view as if the evidence were unanimous.
+
 Your output must be a valid JSON object matching this schema exactly:
 {
   "macro_regime_sentiment": "RISK-OFF" | "RISK-ON" | "NEUTRAL",
   "investment_thesis_summary": "A 2-3 sentence overview of the consolidated investment thesis (what macro developments are driving this portfolio repositioning).",
   "key_risks_considered": [
-    "Risk 1 (e.g. Fed policy error, inflation bounce, high VIX)",
+    "Risk 1 (e.g. Fed policy error, inflation bounce, high VIX, or a view resting on conflicting source evidence)",
     "Risk 2",
     "Risk 3"
   ],

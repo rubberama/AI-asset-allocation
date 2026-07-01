@@ -144,6 +144,7 @@ def _build_view_attribution(
                     "confidence": v.get("confidence", 0),
                     "thesis": v.get("thesis", ""),
                     "sources": v.get("sources", []),
+                    "conflicting_evidence": v.get("conflicting_evidence", ""),
                     "expected_return": v.get("expected_return"),
                     "outperformance": v.get("outperformance"),
                     "asset": v.get("asset"),
