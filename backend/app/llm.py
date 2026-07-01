@@ -612,10 +612,13 @@ def _generate_fallback_commentary(
             f"95% 신뢰수준에서의 최대 예상 손실(VaR)은 {risk_metrics.get('var_95', 0)*100:.2f}%입니다.")
 
 
-async def generate_pm_memo(parsed_views: List[Dict[str, Any]], macro_context: Dict[str, Any]) -> Dict[str, Any]:
+async def generate_pm_memo(parsed_views: List[Dict[str, Any]], macro_context: Dict[str, Any], view_text: str = "") -> Dict[str, Any]:
     """
     Generates a qualitative investment memo from the Portfolio Manager (Jerry)
     reviewing the user's views in the context of the real-time macro indicators.
+    `view_text` is the user's raw input (their macro view + every attached news /
+    research source) — passed in full so the memo is grounded in the actual sources,
+    not only the distilled views.
     """
     if not OPENROUTER_API_KEY:
         return {
@@ -649,6 +652,8 @@ async def generate_pm_memo(parsed_views: List[Dict[str, Any]], macro_context: Di
 You are Jerry, the Senior Portfolio Manager & Head of Asset Allocation at the NPS investment research desk. You hold a PhD in Economics and have 20 years of experience.
 Your task is to write a concise internal macro-asset allocation memo ("Jerry's PM Memo") reviewing the proposed active views under the current real-time macroeconomic environment.
 
+CRITICAL: Read EVERY active view (its thesis and its cited sources) AND the user's original input & sources below THOROUGHLY, and base your assessment on ALL of them together — both the user's macro view and every attached news / research source. Do not ignore or skip any source. Where relevant, ground your reasoning in the specific sources provided.
+
 Your output must be a valid JSON object matching this schema exactly:
 {
   "macro_regime_sentiment": "RISK-OFF" | "RISK-ON" | "NEUTRAL",
@@ -665,14 +670,19 @@ Your output must be a valid JSON object matching this schema exactly:
 Do NOT write markdown decorations other than the JSON block. Do not write explanations outside the JSON.
 """
 
+    raw_input = (view_text or "").strip()
+    raw_block = (
+        f"\n=== USER'S ORIGINAL INPUT & CITED SOURCES (read every item thoroughly) ===\n{raw_input[:6000]}\n"
+        if raw_input else ""
+    )
     user_content = f"""
 === REAL-TIME MACRO CONTEXT ===
 {macro_context_str}
 
 === ACTIVE INVESTMENT VIEWS TO BE MERGED ===
 {views_text}
-
-Provide your Portfolio Manager (Jerry's) internal memo analyzing these views against the macro environment.
+{raw_block}
+Provide your Portfolio Manager (Jerry's) internal memo analyzing these views and ALL the sources above against the macro environment.
 """
 
     headers = {

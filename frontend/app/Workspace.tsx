@@ -65,14 +65,26 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.7.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.7.0",
+    date: "2026-07-01",
+    title: "리포트 정합성 · 출처 정독 · 실행 설정 반영",
+    current: true,
+    items: [
+      "리포트를 결과 탭 맨 앞으로 이동 · 최적화 실행 시 리포트 탭으로 전환해 생성 로딩을 바로 확인",
+      "리포트 제목을 서술형 요약으로 변경(기존 부제 → 제목)",
+      "리포트에 실제 선택한 최적화 방식·이탈 한도 δ를 표시(하드코딩 δ 5% 제거)",
+      "리포트 '사용된 출처' 섹션이 분석에 인용된 모든 출처를 표시",
+      "PM 메모가 원문 뉴스·매크로 출처를 모두 정독하고 근거로 인용하도록 강화",
+    ],
+  },
   {
     version: "0.6.0",
     date: "2026-07-01",
     title: "리포트 히스토리 · 결과 둘러보기 · 실행 브리지 확대",
-    current: true,
     items: [
       "리포트 탭을 생성된 리포트 목록(4열 카드 그리드)으로 개편 — 카드 선택 시 해당 리포트 표시, 생성 중에는 로딩 카드",
       "지난 리포트를 DB(/simulations)에서 불러와 새로고침 후에도 유지",
@@ -192,7 +204,7 @@ const TICKER = [
 // optimization outputs (results the desk produces from your view).
 const TAB_GROUPS: { label: string; tabs: string[] }[] = [
   { label: "입력", tabs: ["매크로", "인텔리전스", "리서치"] },
-  { label: "결과", tabs: ["배분", "리스크", "프론티어", "리포트"] },
+  { label: "결과", tabs: ["리포트", "배분", "리스크", "프론티어"] },
   { label: "시스템", tabs: ["가이드", "설정"] },
 ];
 
@@ -565,6 +577,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     const vt = (text ?? viewText).trim();
     if ((!vt && attached.length === 0 && considerations.length === 0) || running) return;
     if (vt) setViewText(vt);
+    setTab("리포트"); setOpenReport(null); // show the report tab (loading card) while it generates
     setRunning(true); setLiveTrace(""); setLoadingStep(0); setParsedViews([]);
     // Fold the live view + any chat-captured considerations + attached intel sources into
     // a single view_text — the /simulate view-parsing prompt cites these directly.
@@ -1047,7 +1060,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         {chips.map((c, i) => (<Chip key={i} tag={c.tag} tagBg={c.tagBg} text={c.text} val={c.val} conf={c.conf} />))}
         <span style={{ fontSize: 11.5, color: C.t4, border: `1px dashed ${C.b4}`, borderRadius: 8, padding: "7px 11px", cursor: "pointer" }}>+ 신호 추가</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>δ 5% · ENSEMBLE</span>
+          <span style={{ fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>δ ±{Math.round(maxDeviation * 100)}%p · {optimizer.toUpperCase()}</span>
           <button onClick={() => runSimulation()} disabled={running} style={{ fontFamily: FA, fontWeight: 700, fontSize: 11, letterSpacing: "1.5px", background: "#fff", color: "#000", border: "none", padding: "10px 18px", borderRadius: 6, cursor: running ? "wait" : "pointer", opacity: running ? 0.6 : 1, display: "flex", alignItems: "center", gap: 7 }}>{running ? "최적화 중…" : "▶ 다시 최적화"}</button>
         </div>
       </div>
@@ -2733,6 +2746,9 @@ function ReportDoc({ sim }: { sim: any }) {
   const attrib = attribFromSim(sim) || ATTRIB;
   const rm = sim?.risk_metrics, bm = sim?.benchmark_portfolio, op = sim?.optimized_portfolio;
   const mc = sim?.macro_context || {}, pm = sim?.pm_memo || {};
+  // δ (max-deviation) — defined early since the risk/recommendation copy references it.
+  const delta = typeof sim?.max_deviation === "number" ? sim.max_deviation : 0.05;
+  const deltaLabel = `±${(delta * 100).toFixed((delta * 100) % 1 === 0 ? 0 : 1)}%p`;
   const rf = sim?.risk_free_rate ?? 0.035;
   const expR = rm?.expected_return ?? 0.0684, vol = rm?.volatility ?? 0.0912;
   const sharpe = rm ? (rm.expected_return - rf) / (rm.volatility || 1e-6) : 0.61;
@@ -2764,20 +2780,27 @@ function ReportDoc({ sim }: { sim: any }) {
     ["예상 최대낙폭", "—", pf(mdd), "—", C.redL],
   ];
   const risks = [
-    [`① ${ow.name} 집중`, "영향 高 · 가능성 中", `단일 최대 오버웨이트(${f1(ow.d)}%p, 비중 ${ow.w.toFixed(1)}%). 해당 모멘텀 되돌림 시 손실 기여가 가장 크다.`, `${ow.name} 액티브 비중을 벤치마크 +5%p로 캡, 지수 풋 스프레드로 하방 5% 헤지.`],
+    [`① ${ow.name} 집중`, "영향 高 · 가능성 中", `단일 최대 오버웨이트(${f1(ow.d)}%p, 비중 ${ow.w.toFixed(1)}%). 해당 모멘텀 되돌림 시 손실 기여가 가장 크다.`, `${ow.name} 액티브 비중을 벤치마크 대비 ${deltaLabel} 이내로 캡, 지수 풋 스프레드로 하방 5% 헤지.`],
     ["② 환위험 (USD/KRW)", "영향 中 · 가능성 高", `원/달러 ${Math.round(usdkrw).toLocaleString()}원 수준에서 해외 익스포저가 KRW 대비 환노출. 원화 강세 전환 시 해외 수익을 잠식한다.`, "해외 익스포저 50%에 KRW 선물 오버레이, 분기 리밸런싱 시 헤지비율 재산정."],
     ["③ 금리·듀레이션", "영향 中 · 가능성 中", `채권 합산 ${f1(bondDelta)}%p 조정이 금리 경로 가정에 의존. 인하 지연·반등 시 채권·대체가 동반 약세할 수 있다.`, `채권 듀레이션 중립~단기 유지, US10Y 4.5% 상향 돌파를 뷰 재검토 트리거로 설정.`],
     ["④ 모델 리스크 (BL)", "영향 中 · 가능성 中", "사후 기대수익률이 뷰 신뢰도·τ·λ 가정에 민감하며 추정오차가 존재한다.", "앙상블(MVO·RP·HRP)로 단일모델 민감도 완화, 신뢰도 ±10% 민감도 분석 병행."],
   ];
-  const srcs = Array.from(new Set((attrib as any[]).map((a) => a.src).filter(Boolean))).slice(0, 5);
+  // Sources: aggregate EVERY cited source across all parsed views (+ attribution),
+  // deduped and unlimited — the report should list everything the analysis used.
+  const viewSrcs = ((sim?.parsed_views as any[]) || []).flatMap((v) => v?.sources || []);
+  const attribSrcs = (attrib as any[]).map((a) => a.src);
+  const srcs = Array.from(new Set([...viewSrcs, ...attribSrcs]
+    .map((s) => (s ? String(s).replace(/\s*↗\s*$/, "").trim() : ""))
+    .filter(Boolean)));
   const sources: [string, string, string, string, string][] = srcs.length
-    ? srcs.map((s) => ["근거", "outline", String(s), "", C.t3] as [string, string, string, string, string])
+    ? srcs.map((s) => ["근거", "outline", s, "", C.t3] as [string, string, string, string, string])
     : SOURCES_MOCK;
   const convictionText = pm?.investment_thesis_summary
     || `“${ow.name} 비중확대로 뷰를 표현하되, 환·변동성은 헤지로 관리한다 — δ 한도 내 절제된 배분.”`;
   const runId = sim?.simulation_id ? `#${sim.simulation_id}` : "#248";
   const today = new Date().toISOString().slice(0, 10);
-  const engine = (sim?.optimizer || "ensemble").toUpperCase();
+  const optKey = String(sim?.optimizer || "ensemble").toLowerCase();
+  const engine = ({ ensemble: "앙상블 (MVO·RP·HRP)", markowitz: "마코위츠 MVO", risk_parity: "리스크 패리티", hrp: "HRP", resampled: "리샘플드" } as Record<string, string>)[optKey] || optKey.toUpperCase();
   const gT = "96px 92px 78px 64px 1fr";
   const rrT = "1.6fr 1fr 1fr 1fr";
   return (
@@ -2786,9 +2809,8 @@ function ReportDoc({ sim }: { sim: any }) {
       <div style={{ border: `1px solid ${C.b2}`, borderBottom: "none", background: "linear-gradient(180deg,#0c0c0c,#080808)", borderRadius: "10px 10px 0 0", padding: "24px 30px" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <div>
-            <div style={{ fontSize: 9, fontFamily: FM, letterSpacing: "1px", color: C.t5, marginBottom: 9 }}>국민연금공단 · 투자정책실 · 글로벌 멀티에셋 데스크</div>
-            <div style={{ fontFamily: FA, fontWeight: 800, fontSize: 22, letterSpacing: ".5px", lineHeight: 1.15, marginBottom: 10 }}>글로벌 멀티에셋 배분 보고서</div>
-            <div style={{ fontSize: 13.5, lineHeight: 1.5, color: C.t2, maxWidth: 540 }}>{ow.name} {ow.d >= 0 ? "비중확대" : "비중축소"}를 중심으로 한 전술적 배분 — {regLabel} 레짐과 환위험은 절제로 관리</div>
+            <div style={{ fontSize: 9, fontFamily: FM, letterSpacing: "1px", color: C.t5, marginBottom: 10 }}>국민연금공단 · 투자정책실 · 글로벌 멀티에셋 데스크 · 배분 보고서</div>
+            <div style={{ fontFamily: FA, fontWeight: 800, fontSize: 20, letterSpacing: ".2px", lineHeight: 1.32, maxWidth: 560 }}>{ow.name} {ow.d >= 0 ? "비중확대" : "비중축소"}를 중심으로 한 전술적 배분 — {regLabel} 레짐과 환위험은 절제로 관리</div>
           </div>
           <div style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             <span style={{ fontSize: 8.5, fontFamily: FM, color: C.amber, border: "1px solid rgba(251,191,36,.3)", padding: "3px 8px", borderRadius: 3 }}>CONFIDENTIAL · IC ONLY</span>
@@ -2796,7 +2818,7 @@ function ReportDoc({ sim }: { sim: any }) {
           </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginTop: 18, paddingTop: 15, borderTop: `1px solid ${C.b1}`, fontSize: 9.5, fontFamily: FM, color: "#777" }}>
-          {[["실행 ID", runId], ["일자", today], ["엔진", engine], ["이탈 한도 δ", "5%"], ["작성", "Chris (CIS)"], ["검토", "Jerry (선임 PM)"]].map(([k, v]) => (
+          {[["실행 ID", runId], ["일자", today], ["엔진", engine], ["이탈 한도 δ", deltaLabel], ["작성", "Chris (CIS)"], ["검토", "Jerry (선임 PM)"]].map(([k, v]) => (
             <span key={k}>{k} <span style={{ color: "#ddd" }}>{v}</span></span>
           ))}
         </div>
@@ -2805,7 +2827,7 @@ function ReportDoc({ sim }: { sim: any }) {
       <div style={{ border: `1px solid ${C.b2}`, background: "#090909", borderRadius: "0 0 10px 10px", padding: "8px 30px 30px" }}>
         <SectionH>핵심 요약 · EXECUTIVE SUMMARY</SectionH>
         <div style={{ borderLeft: "2px solid #fff", background: C.card2, padding: "14px 18px", fontSize: 13, lineHeight: 1.8, color: "#dadada" }}>
-          <b style={{ color: "#fff" }}>결론 먼저(BLUF).</b> {ow.name}을 전략적 벤치마크 대비 <b style={{ color: "#fff" }}>{f1(ow.d)}%p {ow.d >= 0 ? "비중확대" : "비중축소"}({ow.w.toFixed(1)}%)</b>하고, {uw.name}을 <b style={{ color: "#fff" }}>{f1(uw.d)}%p {uw.d >= 0 ? "확대" : "축소"}({uw.w.toFixed(1)}%)</b>할 것을 권고한다. 채권은 합산 {f1(bondDelta)}%p 조정해 균형을 잡았다. 본 배분의 연간 기대수익률은 <b style={{ color: "#fff" }}>{pf(expR)}</b>, 변동성 <b style={{ color: "#fff" }}>{pf(vol)}</b>, 샤프 <b style={{ color: "#fff" }}>{sharpe.toFixed(2)}</b>로 벤치마크 대비 위험조정수익을 개선한다. {regLabel} 레짐을 감안해 모든 틸트는 δ 5% 한도 내로 절제했다.
+          <b style={{ color: "#fff" }}>결론 먼저(BLUF).</b> {ow.name}을 전략적 벤치마크 대비 <b style={{ color: "#fff" }}>{f1(ow.d)}%p {ow.d >= 0 ? "비중확대" : "비중축소"}({ow.w.toFixed(1)}%)</b>하고, {uw.name}을 <b style={{ color: "#fff" }}>{f1(uw.d)}%p {uw.d >= 0 ? "확대" : "축소"}({uw.w.toFixed(1)}%)</b>할 것을 권고한다. 채권은 합산 {f1(bondDelta)}%p 조정해 균형을 잡았다. 본 배분의 연간 기대수익률은 <b style={{ color: "#fff" }}>{pf(expR)}</b>, 변동성 <b style={{ color: "#fff" }}>{pf(vol)}</b>, 샤프 <b style={{ color: "#fff" }}>{sharpe.toFixed(2)}</b>로 벤치마크 대비 위험조정수익을 개선한다. {regLabel} 레짐을 감안해 모든 틸트는 δ {deltaLabel} 한도 내로 절제했다.
         </div>
         <SectionH>시장 국면 진단 · MARKET REGIME DIAGNOSIS</SectionH>
         <div style={{ fontSize: 13, lineHeight: 1.85, color: C.t2 }}>시스템은 현재 국면을 <b style={{ color: C.amber }}>{regLabel}</b>로 판정했다. VIX는 <b style={{ color: "#fff" }}>{vixV}</b> 수준이고, 원/달러는 <b style={{ color: "#fff" }}>{Math.round(usdkrw).toLocaleString()}원</b>, 미 10년물은 <b style={{ color: "#fff" }}>{us10y}%</b>로 관측된다. 이 국면 판단에 따라 위험예산을 조정하며, 위험회피계수 λ를 <b style={{ color: "#fff" }}>{lam}</b>로 적용해 틸트 강도를 제한했다.</div>
@@ -2859,7 +2881,7 @@ function ReportDoc({ sim }: { sim: any }) {
         </div>
         <SectionH>실행 권고 · ACTIONABLE RECOMMENDATIONS</SectionH>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, lineHeight: 1.65, color: C.t2 }}>
-          {[["리밸런싱.", "분기 1회 정기 + δ 5% 이탈 시 수시. 다음 정기검토 2026-09-30."], ["헤지 오버레이.", "해외주식 FX 50%에 KRW 선물, 주식 하방 5% 풋 스프레드."], ["비중 한도.", "대체투자 벤치마크 +5%p 캡, 단일 자산 액티브 ±5%p 이내."], ["모니터링 트리거.", "VIX 30 · US10Y 4.5% · USD/KRW 1,420 돌파 시 뷰 즉시 재검토."]].map(([b, t]) => (
+          {[["리밸런싱.", `분기 1회 정기 + δ ${deltaLabel} 이탈 시 수시. 다음 정기검토 2026-09-30.`], ["헤지 오버레이.", "해외주식 FX 50%에 KRW 선물, 주식 하방 5% 풋 스프레드."], ["비중 한도.", `단일 자산 액티브 벤치마크 대비 ${deltaLabel} 이내(δ 제약).`], ["모니터링 트리거.", "VIX 30 · US10Y 4.5% · USD/KRW 1,420 돌파 시 뷰 즉시 재검토."]].map(([b, t]) => (
             <div key={b} style={{ display: "flex", gap: 9 }}><span style={{ color: "#fff" }}>·</span><span><b style={{ color: "#fff" }}>{b}</b> {t}</span></div>
           ))}
         </div>

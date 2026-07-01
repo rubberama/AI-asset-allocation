@@ -334,7 +334,7 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                     macro_context = fetch_macro_context()
                 except Exception:
                     macro_context = {}
-            pm_memo = await generate_pm_memo(parsed_views, macro_context)
+            pm_memo = await generate_pm_memo(parsed_views, macro_context, view_text=request.view_text)
             
             # 4. Compute/estimate lambda and tau, and run Black-Litterman
             yield json.dumps({"step": 4, "message": "시장 균형수익률(Prior)과 사용자 의견을 결합하여 Black-Litterman 사후 기대수익률을 산정하고 있습니다."}) + "\n"
@@ -487,7 +487,8 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                     "ai_commentary": ai_commentary,
                     "historical_stress_tests": historical_stress_tests,
                     "pm_memo": pm_memo,
-                    "min_variance_fallback": min_variance_fallback
+                    "min_variance_fallback": min_variance_fallback,
+                    "max_deviation": request.max_deviation
                 }
             )
             db.add(sim_record)
@@ -525,6 +526,7 @@ async def run_simulation(request: SimulateRequest, db: Session = Depends(get_db)
                 "historical_stress_tests": historical_stress_tests,
                 "pm_memo": pm_memo,
                 "min_variance_fallback": min_variance_fallback,
+                "max_deviation": request.max_deviation,
                 "covariance_regime": {
                     "regime": regime,
                     "stress_alpha": _REGIME_STRESS_ALPHA.get((regime or "NORMAL").upper(), 0.15),
@@ -996,7 +998,8 @@ def get_simulation_detail(simulation_id: int, db: Session = Depends(get_db)):
             "ai_commentary": sim.risk_metrics.get("ai_commentary"),
             "historical_stress_tests": sim.risk_metrics.get("historical_stress_tests"),
             "pm_memo": sim.risk_metrics.get("pm_memo"),
-            "min_variance_fallback": sim.risk_metrics.get("min_variance_fallback", False)
+            "min_variance_fallback": sim.risk_metrics.get("min_variance_fallback", False),
+            "max_deviation": sim.risk_metrics.get("max_deviation")
         }
     except Exception as e:
         logger.error(f"Failed to fetch simulation detail: {e}")
