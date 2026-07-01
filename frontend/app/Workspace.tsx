@@ -65,14 +65,24 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.4.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.4.0",
+    date: "2026-07-01",
+    title: "뷰→실행 브리지 (리포트로 가는 길)",
+    current: true,
+    items: [
+      "디제스트 반영 후 '뷰 정하기' 단계로 연결 — 직접 뷰 입력 / 하우스 뷰(리서치) 채택 / 뷰 없이 기준 비중",
+      "'이 뷰로 최적화 실행' 버튼으로 Black-Litterman 최적화를 바로 실행 → 배분·리스크·프론티어·PM 리포트 생성",
+      "첨부된 디제스트·고려사항이 최적화 뷰로 반영되고, PM 리포트가 Ben(뉴스)·Jerry(매크로) 근거를 종합",
+    ],
+  },
   {
     version: "0.3.1",
     date: "2026-07-01",
     title: "데스크 챗 한국어 고정",
-    current: true,
     items: [
       "데스크 챗 답변이 문장 중간에 일본어 등 다른 언어로 바뀌던 문제 수정 — 한국어(한글) 전용 규칙 강화 (고유명사·약어는 원문 허용)",
     ],
@@ -311,6 +321,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // Ben's post-digest hand-off state machine: hidden → boxes (A/B) → include|ask → hidden.
   const [benFollow, setBenFollow] = useState<"hidden" | "boxes" | "include" | "ask">("hidden");
   const [benSelected, setBenSelected] = useState<string[]>([]); // checked digest ids in the include checklist
+  // View → Run bridge (stage B→C): once evidence is gathered, the desk guides the
+  // user to form/confirm a view, then run the optimizer. "form" shows the bridge.
+  const [viewFlow, setViewFlow] = useState<"hidden" | "form">("hidden");
   const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
@@ -731,6 +744,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     setBriefDone(false);
     setBenFollow("hidden");
     setBenSelected([]);
+    setViewFlow("hidden");
     setDraft("");
     userInteractedRef.current = false;
     welcomedRef.current = true; // we re-seed manually below
@@ -823,7 +837,36 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     const chosen = benDigests().filter((d: any) => benSelected.includes(d.id));
     chosen.forEach((d: any) => attachSource(d));
     setBenFollow("hidden");
-    if (chosen.length) pushPersonaMsg("ben", `${chosen.length}건의 디제스트를 대화에 반영했습니다. 이 근거를 바탕으로 자산배분을 논의하거나, 궁금한 점을 물어봐 주세요.`);
+    if (chosen.length) {
+      pushPersonaMsg("ben", `${chosen.length}건의 디제스트를 대화에 반영했습니다. 이 근거를 바탕으로 자산배분을 논의해 보겠습니다.`);
+      pushPersonaMsg("chris", "이제 이 근거로 어떤 뷰를 가지고 계신지 정해 볼까요? 직접 의견을 남겨 주시거나, 리서치 하우스 뷰를 채택하실 수 있습니다. 특별한 뷰가 없다면 기준 비중으로 먼저 확인해 볼 수도 있습니다.");
+      setViewFlow("form"); // bridge to the view → run stage
+    }
+  };
+
+  // ── View → Run bridge (stage B): three ways to form a view, then run ─────────
+  const viewInputDirect = () => {
+    setPersona("chris");
+    pushPersonaMsg("chris", "시장에 대한 생각을 편하게 입력해 주세요. 예: '해외주식이 국내보다 나을 것 같다', '금리는 내릴 것 같다'. 남겨 주신 의견은 고려사항으로 기록되어 최적화에 반영됩니다.");
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+  const adoptHouseView = () => {
+    if (houseTheses.length) {
+      houseTheses.forEach((t: any) => attachThesis(t));
+      pushPersonaMsg("jerry", `리서치 하우스 뷰 ${houseTheses.length}건을 근거로 채택했습니다. 아래 '이 뷰로 최적화 실행'으로 바로 진행하실 수 있습니다.`);
+    } else {
+      setTab("리서치");
+      pushPersonaMsg("jerry", "아직 생성된 하우스 뷰가 없습니다. 리서치 탭에서 '수집 → 논거 구축'을 실행하면 하우스 뷰(테제)를 만들 수 있습니다. 생성 후 다시 '하우스 뷰 채택'을 눌러 주세요.");
+    }
+  };
+  const runWithViews = () => {
+    setViewFlow("hidden");
+    runSimulation();
+  };
+  const runPriorOnly = () => {
+    setViewFlow("hidden");
+    pushPersonaMsg("chris", "특별한 뷰 없이 NPS 기준 비중을 기준으로 최적화를 실행합니다. 결과는 오른쪽 탭에서 확인하실 수 있습니다.");
+    runSimulation("특별한 시장 뷰 없이 NPS 기준 비중을 유지합니다.");
   };
   // Attach the chosen digest and ask Ben to explain it — a real grounded LLM answer.
   const askBenAbout = (d: any) => {
@@ -852,7 +895,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   };
 
   // Keep the conversation pinned to the latest message / streamed token.
-  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice, benFollow]);
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice, benFollow, viewFlow]);
 
   // reasoning-trace typing loop (mirrors ReasoningTrace.dc.html)
   useEffect(() => {
@@ -1103,6 +1146,31 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                   ))}
                   <div onClick={() => setBenFollow("boxes")} style={{ cursor: "pointer", alignSelf: "flex-start", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "8px 14px", marginTop: 2 }}>취소</div>
                 </>)}
+              </div>
+            )}
+
+            {/* View → Run bridge (stage B→C): form/confirm a view, then run the
+                optimizer. Shown after evidence is gathered; hidden once a run fires. */}
+            {viewFlow === "form" && !running && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>뷰 정하기 · 무엇을 근거로 배분을 조정할까요?</div>
+                {[
+                  { on: viewInputDirect, t: "직접 뷰 입력", d: "시장에 대한 생각을 채팅으로 남기면 고려사항으로 캡처되어 최적화에 반영됩니다." },
+                  { on: adoptHouseView, t: "하우스 뷰(리서치) 채택", d: houseTheses.length ? `리서치에서 만든 하우스 뷰 ${houseTheses.length}건을 근거로 채택합니다.` : "하우스 뷰가 없으면 리서치 탭으로 이동해 먼저 생성합니다." },
+                ].map((o, i) => (
+                  <div key={i} onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.white)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+                {considerations.length + attached.length > 0 ? (
+                  <div onClick={runWithViews} style={{ cursor: "pointer", textAlign: "center", fontSize: 11.5, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: "#000", background: C.green, borderRadius: 8, padding: "11px 10px", marginTop: 2 }}>▶ 이 뷰로 최적화 실행 · 반영 {considerations.length + attached.length}건</div>
+                ) : (
+                  <div onClick={runPriorOnly} style={{ cursor: "pointer", textAlign: "center", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "10px", marginTop: 2 }}>뷰 없이 기준 비중으로 실행 →</div>
+                )}
               </div>
             )}
 
