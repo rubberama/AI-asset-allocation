@@ -24,7 +24,7 @@ from app.black_litterman import run_black_litterman
 from app.optimizer import optimize_portfolio, run_efficient_frontier
 from app.stress_test import run_monte_carlo_simulation, run_historical_stress_test
 from app.market_intelligence import fetch_market_intelligence
-from app.persona_chat import classify_chat_intent, chat_with_persona_stream
+from app.persona_chat import classify_chat_intent, chat_with_persona_stream, generate_daily_brief_stream
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +69,9 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's latest chat message")
     history: List[ChatMessage] = Field(default_factory=list, description="Prior turns this session")
     context: Optional[Dict[str, Any]] = Field(None, description="Live app-state snapshot (sim/macro/intel/attached/considerations)")
+
+class DailyBriefRequest(BaseModel):
+    macro: Optional[Dict[str, Any]] = Field(None, description="Macro indicator snapshot shown on the 매크로 tab (falls back to the server's cached context if omitted)")
 
 class StressTestRequest(BaseModel):
     weights: Dict[str, float] = Field(..., description="Portfolio weights mapping")
@@ -247,6 +250,39 @@ async def chat(request: ChatRequest):
         except Exception as e:
             logger.error(f"/chat error: {e}", exc_info=True)
             yield json.dumps({"type": "token", "chunk": "(답변 생성 중 오류가 발생했습니다.)"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+
+@app.post("/desk/daily-brief")
+async def desk_daily_brief(request: DailyBriefRequest):
+    """
+    Streams Jerry's daily macro brief for the entry flow. The brief is grounded
+    ONLY in our macro indicators (the numbers on the 매크로 tab): the frontend
+    posts the snapshot it is rendering; if absent we fall back to the server's
+    cached/last-fetched macro context. NDJSON:
+      {"type": "token", "chunk": "..."}   (repeated)
+      {"type": "done"}
+    """
+    macro_context = request.macro
+    if not macro_context:
+        macro_context = get_last_macro_context()
+        if not macro_context:
+            try:
+                from app.macro_data import fetch_macro_context
+                macro_context = fetch_macro_context()
+            except Exception:
+                macro_context = {}
+
+    async def event_generator():
+        try:
+            async for evt in generate_daily_brief_stream(macro_context):
+                yield json.dumps(evt, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
+        except Exception as e:
+            logger.error(f"/desk/daily-brief error: {e}", exc_info=True)
+            yield json.dumps({"type": "token", "chunk": "(브리핑 생성 중 오류가 발생했습니다.)"}, ensure_ascii=False) + "\n"
             yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
@@ -573,8 +609,12 @@ async def refresh_market_intelligence_stream(db: Session = Depends(get_db)):
     from app.market_intelligence import sync_market_intelligence_with_progress
 
     async def event_generator():
-        async for event in sync_market_intelligence_with_progress(db, force=True):
-            yield f"data: {json.dumps(event)}\n\n"
+        try:
+            async for event in sync_market_intelligence_with_progress(db, force=True):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            logger.error(f"Market intelligence refresh stream failed: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'msg': str(e)})}\n\n"
         yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(

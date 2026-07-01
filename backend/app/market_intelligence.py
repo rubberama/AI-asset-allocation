@@ -601,6 +601,9 @@ def _serialize_feed(items: List[Any]) -> List[Dict[str, Any]]:
             "author_title": item.author_title,
             "source": item.source,
             "date": item.date,
+            # When this analysis was released by the AI (DB insert time). Stored naive-UTC;
+            # emit with an explicit 'Z' so the client parses it as UTC and can render KST.
+            "created_at": (item.created_at.isoformat() + "Z") if item.created_at else None,
             "title": item.title,
             "content": item.content,
             "image_url": item.image_url,
@@ -833,7 +836,7 @@ async def sync_market_intelligence_with_progress(db: Session, force: bool = Fals
             db.rollback()
 
     final_data = _serialize_feed(db.query(MarketIntelligence).all())
-    yield {"type": "result", "data": final_data}
+    yield {"type": "result", "data": final_data, "new_count": len(all_theses)}
 
 
 async def sync_market_intelligence(db: Session, force: bool = False) -> List[Dict[str, Any]]:

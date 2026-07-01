@@ -16,7 +16,20 @@ import {
 } from "lucide-react";
 import { EtacollaLogo } from "./EtacollaLogo";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "http://localhost:4500";
+
+// Format a UTC ISO timestamp (e.g. the AI's analysis-release time) as Korea Standard Time.
+// Returns "" for missing/unparseable input so the caller can fall back gracefully.
+function fmtKST(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {} as Record<string, string>);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} KST`;
+}
 
 // Regime → [short KR label, accent color], and the regime-scaled risk-aversion λ
 // (mirrors backend _regime_lambda_multiplier in main.py).
@@ -47,6 +60,43 @@ const FP = "'Pretendard',sans-serif";
 // Numbers use the chat (Pretendard) font per user preference — was IBM Plex Mono.
 // Column alignment is preserved via fontVariantNumeric:"tabular-nums" on the root.
 const FM = FP;
+
+// ── Changelog ───────────────────────────────────────────────────────────────
+// Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
+// To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
+// move `current: true` to the new entry. This is the single source of truth.
+const APP_VERSION = "0.2.0";
+type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
+const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.2.0",
+    date: "2026-07-01",
+    title: "데스크 온보딩 플로우",
+    current: true,
+    items: [
+      "접속 시 온보딩: Chris 인사 → 매크로 탭 자동 전환 → Jerry의 데일리 매크로 브리핑",
+      "Jerry 브리핑을 우리 데이터로만 결정적으로 생성(웹검색·수치 창작 없음) · 정중한 존댓말 · 블록 가독성",
+      "브리핑 후 3개 핸드오프 선택지(Ben 디제스트 / Jerry 심층 리서치 / 대시보드 수치 질문)",
+      "Ben 디제스트 버튼이 실제 뉴스 새로고침 파이프라인을 실행 · 진행 단계 미러링 'thinking' 애니메이션 · 완료 후 요약",
+      "Ben에게 매크로 지표 컨텍스트 제공(대시보드 수치 설명 가능)",
+      "백엔드 /desk/daily-brief 엔드포인트 · 스트리밍 코어(_stream_answer) 공용화",
+    ],
+  },
+  {
+    version: "0.1.0",
+    date: "2026-07-01",
+    title: "첫 태깅 빌드",
+    items: [
+      "Black-Litterman 자산배분 엔진 · 5개 자산군(국내·해외 주식, 국내·해외 채권, 대체)",
+      "마켓 인텔리전스 피드 + URL·PDF 리서치 인제스트",
+      "리서치 파이프라인 → House View(테제) 생성·신뢰도 보정",
+      "Chris·Jerry·Ben 데스크 챗 (페르소나 + 의도 분류 + 스트리밍)",
+      "데이터 클래스 기반 DB 리셋 도구(db_admin: ephemeral·user·all)",
+      "모델 라우팅을 Nemotron 3 Super로 이전 (제거된 owl-alpha 대응)",
+      "프론트엔드 :4000 / 백엔드 :4500 게이트웨이 정리",
+    ],
+  },
+];
 
 // The three desk personas you can address in the left chat. `key` is sent to
 // the backend /chat endpoint; the rest drive avatar colour + name/role labels and short info.
@@ -145,10 +195,18 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [collectProgress, setCollectProgress] = useState<{ phase: string; items: string[] } | null>(null);
   const [buildingTheses, setBuildingTheses] = useState(false);
   const [researchMsg, setResearchMsg] = useState("");
+  // Backend connectivity: null = unknown, true = reachable, false = down.
+  // When down we show a banner instead of silently falling back to mock data.
+  const [backendUp, setBackendUp] = useState<boolean | null>(null);
+  const [intelNotice, setIntelNotice] = useState<string>("");
 
   useEffect(() => {
+    let reachable = false;
     const getJson = async (path: string) => {
-      try { const r = await fetch(API_BASE + path); if (r.ok) return await r.json(); } catch { /* offline → keep mock */ }
+      try {
+        const r = await fetch(API_BASE + path);
+        if (r.ok) { reachable = true; return await r.json(); }
+      } catch { /* network error → backend unreachable */ }
       return null;
     };
     (async () => {
@@ -156,6 +214,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       const i = await getJson("/market-intelligence"); if (Array.isArray(i?.data)) setIntel(i.data);
       const q = await getJson("/research/queue?limit=12"); if (Array.isArray(q?.data)) setQueue(q.data);
       const t = await getJson("/theses"); if (Array.isArray(t?.data)) setHouseTheses(t.data);
+      setBackendUp(reachable);
     })();
   }, []);
 
@@ -191,6 +250,25 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [loadingStep, setLoadingStep] = useState(0);
   const [attached, setAttached] = useState<any[]>([]);       // intel sources attached to the chat
   const [intelOpen, setIntelOpen] = useState<any | null>(null); // intel item shown in popup
+  // Track which intel items the user has opened, so new/unopened ones can be badged.
+  // Persisted per-browser in localStorage (no per-user backend).
+  const [seenIntel, setSeenIntel] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("etacolla_seen_intel");
+      if (raw) setSeenIntel(new Set(JSON.parse(raw)));
+    } catch { /* ignore corrupt/unavailable storage */ }
+  }, []);
+  const markIntelSeen = (id: string) => {
+    if (!id) return;
+    setSeenIntel((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev); next.add(id);
+      try { localStorage.setItem("etacolla_seen_intel", JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const openIntel = (item: any) => { if (item?.id) markIntelSeen(item.id); setIntelOpen(item); };
   const [refreshingIntel, setRefreshingIntel] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<{ phase: string; items: string[] } | null>(null);
   const [ingesting, setIngesting] = useState(false);
@@ -204,6 +282,12 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const [chatMsgs, setChatMsgs] = useState<any[]>([]);
   const [considerations, setConsiderations] = useState<any[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
+  // Entry flow: once Jerry's brief finishes we offer three next-step choices.
+  // `entryChoice` (null = still offering) hides the chips once the user picks one
+  // or starts typing their own message.
+  const [briefDone, setBriefDone] = useState(false);
+  const [entryChoice, setEntryChoice] = useState<null | "ben-digest" | "jerry-deepdive" | "ask-ben" | "typed">(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
   const attachSource = (item: any) => { if (item) setAttached((p) => (p.some((a) => a.id === item.id) ? p : [...p, item])); };
@@ -247,12 +331,24 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   };
 
   // Streaming refresh — live log (reading → selecting → analyzing) instead of blanking.
-  const refreshIntel = async () => {
+  // `onActivity` (optional) receives a coarse Korean stage label as the pipeline
+  // progresses, so callers (e.g. Ben's digest bubble) can animate a "thinking"
+  // status. Returns a summary of what actually happened so the caller can report it.
+  const refreshIntel = async (opts?: { onActivity?: (label: string) => void }) => {
+    let stage = "";
+    const setStage = (label: string) => { if (label && label !== stage) { stage = label; opts?.onActivity?.(label); } };
     setRefreshingIntel(true);
+    setIntelNotice("");
     setRefreshProgress({ phase: "연결 중…", items: [] });
+    setStage("최신 뉴스 소스에 연결하고 있습니다…");
     const items: string[] = [];
+    const analyzed: string[] = []; // titles of freshly-analyzed articles
+    let gotResult = false;   // did the backend send a final result?
+    let newCount = 0;        // how many freshly-analyzed theses were committed
+    let streamErr = "";      // explicit error reported by the backend
     try {
       const res = await fetch(API_BASE + "/market-intelligence/refresh-stream");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!res.body) throw new Error("no stream");
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -267,15 +363,26 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            if (evt.type === "phase") setRefreshProgress({ phase: evt.msg || "", items: [...items] });
-            else if (evt.type === "article_read") { items.push(`📰 ${evt.source} · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "article_selected") { items.push(`✓ 선택됨 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "article_analyzing" && evt.status === "done") { items.push(`⬡ 분석 완료 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); }
-            else if (evt.type === "result" && Array.isArray(evt.data)) setIntel(evt.data);
+            if (evt.type === "phase") { setRefreshProgress({ phase: evt.msg || "", items: [...items] }); setStage(evt.msg); }
+            else if (evt.type === "article_read") { items.push(`📰 ${evt.source} · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("시장 뉴스를 읽고 있습니다…"); }
+            else if (evt.type === "article_selected") { items.push(`✓ 선택됨 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("관련 기사를 선별하고 있습니다…"); }
+            else if (evt.type === "article_analyzing" && evt.status === "done") { items.push(`⬡ 분석 완료 · ${evt.title}`); if (evt.title) analyzed.push(evt.title); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("선별한 기사를 분석하고 있습니다…"); }
+            else if (evt.type === "error") { streamErr = evt.msg || "백엔드 오류"; }
+            else if (evt.type === "result" && Array.isArray(evt.data)) { gotResult = true; newCount = typeof evt.new_count === "number" ? evt.new_count : -1; setIntel(evt.data); }
           } catch { /* skip malformed */ }
         }
       }
-    } catch { /* ignore */ } finally { setRefreshingIntel(false); setRefreshProgress(null); }
+      // Tell the user what actually happened instead of failing silently.
+      if (streamErr) setIntelNotice(`⚠ 새로고침 중 오류: ${streamErr}`);
+      else if (!gotResult) setIntelNotice("⚠ 새로고침이 완료되지 않았습니다 (백엔드 응답 없음). 백엔드 서버가 실행 중인지 확인하세요.");
+      else if (newCount === 0) setIntelNotice("분석된 새 기사가 없습니다 (모델이 결과를 반환하지 않음). 기존 인텔을 유지합니다.");
+      else if (newCount > 0) setIntelNotice(`✓ 새 기사 ${newCount}건을 분석해 반영했습니다.`);
+      return { ok: gotResult && !streamErr, gotResult, newCount, streamErr, analyzed };
+    } catch (e: any) {
+      setBackendUp(false);
+      setIntelNotice(`⚠ 새로고침 실패: 백엔드에 연결할 수 없습니다 (${API_BASE}). 서버가 실행 중인지 확인하세요.`);
+      return { ok: false, gotResult: false, newCount: 0, streamErr: "연결 실패", analyzed };
+    } finally { setRefreshingIntel(false); setRefreshProgress(null); }
   };
 
   // Analyze a user-supplied link or PDF into a new market-intel thesis.
@@ -430,6 +537,8 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const sendChat = async () => {
     const text = draft.trim();
     if (!text || chatBusy || running) return;
+    userInteractedRef.current = true; // user took over → suppress any pending auto-brief
+    setEntryChoice((c) => c ?? "typed"); // hide the entry chips once the user types
     setDraft("");
     const meta = PERSONA_META[persona];
     const botId = "b" + Date.now() + Math.random().toString(36).slice(2, 6);
@@ -509,8 +618,167 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // fall back to their demo/mock data until a real run populates `sim`.)
   const hasRun = !!sim || running || liveTrace.length > 0;
 
+  // ── Entry flow: Chris welcomes, then Jerry briefs the live macro numbers ─────
+  // Chris's greeting is static (a greeting needs no AI). Jerry's daily brief
+  // streams from /desk/daily-brief, grounded ONLY in the macro indicators we
+  // fetched — no web search, no invented figures. If the user starts chatting
+  // before the brief fires, we suppress it (userInteractedRef).
+  const userInteractedRef = useRef(false);
+  const welcomedRef = useRef(false);
+  const briefedRef = useRef(false);
+
+  // 1) Chris greets immediately on entry.
+  useEffect(() => {
+    if (welcomedRef.current || userInteractedRef.current) return;
+    welcomedRef.current = true;
+    const meta = PERSONA_META.chris;
+    setChatMsgs((prev) =>
+      prev.length
+        ? prev
+        : [{
+            id: "welcome-chris", role: "persona", persona: "chris",
+            who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+            content: "안녕하세요, 에타콜라 데스크의 최고투자전략가 Chris입니다. 오늘도 함께 자산배분을 점검해 보시죠. 먼저 매크로 데스크의 Jerry가 우리 데이터로 오늘의 시장 숫자를 브리핑해 드리겠습니다.",
+            streaming: false,
+          }]
+    );
+  }, []);
+
+  // 2) Once our macro numbers are in, switch to the 매크로 tab and let Jerry
+  //    stream the daily brief built from exactly those numbers.
+  useEffect(() => {
+    if (briefedRef.current || userInteractedRef.current) return;
+    if (backendUp === false) return; // backend down → no real numbers → skip
+    if (!macro) return;              // wait for the macro tab data to load
+    briefedRef.current = true;
+    setTab("매크로");
+    const meta = PERSONA_META.jerry;
+    const botId = "brief-jerry";
+    setChatMsgs((prev) =>
+      prev.some((m) => m.id === botId)
+        ? prev
+        : [...prev, {
+            id: botId, role: "persona", persona: "jerry",
+            who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+            content: "", streaming: true,
+          }]
+    );
+    setChatBusy(true);
+    (async () => {
+      try {
+        const res = await fetch(API_BASE + "/desk/daily-brief", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ macro }),
+        });
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("no stream");
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const evt = JSON.parse(line);
+              if (evt.type === "token" && evt.chunk) {
+                setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content + evt.chunk } : m)));
+              }
+            } catch { /* skip partial line */ }
+          }
+        }
+      } catch {
+        setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(브리핑을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
+      } finally {
+        setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
+        setChatBusy(false);
+        setBriefDone(true); // reveal the "what's next?" choices
+      }
+    })();
+  }, [macro, backendUp]);
+
+  // Append a static in-character message from a persona. Used by the entry-flow
+  // hand-off buttons — deterministic onboarding copy, no LLM call.
+  const pushPersonaMsg = (who: "chris" | "jerry" | "ben", content: string) => {
+    const meta = PERSONA_META[who];
+    setChatMsgs((prev) => [...prev, {
+      id: "sys" + Date.now() + Math.random().toString(36).slice(2, 5),
+      role: "persona", persona: who,
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content, streaming: false,
+    }]);
+  };
+
+  // ── The three post-brief hand-offs Jerry offers ─────────────────────────────
+  // 1) Meet Ben for a market/asset+news digest. This actually TRIGGERS the news
+  //    refresh pipeline: Ben shows a live "thinking" status driven by the real
+  //    collect/analyze stages, then reports a summary of what he found.
+  const benDigestSummary = (s: any) => {
+    if (!s || (!s.gotResult && s.streamErr)) {
+      if (s?.streamErr && s.streamErr !== "연결 실패")
+        return `죄송합니다. 뉴스를 분석하는 중 문제가 발생했습니다 (${s.streamErr}). 잠시 후 다시 시도해 주시면 다시 살펴보겠습니다.`;
+      return "죄송합니다. 지금은 뉴스 서버에 연결하지 못해 분석을 마치지 못했습니다. 백엔드가 실행 중인지 확인해 주시면 다시 시도하겠습니다.";
+    }
+    const lines: string[] = ["최신 시장 뉴스를 수집하고 분석을 마쳤습니다."];
+    if (typeof s.newCount === "number" && s.newCount > 0) {
+      lines.push(`이번에 새로 분석한 기사는 ${s.newCount}건입니다.`);
+      const sample = (s.analyzed || []).slice(0, 3);
+      if (sample.length) lines.push("특히 이런 기사를 살펴봤습니다: " + sample.map((t: string) => `「${t}」`).join(", ") + ".");
+    } else if (s.newCount === 0) {
+      lines.push("이번에는 새로 반영할 신규 기사가 없어, 기존 인텔리전스를 그대로 유지했습니다.");
+    } else {
+      lines.push("분석 결과를 인텔리전스 탭에 반영했습니다.");
+    }
+    lines.push("인텔리전스 탭에서 분석된 카드를 확인하실 수 있습니다. 관심 있는 기사를 대화에 첨부해 주시면 자산배분 근거로 함께 활용해 드리겠습니다.");
+    return lines.join("\n\n");
+  };
+  const runBenDigest = async () => {
+    if (chatBusy) return;
+    setEntryChoice("ben-digest");
+    setPersona("ben");
+    setTab("인텔리전스");
+    const meta = PERSONA_META.ben;
+    const botId = "ben-digest-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "ben",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "네, 최신 시장 뉴스를 수집해 분석해 보겠습니다.",
+      status: "최신 뉴스 소스에 연결하고 있습니다…", streaming: true, thinking: true,
+    }]);
+    setChatBusy(true);
+    let summary: any;
+    try {
+      summary = await refreshIntel({
+        onActivity: (label) => setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, status: label } : m))),
+      });
+    } catch { summary = { ok: false, streamErr: "연결 실패" }; }
+    const text = benDigestSummary(summary);
+    setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: text, status: undefined, streaming: false, thinking: false } : m)));
+    setChatBusy(false);
+  };
+  // 2) Let Jerry run a deeper macro research deep-dive (research feature).
+  const chooseJerryDeepDive = () => {
+    setEntryChoice("jerry-deepdive");
+    setPersona("jerry");
+    setTab("리서치");
+    pushPersonaMsg("jerry",
+      "매크로를 더 깊이 파고들어 보겠습니다. 리서치 탭에서 '수집'을 실행하면 FRED 지표와 뉴스, 리서치 자료를 모아 자산군별로 정리하고, 이를 근거로 하우스 뷰(테제)를 구성합니다. 준비되시면 리서치 탭에서 시작하실 수 있습니다.");
+  };
+  // 3) Ask Ben to explain any number on the macro dashboard.
+  const chooseAskBen = () => {
+    setEntryChoice("ask-ben");
+    setPersona("ben");
+    setTab("매크로");
+    pushPersonaMsg("ben",
+      "매크로 대시보드의 수치 중 이해가 어려운 부분이 있으면 무엇이든 물어봐 주세요. 지표가 무엇을 의미하는지, 지금 수준이 어떤 신호인지 쉽게 풀어서 설명해 드리겠습니다.");
+    setTimeout(() => chatInputRef.current?.focus(), 50);
+  };
+
   // Keep the conversation pinned to the latest message / streamed token.
-  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length]);
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice]);
 
   // reasoning-trace typing loop (mirrors ReasoningTrace.dc.html)
   useEffect(() => {
@@ -559,12 +827,15 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         @keyframes donutIn { from{ opacity:0; transform:rotate(-90deg) scale(.72) } to{ opacity:1; transform:rotate(-90deg) scale(1) } }
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
         @keyframes ticker { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
+        @keyframes slideInRight { from{ transform:translateX(100%) } to{ transform:translateX(0) } }
         .etc-scroll::-webkit-scrollbar{ width:8px; height:8px; }
         .etc-scroll::-webkit-scrollbar-thumb{ background:#1e1e1e; border-radius:4px; }
         .etc-scroll::-webkit-scrollbar-track{ background:transparent; }
         .etc-bar:hover .etc-tip{ opacity:1; }
         .etc-bar:hover .etc-fill{ filter:brightness(1.25); }
       `}</style>
+
+      <ChangelogDrawer />
 
       {/* ============ TOP NAV ============ */}
       <div style={{ height: 54, flex: "0 0 54px", borderBottom: `1px solid ${C.b1}`, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px" }}>
@@ -598,6 +869,14 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           </div>
         </div>
       </div>
+
+      {/* ============ BACKEND-DOWN BANNER ============ */}
+      {backendUp === false && (
+        <div style={{ flex: "0 0 auto", background: "rgba(255,80,0,.12)", borderBottom: `1px solid ${C.red}`, color: "#ffb088", padding: "8px 22px", fontSize: 11.5, fontFamily: FM, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.red }} />
+          백엔드 서버에 연결할 수 없습니다 ({API_BASE}). 리서치·마켓 인텔리전스 기능이 동작하지 않으며 화면은 예시 데이터를 표시합니다. 백엔드를 실행한 뒤 새로고침하세요.
+        </div>
+      )}
 
       {/* ============ VIEW BUILDER BAR ============ */}
       <div style={{ flex: "0 0 auto", borderBottom: `1px solid ${C.b1}`, background: C.panel, padding: "12px 22px", display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap" }}>
@@ -652,9 +931,46 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
               ) : (
                 <Msg key={m.id} who={m.who} role={m.role2} avatarColor={m.color} avatarBg={m.bg} avatarBorder={m.border}>
                   <span style={{ whiteSpace: "pre-wrap" }}>{m.content || (m.streaming ? "" : "…")}</span>
-                  {m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />}
+                  {/* Working state (e.g. Ben running the news digest): animated dots + a
+                      live status label mirroring the actual pipeline stage. */}
+                  {m.thinking ? (
+                    <span style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8, color: m.color, fontSize: 11.5 }}>
+                      <span style={{ display: "inline-flex", gap: 3 }}>
+                        {[0, 1, 2].map((i) => (
+                          <span key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: m.color, animation: `pulseDot 1.2s ${i * 0.2}s infinite` }} />
+                        ))}
+                      </span>
+                      <span style={{ color: C.t3 }}>{m.status || "분석 중…"}</span>
+                    </span>
+                  ) : (
+                    m.streaming && <span style={{ display: "inline-block", width: 6, height: 11, background: m.color, marginLeft: 2, verticalAlign: -1, animation: "blink 1s step-end infinite" }} />
+                  )}
                 </Msg>
               )
+            )}
+
+            {/* After Jerry's brief: three next-step hand-offs. Hidden once the user
+                picks one or starts typing their own message. */}
+            {briefDone && !entryChoice && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>다음 단계 · 무엇을 도와드릴까요?</div>
+                {[
+                  { on: runBenDigest, color: C.cyan, t: "Ben에게 자산·뉴스 디제스트 요청", d: "최신 뉴스를 새로고침해 분석하고, 그 결과를 요약해 드립니다." },
+                  { on: chooseJerryDeepDive, color: C.amber, t: "Jerry의 매크로 심층 리서치", d: "FRED·뉴스·리서치를 수집해 하우스 뷰(테제)까지 이어지는 딥다이브를 진행합니다." },
+                  { on: chooseAskBen, color: C.cyan, t: "대시보드 수치가 궁금하신가요?", d: "매크로 대시보드의 지표를 Ben이 쉽게 풀어서 설명해 드립니다." },
+                ].map((o, i) => (
+                  <div
+                    key={i}
+                    onClick={o.on}
+                    style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = o.color)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                    <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                  </div>
+                ))}
+              </div>
             )}
 
             {/* Run artifacts — only after a REAL optimization runs. No scripted/hardcoded
@@ -798,6 +1114,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.chip, border: `1px solid ${C.b4}`, borderRadius: 10, padding: "10px 12px" }}>
               <input
+                ref={chatInputRef}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
@@ -831,7 +1148,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             {tab === "배분" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <AllocationTab sim={sim} />)}
             {tab === "리스크" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <RiskTab sim={sim} />)}
             {tab === "프론티어" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <FrontierTab sim={sim} />)}
-            {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={setIntelOpen} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
+            {tab === "인텔리전스" && <IntelTab intel={intel} onOpen={openIntel} seenIds={seenIntel} onAttach={attachSource} onDelete={deleteIntel} onRefresh={refreshIntel} refreshing={refreshingIntel} progress={refreshProgress} notice={intelNotice} onIngestUrl={ingestUrl} onIngestPdf={ingestPdf} ingesting={ingesting} />}
             {tab === "매크로" && <MacroTab macro={macro} regime={regime} regimeLabel={regimeLabel} regimeColor={regimeColor} />}
             {tab === "리서치" && <ResearchTab queue={queue} theses={houseTheses} onCollect={runCollect} collecting={collecting} collectProgress={collectProgress} onBuild={buildTheses} building={buildingTheses} msg={researchMsg} onAttachThesis={attachThesis} onDeleteThesis={deleteThesis} onResetTheses={resetTheses} />}
             {tab === "리포트" && (isNew && !hasRun ? <EmptyResults go={setTab} /> : <ReportTab sim={sim} />)}
@@ -870,6 +1187,7 @@ function IntelModal({ item, onClose, onAttach, onDelete }: { item: any; onClose:
         </div>
         <div style={{ fontFamily: FA, fontWeight: 700, fontSize: 20, lineHeight: 1.35, marginBottom: 8 }}>{item.title}</div>
         <div style={{ fontSize: 12, color: C.t4, marginBottom: 20 }}>{item.author}{item.author_title ? ` · ${item.author_title}` : ""} · {item.source}{item.date ? ` · ${String(item.date).slice(0, 10)}` : ""}</div>
+        {fmtKST(item.created_at) && <div style={{ fontSize: 10.5, fontFamily: FM, color: C.t5, marginTop: -14, marginBottom: 20 }}>분석 발행 시각 · {fmtKST(item.created_at)}</div>}
         <Field label="AI 해석">{item.ai_interpretation?.summary}</Field>
         {assets.length > 0 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -902,6 +1220,72 @@ function VersionBadge() {
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flex: "0 0 auto" }} />
       {v.branch} · {v.sha}{v.dirty ? "*" : ""}
     </span>
+  );
+}
+// Right-edge slide-out changelog. The vertical tab is always visible; clicking it
+// opens a drawer listing CHANGELOG newest-first. Append entries in the CHANGELOG
+// constant above to "log a version".
+function ChangelogDrawer() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {/* Always-visible vertical tab on the right edge */}
+      <button
+        onClick={() => setOpen(true)}
+        title="변경 이력 · Changelog"
+        style={{
+          position: "fixed", right: 0, top: "50%", transform: "translateY(-50%)", zIndex: 60,
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 9,
+          background: C.panel2, color: "#bbb", border: `1px solid ${C.b4}`, borderRight: "none",
+          borderRadius: "7px 0 0 7px", padding: "13px 7px", cursor: "pointer",
+        }}
+      >
+        <span style={{ fontSize: 9, fontFamily: FM, fontWeight: 700, color: C.green, letterSpacing: ".5px" }}>v{APP_VERSION}</span>
+        <span style={{ writingMode: "vertical-rl", fontSize: 9, fontFamily: FA, letterSpacing: "2px" }}>CHANGELOG</span>
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 90 }} />
+          <div className="etc-scroll" style={{
+            position: "fixed", top: 0, right: 0, height: "100vh", width: 380, maxWidth: "92vw", zIndex: 100,
+            background: C.bg, borderLeft: `1px solid ${C.b3}`, overflowY: "auto",
+            animation: "slideInRight .2s ease", boxShadow: "-24px 0 48px rgba(0,0,0,.6)",
+          }}>
+            <div style={{ position: "sticky", top: 0, background: C.bg, borderBottom: `1px solid ${C.b2}`, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ fontSize: 11, fontFamily: FA, fontWeight: 700, letterSpacing: "2px", color: C.white }}>CHANGELOG</span>
+                <span style={{ fontSize: 9, fontFamily: FM, color: C.t4 }}>변경 이력</span>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 5, color: "#999", fontSize: 13, lineHeight: 1, width: 26, height: 26, cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: "8px 20px 48px" }}>
+              {CHANGELOG.map((e) => (
+                <div key={e.version} style={{ padding: "18px 0", borderBottom: `1px solid ${C.b1}` }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 15, fontFamily: FM, fontWeight: 700, color: C.white }}>v{e.version}</span>
+                    {e.current && (
+                      <span style={{ fontSize: 8, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: "#000", background: C.green, padding: "2px 6px", borderRadius: 3 }}>CURRENT</span>
+                    )}
+                    <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: FM, color: C.t4 }}>{e.date}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, fontFamily: FA, fontWeight: 600, letterSpacing: ".3px", color: C.t2, marginBottom: 11 }}>{e.title}</div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                    {e.items.map((it, i) => (
+                      <li key={i} style={{ display: "flex", gap: 9, fontSize: 12, lineHeight: 1.55, color: C.t3 }}>
+                        <span style={{ flex: "0 0 auto", marginTop: 6, width: 4, height: 4, borderRadius: "50%", background: C.green }} />
+                        <span>{it}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 function EmptyResults({ go }: { go: (t: string) => void }) {
@@ -1380,9 +1764,9 @@ function Tag({ kind, style }: { kind: string; style: string }) {
 
 const INTEL_CAT: Record<string, [string, string]> = { RESEARCH: ["리서치", "fill"], NEWS: ["뉴스", "outline"], USER_ASSET: ["내 자산", "cyan"] };
 
-function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, progress, onIngestUrl, onIngestPdf, ingesting }: {
-  intel: any[]; onOpen: (t: any) => void; onAttach: (t: any) => void; onDelete: (id: string) => void; onRefresh: () => void; refreshing: boolean;
-  progress: { phase: string; items: string[] } | null; onIngestUrl: (u: string) => void; onIngestPdf: (f: File) => void; ingesting: boolean;
+function IntelTab({ intel, onOpen, seenIds, onAttach, onDelete, onRefresh, refreshing, progress, notice, onIngestUrl, onIngestPdf, ingesting }: {
+  intel: any[]; onOpen: (t: any) => void; seenIds: Set<string>; onAttach: (t: any) => void; onDelete: (id: string) => void; onRefresh: () => void; refreshing: boolean;
+  progress: { phase: string; items: string[] } | null; notice?: string; onIngestUrl: (u: string) => void; onIngestPdf: (f: File) => void; ingesting: boolean;
 }) {
   const [urlText, setUrlText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1398,6 +1782,8 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
         return {
           tag, tagStyle, conf: `신뢰도 ${conf}%`, cc,
           date: t.date ? String(t.date).slice(0, 10) : "",
+          released: fmtKST(t.created_at),                 // when the AI released this analysis (KST)
+          isNew: !!t.id && !seenIds.has(t.id),            // unopened by this user
           assets: (t.ai_interpretation?.impacted_assets || []) as string[],
           title: t.title || "(제목 없음)",
           body: `${t.ai_interpretation?.summary || t.content || ""}`.slice(0, 165),
@@ -1406,7 +1792,7 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
           raw: t as any,
         };
       })
-    : INTEL_CARDS.map((c) => ({ ...c, date: "2026-06-28", assets: [] as string[], raw: null as any }));
+    : INTEL_CARDS.map((c) => ({ ...c, date: "2026-06-28", released: "", isNew: false, assets: [] as string[], raw: null as any }));
   const submitUrl = () => { if (urlText.trim()) { onIngestUrl(urlText); setUrlText(""); } };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1442,6 +1828,11 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
         <button onClick={() => fileRef.current?.click()} disabled={ingesting} style={{ fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: "#000", background: "#fff", padding: "8px 13px", borderRadius: 7, border: "none", cursor: ingesting ? "wait" : "pointer" }}>PDF 업로드</button>
       </div>
 
+      {/* result/error notice from the last refresh — never fail silently */}
+      {!refreshing && notice && (
+        <div style={{ border: `1px solid ${notice.startsWith("⚠") ? C.red : C.b3}`, background: notice.startsWith("⚠") ? "rgba(255,80,0,.10)" : C.panel2, color: notice.startsWith("⚠") ? "#ffb088" : C.t2, borderRadius: 8, padding: "9px 13px", fontSize: 11.5, fontFamily: FM }}>{notice}</div>
+      )}
+
       {/* progress log during refresh, else the cards */}
       {refreshing && progress ? (
         <div style={{ border: `1px solid ${C.b3}`, background: "#050505", borderRadius: 10, overflow: "hidden", minHeight: 340 }}>
@@ -1466,11 +1857,16 @@ function IntelTab({ intel, onOpen, onAttach, onDelete, onRefresh, refreshing, pr
               onDragStart={(e) => { if (c.raw) { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", c.raw.id); } }}
               onClick={() => c.raw && onOpen(c.raw)}
               title={c.raw ? "클릭: 상세 보기 · 드래그: 채팅에 추가" : undefined}
-              style={{ border: `1px solid ${c.border}`, background: C.card, borderRadius: 9, padding: 16, cursor: c.raw ? "pointer" : "default", transition: "border-color .12s" }}
+              style={{ border: `1px solid ${c.isNew ? C.green : c.border}`, borderLeft: c.isNew ? `3px solid ${C.green}` : `1px solid ${c.border}`, background: C.card, borderRadius: 9, padding: 16, cursor: c.raw ? "pointer" : "default", transition: "border-color .12s" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
                 <Tag kind={c.tag} style={c.tagStyle} />
-                {c.date && <span style={{ fontSize: 9.5, fontFamily: FM, color: C.t5 }}>{c.date}</span>}
+                {c.isNew && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 8, fontFamily: FA, fontWeight: 700, letterSpacing: "1px", color: "#000", background: C.green, padding: "2px 6px", borderRadius: 3 }}>
+                    <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#000" }} />NEW
+                  </span>
+                )}
+                {(c.released || c.date) && <span style={{ fontSize: 9.5, fontFamily: FM, color: C.t5 }}>{c.released || c.date}</span>}
                 <span style={{ fontSize: 10, fontFamily: FM, color: c.cc, marginLeft: "auto" }}>{c.conf}</span>
               </div>
               <div style={{ fontSize: 15, fontWeight: 600, color: "#fff", lineHeight: 1.45, marginBottom: 8 }}>{c.title}</div>
