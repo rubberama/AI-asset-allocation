@@ -65,14 +65,22 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.7.3";
+const APP_VERSION = "0.7.4";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.7.4",
+    date: "2026-07-01",
+    title: "대시보드 Q&A 5초 무응답 시 Ben/Jerry 선택지 자동 제안",
+    current: true,
+    items: [
+      "'대시보드 수치가 궁금하신가요?'로 진입한 뒤 5초간 아무 질문도 하지 않으면, Ben에게 계속 묻거나 Jerry에게 물어볼 수 있는 선택지를 자동으로 보여줌 — 빈 입력창 앞에서 다음에 뭘 해야 할지 몰라 멈추는 상황 방지",
+    ],
+  },
   {
     version: "0.7.3",
     date: "2026-07-01",
     title: "대시보드 Q&A 막다른 길 해소 · Jerry 리서치 실행 버튼 · 대화가 항상 프로세스로 안내",
-    current: true,
     items: [
       "'대시보드 수치가 궁금하신가요?' 이후 막혀있던 흐름 수정 — Ben/Jerry가 답한 뒤 계속 질문하거나(Ben↔Jerry 선택) 다음 단계로 진행할 수 있는 선택지 재제공",
       "Jerry의 '매크로 심층 리서치'가 이제 채팅 내 실행 버튼(매크로 리서치 수집 및 논거구축 실행)으로 동작 — 무엇을 할지 먼저 설명하고, 버튼 클릭 시 수집→논거구축을 실제로 실행, 완료 후 요약 보고",
@@ -1077,6 +1085,15 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
       "매크로 대시보드의 수치 중 이해가 어려운 부분이 있으면 무엇이든 물어봐 주세요. 지표가 무엇을 의미하는지, 지금 수준이 어떤 신호인지 쉽게 풀어서 설명해 드리겠습니다.");
     setTimeout(() => chatInputRef.current?.focus(), 50);
   };
+
+  // If the user lands in "ask Ben about the dashboard" mode and doesn't actually ask
+  // anything within 5s, surface the same hand-off chips (ask Ben / ask Jerry / move on)
+  // instead of leaving them staring at an empty composer with no cue what to do.
+  useEffect(() => {
+    if (entryChoice !== "ask-ben" || chatBusy || macroQaFollow) return;
+    const t = setTimeout(() => setMacroQaFollow(true), 5000);
+    return () => clearTimeout(t);
+  }, [entryChoice, chatBusy, macroQaFollow]);
 
   // Keep the conversation pinned to the latest message / streamed token.
   useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice, benFollow, viewFlow]);
