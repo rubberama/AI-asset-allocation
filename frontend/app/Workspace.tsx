@@ -65,14 +65,27 @@ const FM = FP;
 // Hand-maintained release log surfaced in the right-edge CHANGELOG drawer.
 // To cut a new version: bump APP_VERSION and prepend an entry here (newest first),
 // move `current: true` to the new entry. This is the single source of truth.
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 type ChangelogEntry = { version: string; date: string; title: string; items: string[]; current?: boolean };
 const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: "0.3.0",
+    date: "2026-07-01",
+    title: "새 대화 · Ben 디제스트 후속 흐름",
+    current: true,
+    items: [
+      "「새 대화」 버튼으로 대화를 초기화하고 온보딩(Chris→Jerry 브리핑)을 처음부터 재생",
+      "채팅 스레드를 chatMsgs로 일원화(하드코딩 Chris 인사 제거) — 인사 중복 해소",
+      "Ben 디제스트 완료 후 후속 선택지 제공: 디제스트를 대화에 반영(체크리스트 선택) / 특정 디제스트 자세히 알아보기",
+      "특정 디제스트 선택 시 해당 자료를 첨부하고 Ben이 핵심·배분 함의를 설명(실시간 근거 기반)",
+      "Ben에게 매크로 컨텍스트를 제공해 디제스트·대시보드 질문에 함께 답변",
+      "디제스트 진행 상태를 한국어 단계 라벨로 표기",
+    ],
+  },
   {
     version: "0.2.0",
     date: "2026-07-01",
     title: "데스크 온보딩 플로우",
-    current: true,
     items: [
       "접속 시 온보딩: Chris 인사 → 매크로 탭 자동 전환 → Jerry의 데일리 매크로 브리핑",
       "Jerry 브리핑을 우리 데이터로만 결정적으로 생성(웹검색·수치 창작 없음) · 정중한 존댓말 · 블록 가독성",
@@ -287,6 +300,9 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // or starts typing their own message.
   const [briefDone, setBriefDone] = useState(false);
   const [entryChoice, setEntryChoice] = useState<null | "ben-digest" | "jerry-deepdive" | "ask-ben" | "typed">(null);
+  // Ben's post-digest hand-off state machine: hidden → boxes (A/B) → include|ask → hidden.
+  const [benFollow, setBenFollow] = useState<"hidden" | "boxes" | "include" | "ask">("hidden");
+  const [benSelected, setBenSelected] = useState<string[]>([]); // checked digest ids in the include checklist
   const chatInputRef = useRef<HTMLInputElement>(null);
   const removeConsideration = (id: string) => setConsiderations((p) => p.filter((c) => c.id !== id));
 
@@ -363,7 +379,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
           if (!line.startsWith("data: ")) continue;
           try {
             const evt = JSON.parse(line.slice(6));
-            if (evt.type === "phase") { setRefreshProgress({ phase: evt.msg || "", items: [...items] }); setStage(evt.msg); }
+            if (evt.type === "phase") { setRefreshProgress({ phase: evt.msg || "", items: [...items] }); /* chat status stays Korean via the article stages below */ }
             else if (evt.type === "article_read") { items.push(`📰 ${evt.source} · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("시장 뉴스를 읽고 있습니다…"); }
             else if (evt.type === "article_selected") { items.push(`✓ 선택됨 · ${evt.title}`); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("관련 기사를 선별하고 있습니다…"); }
             else if (evt.type === "article_analyzing" && evt.status === "done") { items.push(`⬡ 분석 완료 · ${evt.title}`); if (evt.title) analyzed.push(evt.title); setRefreshProgress((p) => ({ phase: p?.phase ?? "", items: items.slice(-60) })); setStage("선별한 기사를 분석하고 있습니다…"); }
@@ -534,21 +550,30 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   // ── Send a chat message to the chosen persona (streams the reply via /chat) ──
   // The backend classifies intent: a market VIEW is captured as a consideration;
   // a RUN command fires the optimizer after the reply; a QUESTION just answers.
-  const sendChat = async () => {
-    const text = draft.trim();
+  // `opts` lets callers send programmatically: `text` overrides the composer,
+  // `persona` overrides who answers, `extraAttach` guarantees a source is in the
+  // grounding context even if its attach state hasn't flushed yet (used by
+  // "ask about a specific digest").
+  const sendChat = async (opts?: { text?: string; persona?: "chris" | "jerry" | "ben"; extraAttach?: any }) => {
+    const text = (opts?.text ?? draft).trim();
     if (!text || chatBusy || running) return;
+    const who = opts?.persona ?? persona;
     userInteractedRef.current = true; // user took over → suppress any pending auto-brief
-    setEntryChoice((c) => c ?? "typed"); // hide the entry chips once the user types
-    setDraft("");
-    const meta = PERSONA_META[persona];
+    setEntryChoice((c) => c ?? "typed"); // hide the entry chips once the user acts
+    setBenFollow("hidden"); // and Ben's post-digest hand-off UI
+    if (opts?.text === undefined) setDraft("");
+    const meta = PERSONA_META[who];
     const botId = "b" + Date.now() + Math.random().toString(36).slice(2, 6);
     const history = chatMsgs.map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
     setChatMsgs((prev) => [
       ...prev,
       { id: "u" + botId, role: "user", content: text },
-      { id: botId, role: "persona", persona, who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border, content: "", streaming: true },
+      { id: botId, role: "persona", persona: who, who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border, content: "", streaming: true },
     ]);
     setChatBusy(true);
+    const attachedForCtx = opts?.extraAttach
+      ? [opts.extraAttach, ...attached.filter((a) => a.id !== opts.extraAttach.id)]
+      : attached;
     const context = {
       sim: sim
         ? {
@@ -561,14 +586,14 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
         : null,
       macro,
       intel: intel.slice(0, 6).map((i: any) => ({ title: i.title })),
-      attached: attached.map((a) => ({ source: a.source, title: a.title, content: a.content, ai_interpretation: a.ai_interpretation })),
+      attached: attachedForCtx.map((a) => ({ source: a.source, title: a.title, content: a.content, ai_interpretation: a.ai_interpretation })),
       considerations: considerations.map((c) => c.text),
     };
     let shouldRun = false;
     try {
       const res = await fetch(API_BASE + "/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona, message: text, history, context }),
+        body: JSON.stringify({ persona: who, message: text, history, context }),
       });
       const reader = res.body?.getReader();
       if (!reader) throw new Error("no stream");
@@ -627,77 +652,97 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   const welcomedRef = useRef(false);
   const briefedRef = useRef(false);
 
-  // 1) Chris greets immediately on entry.
-  useEffect(() => {
-    if (welcomedRef.current || userInteractedRef.current) return;
-    welcomedRef.current = true;
+  // Seed Chris's greeting (static — a greeting needs no AI). Idempotent.
+  const seedChrisWelcome = () => {
     const meta = PERSONA_META.chris;
     setChatMsgs((prev) =>
-      prev.length
+      prev.some((m) => m.id === "welcome-chris")
         ? prev
-        : [{
+        : [...prev, {
             id: "welcome-chris", role: "persona", persona: "chris",
             who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
             content: "안녕하세요, 에타콜라 데스크의 최고투자전략가 Chris입니다. 오늘도 함께 자산배분을 점검해 보시죠. 먼저 매크로 데스크의 Jerry가 우리 데이터로 오늘의 시장 숫자를 브리핑해 드리겠습니다.",
             streaming: false,
           }]
     );
-  }, []);
+  };
 
-  // 2) Once our macro numbers are in, switch to the 매크로 tab and let Jerry
-  //    stream the daily brief built from exactly those numbers.
-  useEffect(() => {
-    if (briefedRef.current || userInteractedRef.current) return;
-    if (backendUp === false) return; // backend down → no real numbers → skip
-    if (!macro) return;              // wait for the macro tab data to load
-    briefedRef.current = true;
+  // Switch to the 매크로 tab and stream Jerry's daily brief (built from exactly
+  // our macro numbers) into a fresh bubble. Reveals the hand-off chips when done.
+  const runJerryBrief = async () => {
+    if (!macro) return;
     setTab("매크로");
     const meta = PERSONA_META.jerry;
-    const botId = "brief-jerry";
-    setChatMsgs((prev) =>
-      prev.some((m) => m.id === botId)
-        ? prev
-        : [...prev, {
-            id: botId, role: "persona", persona: "jerry",
-            who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
-            content: "", streaming: true,
-          }]
-    );
+    const botId = "brief-jerry-" + Date.now();
+    setChatMsgs((prev) => [...prev, {
+      id: botId, role: "persona", persona: "jerry",
+      who: meta.name, role2: meta.role, color: meta.color, bg: meta.bg, border: meta.border,
+      content: "", streaming: true,
+    }]);
     setChatBusy(true);
-    (async () => {
-      try {
-        const res = await fetch(API_BASE + "/desk/daily-brief", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ macro }),
-        });
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("no stream");
-        const dec = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const evt = JSON.parse(line);
-              if (evt.type === "token" && evt.chunk) {
-                setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content + evt.chunk } : m)));
-              }
-            } catch { /* skip partial line */ }
-          }
+    try {
+      const res = await fetch(API_BASE + "/desk/daily-brief", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ macro }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("no stream");
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "token" && evt.chunk) {
+              setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content + evt.chunk } : m)));
+            }
+          } catch { /* skip partial line */ }
         }
-      } catch {
-        setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(브리핑을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
-      } finally {
-        setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
-        setChatBusy(false);
-        setBriefDone(true); // reveal the "what's next?" choices
       }
-    })();
+    } catch {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: m.content || "(브리핑을 불러오지 못했습니다. 백엔드가 실행 중인지 확인하세요.)" } : m)));
+    } finally {
+      setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, streaming: false } : m)));
+      setChatBusy(false);
+      setBriefDone(true); // reveal the "what's next?" chips
+    }
+  };
+
+  // Reset the desk conversation and replay onboarding from the top.
+  const startNewChat = () => {
+    if (chatBusy) return; // don't reset while a persona is actively working
+    setChatMsgs([]);
+    setConsiderations([]);
+    setEntryChoice(null);
+    setBriefDone(false);
+    setBenFollow("hidden");
+    setBenSelected([]);
+    setDraft("");
+    userInteractedRef.current = false;
+    welcomedRef.current = true; // we re-seed manually below
+    briefedRef.current = true;
+    seedChrisWelcome();
+    if (macro && backendUp !== false) runJerryBrief();
+  };
+
+  // On entry: Chris greets, then (once macro is in) Jerry briefs. Each fires once;
+  // suppressed if the user starts chatting first (userInteractedRef).
+  useEffect(() => {
+    if (welcomedRef.current || userInteractedRef.current) return;
+    welcomedRef.current = true;
+    seedChrisWelcome();
+  }, []);
+  useEffect(() => {
+    if (briefedRef.current || userInteractedRef.current) return;
+    if (backendUp === false || !macro) return; // backend down / no numbers → skip
+    briefedRef.current = true;
+    runJerryBrief();
   }, [macro, backendUp]);
 
   // Append a static in-character message from a persona. Used by the entry-flow
@@ -758,6 +803,27 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
     const text = benDigestSummary(summary);
     setChatMsgs((prev) => prev.map((m) => (m.id === botId ? { ...m, content: text, status: undefined, streaming: false, thinking: false } : m)));
     setChatBusy(false);
+    if (summary?.gotResult) setBenFollow("boxes"); // offer the next-step hand-off
+  };
+
+  // ── Ben's post-digest hand-offs (A: include digests · B: ask about one) ──────
+  const benDigests = () => intel.slice(0, 8); // the analyzed cards to choose from
+  const openBenInclude = () => { setBenSelected(benDigests().map((d: any) => d.id)); setBenFollow("include"); };
+  const toggleBenSelected = (id: string) =>
+    setBenSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const confirmBenInclude = () => {
+    const chosen = benDigests().filter((d: any) => benSelected.includes(d.id));
+    chosen.forEach((d: any) => attachSource(d));
+    setBenFollow("hidden");
+    if (chosen.length) pushPersonaMsg("ben", `${chosen.length}건의 디제스트를 대화에 반영했습니다. 이 근거를 바탕으로 자산배분을 논의하거나, 궁금한 점을 물어봐 주세요.`);
+  };
+  // Attach the chosen digest and ask Ben to explain it — a real grounded LLM answer.
+  const askBenAbout = (d: any) => {
+    if (!d) return;
+    attachSource(d);
+    setBenFollow("hidden");
+    setPersona("ben");
+    sendChat({ persona: "ben", extraAttach: d, text: `방금 분석한 「${d.title}」 디제스트를 더 자세히 설명해 주세요. 핵심 내용과 자산배분 관점에서의 함의를 알려 주세요.` });
   };
   // 2) Let Jerry run a deeper macro research deep-dive (research feature).
   const chooseJerryDeepDive = () => {
@@ -778,7 +844,7 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
   };
 
   // Keep the conversation pinned to the latest message / streamed token.
-  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice]);
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [chatMsgs, considerations.length, briefDone, entryChoice, benFollow]);
 
   // reasoning-trace typing loop (mirrors ReasoningTrace.dc.html)
   useEffect(() => {
@@ -906,14 +972,17 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
             <span style={{ position: "relative", width: 8, height: 8 }}><span style={{ position: "absolute", inset: 0, borderRadius: "50%", background: C.green, animation: "pulseDot 1.6s infinite" }} /></span>
             <span style={{ fontFamily: FA, fontSize: 9.5, letterSpacing: "2px", color: "#888" }}>투자 데스크 · 대화</span>
             <span style={{ marginLeft: "auto", fontSize: 9, fontFamily: FM, color: "#4a4a4a" }}>{sim?.simulation_id ? `RUN #${sim.simulation_id}` : isNew ? "준비됨" : "RUN #248"}</span>
+            <button
+              onClick={startNewChat}
+              disabled={chatBusy}
+              title="대화를 처음부터 다시 시작합니다"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, fontFamily: FA, fontWeight: 700, letterSpacing: ".5px", color: chatBusy ? C.t5 : "#cfcfcf", background: "transparent", border: `1px solid ${C.b4}`, padding: "5px 10px", borderRadius: 6, cursor: chatBusy ? "default" : "pointer" }}
+            >↻ 새 대화</button>
           </div>
 
           <div ref={threadRef} className="etc-scroll" style={{ flex: 1, overflowY: "auto", padding: "20px 18px", display: "flex", flexDirection: "column", gap: 17 }}>
-            <Msg who="Chris" role="PM · 최고투자전략가" avatarColor={C.white}>
-              {isNew
-                ? <>안녕하세요, 저는 <b style={{ color: "#fff" }}>Chris</b>입니다 — 이 데스크의 최고투자전략가예요. 바로 의견을 주셔도 좋지만, 그 전에 오른쪽 탭에서 시장을 먼저 둘러보시길 권합니다: <b style={{ color: "#fff" }}>매크로</b>로 현재 국면과 지표를, <b style={{ color: "#fff" }}>인텔리전스</b>로 큐레이션된 뉴스·리서치를, <b style={{ color: "#fff" }}>리서치</b> 파이프라인으로 하우스 논거를 확인하실 수 있어요. 준비되시면 아래에 시장에 대한 생각을 입력해 주세요 — Ben과 매크로 데스크가 근거를 모으고 제가 배분으로 옮겨드리겠습니다.</>
-                : "안녕하세요. 오늘 시장을 어떻게 보고 계신가요? 편하게 말씀해 주시면 Ben(마켓)과 매크로 데스크가 근거를 모으고, 제가 최종 검토해 배분으로 옮겨드리겠습니다."}
-            </Msg>
+            {/* Chris's greeting is seeded into chatMsgs by the onboarding flow (so
+                「새 대화」 can fully reset the thread) — not hardcoded here. */}
 
             {/* user bubble (last-run view) — only after a real run, never on entry */}
             {hasRun && viewText && (
@@ -970,6 +1039,62 @@ export function Workspace({ mode = "demo" }: { mode?: "demo" | "new" }) {
                     <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* After Ben's digest: hand-off state machine. boxes → include | ask. */}
+            {benFollow !== "hidden" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 2 }}>
+                {benFollow === "boxes" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>다음 단계 · 디제스트를 어떻게 활용할까요?</div>
+                  {[
+                    { on: openBenInclude, t: "디제스트를 대화에 반영", d: "분석된 디제스트 중 원하는 것을 골라 근거로 첨부합니다 (배분·답변에 활용)." },
+                    { on: () => setBenFollow("ask"), t: "특정 디제스트 자세히 알아보기", d: "한 건을 골라 Ben이 핵심과 배분 관점의 함의를 설명해 드립니다." },
+                  ].map((o, i) => (
+                    <div key={i} onClick={o.on}
+                      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 3, transition: "border-color .15s" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#eaeaea" }}>{o.t}</span>
+                      <span style={{ fontSize: 10.5, lineHeight: 1.5, color: C.t4 }}>{o.d}</span>
+                    </div>
+                  ))}
+                </>)}
+
+                {benFollow === "include" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>대화에 반영할 디제스트를 선택하세요</div>
+                  {benDigests().map((d: any) => {
+                    const on = benSelected.includes(d.id);
+                    return (
+                      <div key={d.id} onClick={() => toggleBenSelected(d.id)}
+                        style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${on ? C.cyan : C.b3}`, borderRadius: 9, padding: "9px 11px", display: "flex", alignItems: "flex-start", gap: 9 }}>
+                        <span style={{ flex: "0 0 auto", width: 15, height: 15, borderRadius: 4, border: `1px solid ${on ? C.cyan : C.b5}`, background: on ? C.cyan : "transparent", color: "#000", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>{on ? "✓" : ""}</span>
+                        <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                          <span style={{ fontSize: 11.5, color: "#e8e8e8", lineHeight: 1.4 }}>{d.title}</span>
+                          <span style={{ fontSize: 9.5, color: C.t5 }}>{d.source || d.author || "출처"}</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
+                    <div onClick={confirmBenInclude} style={{ cursor: benSelected.length ? "pointer" : "default", flex: 1, textAlign: "center", fontSize: 11, fontWeight: 700, fontFamily: FA, letterSpacing: ".5px", color: benSelected.length ? "#000" : C.t5, background: benSelected.length ? C.cyan : C.b3, borderRadius: 8, padding: "9px 10px" }}>선택한 {benSelected.length}건 반영</div>
+                    <div onClick={() => setBenFollow("boxes")} style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "9px 14px" }}>취소</div>
+                  </div>
+                </>)}
+
+                {benFollow === "ask" && (<>
+                  <div style={{ fontSize: 9, fontFamily: FA, fontWeight: 700, letterSpacing: "1.2px", color: C.t5, paddingLeft: 2 }}>어떤 디제스트를 더 자세히 볼까요?</div>
+                  {benDigests().map((d: any) => (
+                    <div key={d.id} onClick={() => askBenAbout(d)}
+                      style={{ cursor: "pointer", background: C.panel2, border: `1px solid ${C.b3}`, borderRadius: 9, padding: "9px 11px", display: "flex", flexDirection: "column", gap: 2, transition: "border-color .15s" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.borderColor = C.cyan)}
+                      onMouseLeave={(e) => (e.currentTarget.style.borderColor = C.b3)}>
+                      <span style={{ fontSize: 11.5, color: "#e8e8e8", lineHeight: 1.4 }}>▸ {d.title}</span>
+                      <span style={{ fontSize: 9.5, color: C.t5 }}>{d.source || d.author || "출처"}</span>
+                    </div>
+                  ))}
+                  <div onClick={() => setBenFollow("boxes")} style={{ cursor: "pointer", alignSelf: "flex-start", fontSize: 11, fontWeight: 600, color: C.t3, background: "transparent", border: `1px solid ${C.b4}`, borderRadius: 8, padding: "8px 14px", marginTop: 2 }}>취소</div>
+                </>)}
               </div>
             )}
 
